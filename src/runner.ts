@@ -82,6 +82,7 @@ const EventSchema = Type.Union([
 const RunRequestSchema = Type.Object({
   event: EventSchema,
   payload: GithubPayloadSchema,
+  delivery_id: Type.Optional(Type.String()),
 });
 
 const RunResponseSchema = Type.Object({

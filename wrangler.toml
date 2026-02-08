@@ -1,3 +1,12 @@
 name = "smolpaws"
 main = "src/index.ts"
-compatibility_date = "2024-12-01"
+compatibility_date = "2026-02-08"
+
+[[queues.producers]]
+queue = "smolpaws-queue"
+binding = "SMOLPAWS_QUEUE"
+
+[[queues.consumers]]
+queue = "smolpaws-queue"
+max_batch_size = 1
+max_batch_timeout = 5

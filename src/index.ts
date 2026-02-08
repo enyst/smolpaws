@@ -1,4 +1,8 @@
-import type { GithubEventPayload } from "./shared/github.js";
+import type {
+  GithubEventPayload,
+  SmolpawsEvent,
+  SmolpawsQueueMessage,
+} from "./shared/github.js";
 
 interface Env {
   GITHUB_WEBHOOK_SECRET: string;
@@ -7,6 +11,8 @@ interface Env {
   ALLOWED_ACTORS?: string;
   ALLOWED_OWNERS?: string;
   ALLOWED_REPOS?: string;
+  SMOLPAWS_QUEUE: Queue<SmolpawsQueueMessage>;
+
   ALLOWED_INSTALLATIONS?: string;
   SMOLPAWS_RUNNER_URL?: string;
   SMOLPAWS_RUNNER_TOKEN?: string;
@@ -47,8 +53,8 @@ export default {
       return new Response("Invalid signature", { status: 401 });
     }
 
-    const event = request.headers.get("X-GitHub-Event") ?? "";
-    if (event !== "issue_comment" && event !== "pull_request_review_comment") {
+    const event = parseEvent(request.headers.get("X-GitHub-Event") ?? "");
+    if (!event) {
       return new Response("Ignored", { status: 200 });
     }
 
@@ -80,22 +86,26 @@ export default {
       return new Response("Missing repository context", { status: 400 });
     }
 
-    const token = await createInstallationToken(installationId, env);
-    const runnerReply = await dispatchToRunner(payload, env);
-    const replyBody =
-      runnerReply ??
-      "🐾 smolpaws heard you and is waking up. Runner is not configured yet.";
+    const queueMessage: SmolpawsQueueMessage = {
+      event,
+      payload,
+      delivery_id: request.headers.get("X-GitHub-Delivery") ?? undefined,
+    };
 
-    await postIssueComment({
-      token,
-      repoFullName,
-      issueNumber,
-      body: replyBody,
-    });
+    await env.SMOLPAWS_QUEUE.send(queueMessage);
 
-    return new Response("OK", { status: 200 });
+    return new Response("Queued", { status: 202 });
   },
-};
+
+  async queue(
+    batch: MessageBatch<SmolpawsQueueMessage>,
+    env: Env,
+  ): Promise<void> {
+    await Promise.all(
+      batch.messages.map((message) => processQueueMessage(message, env)),
+    );
+  },
+} satisfies ExportedHandler<Env>;
 
 function parseList(value?: string): Set<string> {
   if (!value) {
@@ -107,6 +117,13 @@ function parseList(value?: string): Set<string> {
       .map((item) => item.trim().toLowerCase())
       .filter(Boolean),
   );
+}
+
+function parseEvent(event: string): SmolpawsEvent | null {
+  if (event === "issue_comment" || event === "pull_request_review_comment") {
+    return event;
+  }
+  return null;
 }
 
 function containsMention(body: string): boolean {
@@ -145,6 +162,45 @@ function isAllowed(payload: GithubEventPayload, env: Env): boolean {
 
   return true;
 }
+
+async function processQueueMessage(
+  message: Message<SmolpawsQueueMessage>,
+  env: Env,
+): Promise<void> {
+  const { payload } = message.body;
+  const installationId = payload.installation?.id;
+  const repoFullName = payload.repository?.full_name;
+  const issueNumber = payload.issue?.number ?? payload.pull_request?.number;
+
+  if (!installationId || !repoFullName || !issueNumber) {
+    console.error("Queue message missing repository context", {
+      delivery_id: message.body.delivery_id,
+    });
+    message.ack();
+    return;
+  }
+
+  try {
+    const token = await createInstallationToken(installationId, env);
+    const runnerReply = await dispatchToRunner(message.body, env);
+    const replyBody =
+      runnerReply ??
+      "🐾 smolpaws heard you and is waking up. Runner is not configured yet.";
+
+    await postIssueComment({
+      token,
+      repoFullName,
+      issueNumber,
+      body: replyBody,
+    });
+
+    message.ack();
+  } catch (error) {
+    console.error("Queue message processing failed", error);
+    message.retry({ delaySeconds: 30 });
+  }
+}
+
 
 async function verifySignature(
   rawBody: string,
@@ -303,7 +359,7 @@ async function postIssueComment(options: {
 }
 
 async function dispatchToRunner(
-  payload: GithubEventPayload,
+  message: SmolpawsQueueMessage,
   env: Env,
 ): Promise<string | null> {
   if (!env.SMOLPAWS_RUNNER_URL) {
@@ -318,15 +374,12 @@ async function dispatchToRunner(
         ? { Authorization: `Bearer ${env.SMOLPAWS_RUNNER_TOKEN}` }
         : {}),
     },
-    body: JSON.stringify({
-      event: "issue_comment",
-      payload,
-    }),
+    body: JSON.stringify(message),
   });
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`Runner error: ${message}`);
+    const responseText = await response.text();
+    throw new Error(`Runner error: ${responseText}`);
   }
 
   const data = (await response.json()) as { reply?: string };
