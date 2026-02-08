@@ -91,7 +91,7 @@ LLM_MODEL=<model> LLM_API_KEY=<key> npm run runner:dev
 - `DAYTONA_API_KEY` (optional; enables Daytona runner)
 - `DAYTONA_API_URL` (optional)
 - `DAYTONA_TARGET` (optional)
-- `SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES` (optional; defaults to 60)
+- `SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES` (optional; defaults to 30)
 
 ## Cloudflare Containers note
 

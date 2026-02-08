@@ -150,10 +150,10 @@ async function getSandbox(options: {
 }
 
 function parseAutoStopMinutes(env: DaytonaEnv): number {
-  const raw = env.SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES ?? "60";
+  const raw = env.SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES ?? "30";
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < 0) {
-    return 60;
+    return 30;
   }
   return Math.trunc(parsed);
 }
