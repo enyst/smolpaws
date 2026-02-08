@@ -17,6 +17,7 @@ import { randomUUID } from "crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 import type {
   SmolpawsQueueMessage,
   SmolpawsRunnerRequest,
@@ -1020,7 +1021,7 @@ async function start(): Promise<void> {
     },
   );
 
-  app.get<{ Params: { conversationId: string } }>(
+  app.get<{ Params: { conversationId: string }; Querystring: { format?: string } }>(
     "/api/conversations/:conversationId/events/download",
     async (request, reply) => {
       const auth = isAuthorized(request, env);
@@ -1049,13 +1050,26 @@ async function start(): Promise<void> {
       }
       try {
         const content = await fs.readFile(eventsPath, "utf8");
+        const format =
+          typeof request.query.format === "string"
+            ? request.query.format.toLowerCase()
+            : "";
+        const acceptEncoding =
+          normalizeHeader(request.headers["accept-encoding"])?.toLowerCase() ??
+          "";
+        const shouldGzip =
+          format === "gz" || format === "gzip" || acceptEncoding.includes("gzip");
+        const body = shouldGzip ? gzipSync(content) : content;
         reply
           .header("Content-Type", "application/x-ndjson")
           .header(
             "Content-Disposition",
             `attachment; filename="${conversationId}.events.jsonl"`,
           );
-        reply.send(content);
+        if (shouldGzip) {
+          reply.header("Content-Encoding", "gzip");
+        }
+        reply.send(body);
       } catch (error) {
         const err = error as NodeJS.ErrnoException;
         if (err.code === "ENOENT") {

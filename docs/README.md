@@ -125,6 +125,7 @@ When `DAYTONA_API_KEY` is set, the runner dispatches `/run` jobs into Daytona sa
 - `GET /api/conversations/:id/events/download`
 - Requires `SMOLPAWS_RUNNER_TOKEN` if configured.
 - Returns `application/x-ndjson` with the persisted `events.jsonl`.
+- Use `?format=gz` or `Accept-Encoding: gzip` for a gzipped response.
 
 
 ## Remaining work
