@@ -4,10 +4,20 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "worker:dev": "wrangler dev",
+    "worker:deploy": "wrangler deploy",
+    "runner:dev": "tsx watch src/runner.ts",
+    "runner:start": "tsx src/runner.ts",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@fastify/type-provider-typebox": "^6.1.0",
+    "@sinclair/typebox": "^0.34.48",
+    "fastify": "^5.7.4"
+  },
   "devDependencies": {
+    "@types/node": "^25.2.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "wrangler": "^3.78.0"
   }

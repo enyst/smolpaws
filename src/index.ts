@@ -1,3 +1,5 @@
+import type { GithubEventPayload } from "./shared/github.js";
+
 interface Env {
   GITHUB_WEBHOOK_SECRET: string;
   GITHUB_APP_ID: string;
@@ -9,19 +11,6 @@ interface Env {
   SMOLPAWS_RUNNER_URL?: string;
   SMOLPAWS_RUNNER_TOKEN?: string;
 }
-
-type GithubEventPayload = {
-  action?: string;
-  sender?: { login?: string; id?: number };
-  comment?: { body?: string; id?: number };
-  repository?: {
-    full_name?: string;
-    owner?: { login?: string };
-  };
-  issue?: { number?: number };
-  pull_request?: { number?: number };
-  installation?: { id?: number };
-};
 
 const MENTION = "@smolpaws";
 const USER_AGENT = "smolpaws-webhook";
