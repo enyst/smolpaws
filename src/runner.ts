@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { Type, type Static } from "@sinclair/typebox";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import {
+  FileStore,
   LocalConversation,
   Workspace,
   type Event,
@@ -140,6 +141,7 @@ const StartConversationRequestSchema = Type.Object(
 );
 
 const SuccessSchema = Type.Object({ success: Type.Boolean() });
+const ErrorSchema = Type.Object({ error: Type.String() });
 
 const EventSchema = Type.Object(
   {
@@ -162,6 +164,10 @@ const ConversationInfoSchema = Type.Object({
 
 const AskAgentRequestSchema = Type.Object({ question: Type.String() });
 const AskAgentResponseSchema = Type.Object({ response: Type.String() });
+
+const ConversationListSchema = Type.Object({
+  items: Type.Array(ConversationInfoSchema),
+});
 
 const GenerateTitleRequestSchema = Type.Object({
   max_length: Type.Optional(Type.Number()),
@@ -214,6 +220,10 @@ type ConversationInfo = Static<typeof ConversationInfoSchema>;
 type EventPage = Static<typeof EventPageSchema>;
 type RunRequest = Static<typeof RunRequestSchema>;
 type RunResponse = Static<typeof RunResponseSchema>;
+type ConversationList = Static<typeof ConversationListSchema>;
+type ErrorResponse = Static<typeof ErrorSchema>;
+
+
 type AskAgentRequest = Static<typeof AskAgentRequestSchema>;
 type AskAgentResponse = Static<typeof AskAgentResponseSchema>;
 type GenerateTitleRequest = Static<typeof GenerateTitleRequestSchema>;
@@ -305,25 +315,20 @@ function isSafeConversationId(id: string): boolean {
 function resolvePersistenceRoot(
   persistenceDir: string,
   record?: ConversationRecord,
-): string | null {
+): string {
   if (path.isAbsolute(persistenceDir)) {
     return persistenceDir;
   }
-  if (record?.workspaceRoot) {
-    return path.join(record.workspaceRoot, persistenceDir);
-  }
-  return null;
+  const baseDir = record?.workspaceRoot ?? process.cwd();
+  return path.join(baseDir, persistenceDir);
 }
 
 function buildEventsFilePath(
   conversationId: string,
   persistenceDir: string,
   record?: ConversationRecord,
-): string | null {
+): string {
   const rootDir = resolvePersistenceRoot(persistenceDir, record);
-  if (!rootDir) {
-    return null;
-  }
   return path.join(rootDir, conversationId, "events.jsonl");
 }
 
@@ -562,6 +567,58 @@ function extractTextFromRequest(message?: {
 }): string {
   if (!message?.content?.length) return "";
   return extractMessageText(message.content);
+}
+
+async function buildConversationInfoFromPersistence(
+  conversationId: string,
+  persistenceDir: string,
+  record?: ConversationRecord,
+): Promise<ConversationInfo> {
+  if (record) {
+    return buildConversationInfo(record);
+  }
+  const eventsPath = buildEventsFilePath(conversationId, persistenceDir, record);
+  let createdAt = new Date().toISOString();
+  let updatedAt = createdAt;
+  try {
+    const stats = await fs.stat(eventsPath);
+    const created = stats.birthtime ?? stats.ctime;
+    createdAt = created.toISOString();
+    updatedAt = stats.mtime.toISOString();
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  return {
+    id: conversationId,
+    created_at: createdAt,
+    updated_at: updatedAt,
+    execution_status: "offline",
+  };
+}
+
+async function listConversationInfos(
+  persistenceDir: string,
+): Promise<ConversationInfo[]> {
+  const rootDir = resolvePersistenceRoot(persistenceDir);
+  const ids = new Set<string>(conversations.keys());
+  for (const id of FileStore.listConversations(rootDir)) {
+    ids.add(id);
+  }
+  const items = await Promise.all(
+    Array.from(ids)
+      .filter((id) => isSafeConversationId(id))
+      .map(async (id) =>
+        buildConversationInfoFromPersistence(id, persistenceDir, conversations.get(id)),
+      ),
+  );
+  items.sort(
+    (a, b) =>
+      new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+  );
+  return items;
 }
 
 async function runStandaloneQuestion(
@@ -808,6 +865,33 @@ async function start(): Promise<void> {
     },
   );
 
+
+  app.get<{ Reply: ConversationList | ErrorResponse }>(
+    "/api/conversations",
+    {
+      schema: {
+        response: {
+          200: ConversationListSchema,
+          401: ErrorSchema,
+          404: ErrorSchema,
+        },
+      },
+    },
+    async (request, reply): Promise<ConversationList | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+      if (!env.DAYTONA_API_KEY) {
+        reply.status(404);
+        return { error: "Daytona not configured" };
+      }
+      const items = await listConversationInfos(persistenceDir);
+      return { items };
+    },
+  );
+
   app.post<{ Body: StartConversationRequest; Reply: ConversationInfo }>(
     "/api/conversations",
     {
@@ -1044,10 +1128,6 @@ async function start(): Promise<void> {
         persistenceDir,
         record,
       );
-      if (!eventsPath) {
-        reply.status(404).send({ error: "Conversation events not found" });
-        return;
-      }
       try {
         const content = await fs.readFile(eventsPath, "utf8");
         const format =
