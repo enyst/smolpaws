@@ -21,6 +21,7 @@ Use this skill when you need to run the Agent SDK server inside Daytona, provisi
 ## References
 
 - [references/daytona-sdk.md](references/daytona-sdk.md) - SDK setup, sandbox lifecycle, and execution basics.
+- [references/daytona-auth.md](references/daytona-auth.md) - API key setup and auth scopes.
 - [references/daytona-preview.md](references/daytona-preview.md) - Preview URL and authentication details.
 - [references/daytona-agent-sdk.md](references/daytona-agent-sdk.md) - Claude Agent SDK guide in Daytona.
 

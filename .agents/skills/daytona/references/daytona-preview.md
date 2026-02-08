@@ -26,3 +26,7 @@ const signed = await sandbox.getSignedPreviewUrl(3000, 3600);
 const response = await fetch(signed.url);
 await sandbox.expireSignedPreviewUrl(3000, signed.token);
 ```
+
+## Preview warning page
+
+Browser access may show a warning page on first open. You can skip it by sending the `X-Daytona-Skip-Preview-Warning: true` header (or use signed URLs / custom preview proxy if appropriate).
