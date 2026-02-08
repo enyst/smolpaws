@@ -30,11 +30,25 @@ Example: If your task is "Share the weather forecast", you should:
 2. Call `send_message` with the formatted forecast
 3. Return a brief summary for the logs
 
+## Browser Automation
+
+You have `agent-browser` available for web automation. Use it via bash commands:
+
+```bash
+agent-browser open <url>        # Navigate to page
+agent-browser snapshot -i       # Get interactive elements with refs
+agent-browser click @e1         # Click element by ref
+agent-browser fill @e2 "text"   # Fill input by ref
+agent-browser close             # Close browser
+```
+
+For full documentation, read `/app/skills/agent-browser.md`.
+
 ## Your Workspace
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
 
-Your `CLAUDE.md` file in that folder is your memory - update it with important context you want to remember.
+Your `AGENTS.md` file in that folder is your memory - update it with important context you want to remember.
 
 ## Memory
 
@@ -43,5 +57,5 @@ The `conversations/` folder contains searchable history of past conversations. U
 When you learn something important:
 - Create files for structured data (e.g., `customers.md`, `preferences.md`)
 - Split files larger than 500 lines into folders
-- Add recurring context directly to this CLAUDE.md
-- Always index new memory files at the top of CLAUDE.md
+- Add recurring context directly to this AGENTS.md
+- Always index new memory files at the top of AGENTS.md

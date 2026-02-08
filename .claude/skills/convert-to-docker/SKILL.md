@@ -170,7 +170,7 @@ Update references in documentation files:
 
 | File | Find | Replace |
 |------|------|---------|
-| `CLAUDE.md` | "Apple Container (Linux VMs)" | "Docker containers" |
+| `AGENTS.md` | "Apple Container (Linux VMs)" | "Docker containers" |
 | `README.md` | "Apple containers" | "Docker containers" |
 | `README.md` | "Apple Container" | "Docker" |
 | `README.md` | Requirements section | Update to show Docker instead |
@@ -355,7 +355,7 @@ Check directory permissions on the host. The container runs as uid 1000.
 | `src/container-runner.ts` | Mount syntax, spawn command, comments |
 | `src/index.ts` | Startup check function |
 | `container/build.sh` | Build and run commands |
-| `CLAUDE.md` | Quick context |
+| `AGENTS.md` | Quick context |
 | `README.md` | Requirements, FAQ |
 | `docs/REQUIREMENTS.md` | Architecture references |
 | `docs/SPEC.md` | Architecture diagram, tech stack |

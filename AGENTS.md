@@ -17,7 +17,7 @@ Single Node.js process that connects to WhatsApp, routes messages to OpenHands A
 | `src/container-runner.ts` | Spawns agent containers with mounts |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
 | `src/db.ts` | SQLite operations |
-| `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
+| `groups/{name}/AGENTS.md` | Per-group memory (isolated) |
 
 ## Skills
 

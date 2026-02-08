@@ -3,7 +3,22 @@
 
 FROM node:22-slim
 
-RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
+# Install Chromium, display libs, and utilities
+RUN apt-get update && apt-get install -y \
+    chromium \
+    fonts-liberation fonts-noto-color-emoji \
+    libgtk-3-0 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 \
+    libgbm1 libpango-1.0-0 libcairo2 libasound2 libxshmfence1 \
+    libatk1.0-0 libatk-bridge2.0-0 libdrm2 libxkbcommon0 \
+    git curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install agent-browser CLI globally
+RUN npm install -g agent-browser
+
+# Point agent-browser at system Chromium
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Create app directory
 WORKDIR /app
@@ -16,6 +31,9 @@ RUN npm install
 
 # Copy source code
 COPY agent-runner/ ./
+
+# Copy browser automation skill docs
+COPY skills/ /app/skills/
 
 # Build TypeScript
 RUN npm run build

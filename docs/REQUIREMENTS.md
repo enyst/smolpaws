@@ -81,7 +81,7 @@ A personal Claude assistant accessible via WhatsApp, with minimal custom code.
 **Implementation approach:**
 - Use existing tools (WhatsApp connector, Claude Agent SDK, MCP servers)
 - Minimal glue code
-- File-based systems where possible (CLAUDE.md for memory, folders for groups)
+- File-based systems where possible (AGENTS.md for memory, folders for groups)
 
 ---
 
@@ -94,10 +94,10 @@ A personal Claude assistant accessible via WhatsApp, with minimal custom code.
 - Unregistered groups are ignored completely
 
 ### Memory System
-- **Per-group memory**: Each group has a folder with its own `CLAUDE.md`
-- **Global memory**: Root `CLAUDE.md` is read by all groups, but only writable from "main" (self-chat)
+- **Per-group memory**: Each group has a folder with its own `AGENTS.md`
+- **Global memory**: Root `AGENTS.md` is read by all groups, but only writable from "main" (self-chat)
 - **Files**: Groups can create/read files in their folder and reference them
-- Agent runs in the group's folder, automatically inherits both CLAUDE.md files
+- Agent runs in the group's folder, automatically inherits both AGENTS.md files
 
 ### Session Management
 - Each group maintains a conversation session (via Claude Agent SDK)
@@ -128,7 +128,7 @@ A personal Claude assistant accessible via WhatsApp, with minimal custom code.
 
 ### Main Channel Privileges
 - Main channel is the admin/control group (typically self-chat)
-- Can write to global memory (`groups/CLAUDE.md`)
+- Can write to global memory (`groups/AGENTS.md`)
 - Can schedule tasks for any group
 - Can view and manage tasks from all groups
 - Can configure additional directory mounts for any group

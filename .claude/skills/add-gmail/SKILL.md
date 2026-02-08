@@ -211,7 +211,7 @@ if (fs.existsSync(gmailDir)) {
 
 ### Step 3: Update Group Memory
 
-Append to `groups/CLAUDE.md` (the global memory file):
+Append to `groups/AGENTS.md` (the global memory file):
 
 ```markdown
 
@@ -227,7 +227,7 @@ You have access to Gmail via MCP tools:
 Example: "Check my unread emails from today" or "Send an email to john@example.com about the meeting"
 ```
 
-Also append the same section to `groups/main/CLAUDE.md`.
+Also append the same section to `groups/main/AGENTS.md`.
 
 ### Step 4: Rebuild and Restart
 
@@ -610,7 +610,7 @@ Create the email group directory and memory file:
 mkdir -p groups/email
 ```
 
-Write `groups/email/CLAUDE.md`:
+Write `groups/email/AGENTS.md`:
 
 ```markdown
 # Email Channel
@@ -715,7 +715,7 @@ To remove Gmail entirely:
 
 4. Delete `src/email-channel.ts` (if created)
 
-5. Remove Gmail sections from `groups/*/CLAUDE.md`
+5. Remove Gmail sections from `groups/*/AGENTS.md`
 
 6. Rebuild:
    ```bash

@@ -125,7 +125,7 @@ Build the SmolPaws agent container:
 ./container/build.sh
 ```
 
-This creates the `smolpaws-agent:latest` image with Node.js, Chromium, Claude Code CLI, and agent-browser.
+This creates the `smolpaws-agent:latest` image with Node.js, Chromium, OpenHands Agent SDK, and agent-browser.
 
 Verify the build succeeded by running a simple test (this auto-detects which runtime you're using):
 
@@ -165,8 +165,8 @@ Ask the user:
 > Messages starting with `@TriggerWord` will be sent to Claude.
 
 If they choose something other than `Andy`, update it in these places:
-1. `groups/CLAUDE.md` - Change "# Andy" and "You are Andy" to the new name
-2. `groups/main/CLAUDE.md` - Same changes at the top
+1. `groups/AGENTS.md` - Change "# Andy" and "You are Andy" to the new name
+2. `groups/main/AGENTS.md` - Same changes at the top
 3. `data/registered_groups.json` - Use `@NewName` as the trigger when registering groups
 
 Store their choice - you'll use it when creating the registered_groups.json and when telling them how to test.
