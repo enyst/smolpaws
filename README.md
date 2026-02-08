@@ -6,7 +6,7 @@
   Your smart cat. Lightweight, secure, customizable.
 </p>
 
-Based on [NanoClaw](https://github.com/gavrielc/nanoclaw).
+Powered by [@smolpaws/agent-sdk](https://github.com/smolpaws/smolpaws) — a tiny AI coding agent built on [OpenHands](https://github.com/OpenHands/OpenHands). Based on [NanoClaw](https://github.com/gavrielc/nanoclaw).
 
 ## Why
 
