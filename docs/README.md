@@ -86,15 +86,45 @@ LLM_MODEL=<model> LLM_API_KEY=<key> npm run runner:dev
 - `LLM_PROVIDER` (optional)
 - `SMOLPAWS_RUNNER_TOKEN` (optional bearer auth)
 - `SMOLPAWS_WORKSPACE_ROOT` (optional workspace path)
+- `SMOLPAWS_PERSISTENCE_DIR` (optional persistence root; defaults to `~/.openhands/conversations`)
+- `OPENHANDS_CONVERSATIONS_DIR` (optional alias for persistence root)
 
 ## Cloudflare Containers note
 
 Cloudflare Containers requires the **Workers Paid** plan. The Containers pricing page currently lists **no free tier** for Containers; usage is included under Workers Paid with additional usage billed separately.
+
+
+## Daytona integration draft
+
+Target: keep **Worker + Queue** as the public entrypoint, then dispatch agent runs into **Daytona sandboxes**.
+
+**Proposed flow**
+1. Runner receives `/run` or `/api/conversations`.
+2. If Daytona is enabled (ex: `DAYTONA_API_KEY` present), create/reuse a sandbox via `@daytonaio/sdk`.
+3. Bootstrap the sandbox:
+   - `git clone` the repo (using a GitHub installation token)
+   - `npm install` (or cached deps)
+   - set `SMOLPAWS_WORKSPACE_ROOT` to the cloned repo
+4. Execute an agent entry script inside the sandbox (ex: `node scripts/daytona-run.ts --prompt "..."`).
+5. Capture stdout (or stream via process sessions) and return the reply to the runner.
+6. Stop or delete the sandbox (or keep warm per repo).
+
+**Suggested env vars**
+- `DAYTONA_API_KEY` (required)
+- `DAYTONA_API_URL` (optional)
+- `DAYTONA_TARGET` (optional)
+- `SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES` (optional)
+- `SMOLPAWS_DAYTONA_REUSE_SANDBOXES` (optional)
+
+**Implementation notes**
+- Add a small runner-side adapter (ex: `src/daytona.ts`) to manage sandbox lifecycle.
+- Use Daytona process sessions for streaming logs when we add websocket support.
+- Persistence can stay on the runner host (`SMOLPAWS_PERSISTENCE_DIR`) while sandbox runs are ephemeral.
 
 ## Remaining work
 
 - Implement repo checkout for GitHub events (clone + working dir setup).
 - Add websocket streaming endpoints for events.
 - Implement `/api/bash`, `/api/file`, `/api/git` for full remote workspace compatibility.
-- Add persistence for conversations (optional).
+- Implement Daytona runner dispatch (sandbox lifecycle + agent entry script).
 - Confirm Fastify runner deployment target (Cloudflare Containers vs other host).

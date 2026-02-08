@@ -14,6 +14,8 @@ import {
   reduceTextContent,
 } from "@smolpaws/agent-sdk";
 import { randomUUID } from "crypto";
+import os from "node:os";
+import path from "node:path";
 import type { SmolpawsQueueMessage } from "./shared/github.js";
 
 const DEFAULT_MODEL_ENV = "LLM_MODEL";
@@ -219,6 +221,7 @@ type RunnerEnv = {
   LLM_PROVIDER?: string;
   LLM_API_KEY?: string;
   SMOLPAWS_WORKSPACE_ROOT?: string;
+  SMOLPAWS_PERSISTENCE_DIR?: string;
 };
 
 type ConversationRecord = {
@@ -251,8 +254,34 @@ function getEnv(): RunnerEnv {
     LLM_PROVIDER: process.env.LLM_PROVIDER,
     LLM_API_KEY: process.env.LLM_API_KEY,
     SMOLPAWS_WORKSPACE_ROOT: process.env.SMOLPAWS_WORKSPACE_ROOT,
+    SMOLPAWS_PERSISTENCE_DIR: process.env.SMOLPAWS_PERSISTENCE_DIR,
   };
 }
+
+const DEFAULT_PERSISTENCE_DIR = path.join(
+  os.homedir(),
+  ".openhands",
+  "conversations",
+);
+
+function resolvePersistenceDir(env: RunnerEnv): string {
+  const raw =
+    env.SMOLPAWS_PERSISTENCE_DIR ??
+    process.env.OPENHANDS_CONVERSATIONS_DIR ??
+    "";
+  const value = raw.trim();
+  if (!value) {
+    return DEFAULT_PERSISTENCE_DIR;
+  }
+  if (value === "~") {
+    return os.homedir();
+  }
+  if (value.startsWith("~/")) {
+    return path.join(os.homedir(), value.slice(2));
+  }
+  return value;
+}
+
 
 function normalizeHeader(
   value: string | string[] | undefined,
@@ -478,6 +507,7 @@ async function runStandaloneQuestion(
   settings: OpenHandsSettings,
   prompt: string,
   workspaceRoot?: string,
+  persistenceDir?: string,
 ): Promise<string> {
   const registry = new SecretRegistry();
   const conversation = new LocalConversation({
@@ -485,6 +515,7 @@ async function runStandaloneQuestion(
     workspace: Workspace({ kind: "local", root: workspaceRoot }),
     secrets: registry,
     includeDefaultTools: false,
+    persistenceDir,
   });
   const responses: string[] = [];
   conversation.on("event", (event: Event) => {
@@ -500,6 +531,7 @@ async function runStandaloneQuestion(
 
 function createConversationRecord(
   request: StartConversationRequest,
+  persistenceDir?: string,
 ): ConversationRecord {
   const id = randomUUID();
   const registry = new SecretRegistry();
@@ -511,6 +543,7 @@ function createConversationRecord(
     workspace,
     secrets: registry,
     includeDefaultTools: true,
+    persistenceDir,
   });
 
   const record: ConversationRecord = {
@@ -634,6 +667,7 @@ function generateTitleFromEvents(
 
 async function start(): Promise<void> {
   const env = getEnv();
+  const persistenceDir = resolvePersistenceDir(env);
   const app = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>();
 
   app.get("/health", async () => ({ ok: true }));
@@ -686,6 +720,7 @@ async function start(): Promise<void> {
           settings,
           prompt,
           env.SMOLPAWS_WORKSPACE_ROOT,
+          persistenceDir,
         );
         return { reply: response || buildReplyFromComment(message) };
       } catch (error) {
@@ -707,7 +742,7 @@ async function start(): Promise<void> {
       },
     },
     async (request, reply): Promise<ConversationInfo> => {
-      const record = createConversationRecord(request.body);
+      const record = createConversationRecord(request.body, persistenceDir);
       if (request.body.initial_message) {
         const messageText = extractTextFromRequest(request.body.initial_message);
         if (messageText) {
@@ -817,6 +852,7 @@ async function start(): Promise<void> {
         record.settings,
         request.body.question,
         record.workspaceRoot,
+        persistenceDir,
       );
       return { response };
     },
