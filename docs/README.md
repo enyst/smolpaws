@@ -121,6 +121,12 @@ When `DAYTONA_API_KEY` is set, the runner dispatches `/run` jobs into Daytona sa
 - Use Daytona process sessions for streaming logs when we add websocket support.
 - Persistence lives on the runner host (`SMOLPAWS_PERSISTENCE_DIR`) while sandbox runs are ephemeral.
 
+**Download events (Daytona only)**
+- `GET /api/conversations/:id/events/download`
+- Requires `SMOLPAWS_RUNNER_TOKEN` if configured.
+- Returns `application/x-ndjson` with the persisted `events.jsonl`.
+
+
 ## Remaining work
 
 - Implement repo checkout for non-Daytona runs (clone + working dir setup).

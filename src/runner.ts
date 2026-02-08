@@ -14,6 +14,7 @@ import {
   reduceTextContent,
 } from "@smolpaws/agent-sdk";
 import { randomUUID } from "crypto";
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -294,6 +295,35 @@ function resolvePersistenceDir(env: RunnerEnv): string {
     return path.join(os.homedir(), value.slice(2));
   }
   return value;
+}
+
+function isSafeConversationId(id: string): boolean {
+  return !/[\\/]/.test(id) && !id.includes("\0");
+}
+
+function resolvePersistenceRoot(
+  persistenceDir: string,
+  record?: ConversationRecord,
+): string | null {
+  if (path.isAbsolute(persistenceDir)) {
+    return persistenceDir;
+  }
+  if (record?.workspaceRoot) {
+    return path.join(record.workspaceRoot, persistenceDir);
+  }
+  return null;
+}
+
+function buildEventsFilePath(
+  conversationId: string,
+  persistenceDir: string,
+  record?: ConversationRecord,
+): string | null {
+  const rootDir = resolvePersistenceRoot(persistenceDir, record);
+  if (!rootDir) {
+    return null;
+  }
+  return path.join(rootDir, conversationId, "events.jsonl");
 }
 
 
@@ -989,6 +1019,54 @@ async function start(): Promise<void> {
       });
     },
   );
+
+  app.get<{ Params: { conversationId: string } }>(
+    "/api/conversations/:conversationId/events/download",
+    async (request, reply) => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401).send({ error: auth.reason ?? "Unauthorized" });
+        return;
+      }
+      if (!env.DAYTONA_API_KEY) {
+        reply.status(404).send({ error: "Daytona not configured" });
+        return;
+      }
+      const conversationId = request.params.conversationId;
+      if (!isSafeConversationId(conversationId)) {
+        reply.status(400).send({ error: "Invalid conversation id" });
+        return;
+      }
+      const record = conversations.get(conversationId);
+      const eventsPath = buildEventsFilePath(
+        conversationId,
+        persistenceDir,
+        record,
+      );
+      if (!eventsPath) {
+        reply.status(404).send({ error: "Conversation events not found" });
+        return;
+      }
+      try {
+        const content = await fs.readFile(eventsPath, "utf8");
+        reply
+          .header("Content-Type", "application/x-ndjson")
+          .header(
+            "Content-Disposition",
+            `attachment; filename="${conversationId}.events.jsonl"`,
+          );
+        reply.send(content);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === "ENOENT") {
+          reply.status(404).send({ error: "Conversation events not found" });
+          return;
+        }
+        throw error;
+      }
+    },
+  );
+
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof Error && error.message === "conversation_not_found") {
