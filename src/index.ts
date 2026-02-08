@@ -2,6 +2,7 @@ import type {
   GithubEventPayload,
   SmolpawsEvent,
   SmolpawsQueueMessage,
+  SmolpawsRunnerRequest,
 } from "./shared/github.js";
 
 interface Env {
@@ -182,7 +183,7 @@ async function processQueueMessage(
 
   try {
     const token = await createInstallationToken(installationId, env);
-    const runnerReply = await dispatchToRunner(message.body, env);
+    const runnerReply = await dispatchToRunner(message.body, env, token);
     const replyBody =
       runnerReply ??
       "🐾 smolpaws heard you and is waking up. Runner is not configured yet.";
@@ -361,10 +362,16 @@ async function postIssueComment(options: {
 async function dispatchToRunner(
   message: SmolpawsQueueMessage,
   env: Env,
+  githubToken: string,
 ): Promise<string | null> {
   if (!env.SMOLPAWS_RUNNER_URL) {
     return null;
   }
+
+  const runnerMessage: SmolpawsRunnerRequest = {
+    ...message,
+    github_token: githubToken,
+  };
 
   const response = await fetch(env.SMOLPAWS_RUNNER_URL, {
     method: "POST",
@@ -374,7 +381,7 @@ async function dispatchToRunner(
         ? { Authorization: `Bearer ${env.SMOLPAWS_RUNNER_TOKEN}` }
         : {}),
     },
-    body: JSON.stringify(message),
+    body: JSON.stringify(runnerMessage),
   });
 
   if (!response.ok) {

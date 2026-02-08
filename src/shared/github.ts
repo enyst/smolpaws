@@ -18,3 +18,7 @@ export type SmolpawsQueueMessage = {
   payload: GithubEventPayload;
   delivery_id?: string;
 };
+
+export type SmolpawsRunnerRequest = SmolpawsQueueMessage & {
+  github_token?: string;
+};

@@ -88,43 +88,42 @@ LLM_MODEL=<model> LLM_API_KEY=<key> npm run runner:dev
 - `SMOLPAWS_WORKSPACE_ROOT` (optional workspace path)
 - `SMOLPAWS_PERSISTENCE_DIR` (optional persistence root; defaults to `~/.openhands/conversations`)
 - `OPENHANDS_CONVERSATIONS_DIR` (optional alias for persistence root)
+- `DAYTONA_API_KEY` (optional; enables Daytona runner)
+- `DAYTONA_API_URL` (optional)
+- `DAYTONA_TARGET` (optional)
+- `SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES` (optional; defaults to 60)
 
 ## Cloudflare Containers note
 
 Cloudflare Containers requires the **Workers Paid** plan. The Containers pricing page currently lists **no free tier** for Containers; usage is included under Workers Paid with additional usage billed separately.
 
 
-## Daytona integration draft
+## Daytona integration
 
-Target: keep **Worker + Queue** as the public entrypoint, then dispatch agent runs into **Daytona sandboxes**.
+When `DAYTONA_API_KEY` is set, the runner dispatches `/run` jobs into Daytona sandboxes.
 
-**Proposed flow**
-1. Runner receives `/run` or `/api/conversations`.
-2. If Daytona is enabled (ex: `DAYTONA_API_KEY` present), create/reuse a sandbox via `@daytonaio/sdk`.
-3. Bootstrap the sandbox:
-   - `git clone` the repo (using a GitHub installation token)
-   - `npm install` (or cached deps)
-   - set `SMOLPAWS_WORKSPACE_ROOT` to the cloned repo
-4. Execute an agent entry script inside the sandbox (ex: `node scripts/daytona-run.ts --prompt "..."`).
-5. Capture stdout (or stream via process sessions) and return the reply to the runner.
-6. Stop or delete the sandbox (or keep warm per repo).
+**Behavior**
+- PR events → per-PR sandbox keyed by `<head repo>#<pr number>` and reused.
+- Non-PR events → per-job sandbox (created + deleted after run).
 
-**Suggested env vars**
-- `DAYTONA_API_KEY` (required)
-- `DAYTONA_API_URL` (optional)
-- `DAYTONA_TARGET` (optional)
-- `SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES` (optional)
-- `SMOLPAWS_DAYTONA_REUSE_SANDBOXES` (optional)
+**Flow**
+1. Runner receives `/run`.
+2. Runner creates/reuses a sandbox via `@daytonaio/sdk`.
+3. Sandbox bootstraps:
+   - `git clone` target repo using the GitHub installation token
+   - checkout PR head ref if available
+   - install `@smolpaws/agent-sdk` (cached in sandbox)
+4. Execute the agent inside the sandbox; reply is returned to the runner.
+5. Per-job sandboxes are deleted; per-PR sandboxes are left for Daytona auto-stop.
 
-**Implementation notes**
-- Add a small runner-side adapter (ex: `src/daytona.ts`) to manage sandbox lifecycle.
+**Notes**
+- Use `SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES` to control auto-stop.
 - Use Daytona process sessions for streaming logs when we add websocket support.
-- Persistence can stay on the runner host (`SMOLPAWS_PERSISTENCE_DIR`) while sandbox runs are ephemeral.
+- Persistence lives on the runner host (`SMOLPAWS_PERSISTENCE_DIR`) while sandbox runs are ephemeral.
 
 ## Remaining work
 
-- Implement repo checkout for GitHub events (clone + working dir setup).
+- Implement repo checkout for non-Daytona runs (clone + working dir setup).
 - Add websocket streaming endpoints for events.
 - Implement `/api/bash`, `/api/file`, `/api/git` for full remote workspace compatibility.
-- Implement Daytona runner dispatch (sandbox lifecycle + agent entry script).
 - Confirm Fastify runner deployment target (Cloudflare Containers vs other host).

@@ -16,7 +16,15 @@ import {
 import { randomUUID } from "crypto";
 import os from "node:os";
 import path from "node:path";
-import type { SmolpawsQueueMessage } from "./shared/github.js";
+import type {
+  SmolpawsQueueMessage,
+  SmolpawsRunnerRequest,
+} from "./shared/github.js";
+import {
+  maybeRunInDaytona,
+  type DaytonaEnv,
+  type DaytonaLlmConfig,
+} from "./daytona.js";
 
 const DEFAULT_MODEL_ENV = "LLM_MODEL";
 const DEFAULT_API_KEY_ENV = "LLM_API_KEY";
@@ -183,6 +191,7 @@ const RunRequestSchema = Type.Object({
   ]),
   payload: Type.Any(),
   delivery_id: Type.Optional(Type.String()),
+  github_token: Type.Optional(Type.String()),
 });
 
 const RunResponseSchema = Type.Object({
@@ -212,7 +221,7 @@ type SetSecretsRequest = Static<typeof SetSecretsRequestSchema>;
 type SetConfirmationPolicyRequest = Static<typeof SetConfirmationPolicyRequestSchema>;
 type SetSecurityAnalyzerRequest = Static<typeof SetSecurityAnalyzerRequestSchema>;
 
-type RunnerEnv = {
+type RunnerEnv = DaytonaEnv & {
   SMOLPAWS_RUNNER_TOKEN?: string;
   RUNNER_PORT?: string;
   PORT?: string;
@@ -255,6 +264,11 @@ function getEnv(): RunnerEnv {
     LLM_API_KEY: process.env.LLM_API_KEY,
     SMOLPAWS_WORKSPACE_ROOT: process.env.SMOLPAWS_WORKSPACE_ROOT,
     SMOLPAWS_PERSISTENCE_DIR: process.env.SMOLPAWS_PERSISTENCE_DIR,
+    DAYTONA_API_KEY: process.env.DAYTONA_API_KEY,
+    DAYTONA_API_URL: process.env.DAYTONA_API_URL,
+    DAYTONA_TARGET: process.env.DAYTONA_TARGET,
+    SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES:
+      process.env.SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES,
   };
 }
 
@@ -487,6 +501,22 @@ function buildSettingsFromEnv(env: RunnerEnv): OpenHandsSettings {
   };
 }
 
+function buildLlmConfigFromEnv(env: RunnerEnv): DaytonaLlmConfig {
+  const model = env.LLM_MODEL ?? process.env[DEFAULT_MODEL_ENV];
+  if (!model) {
+    throw new Error(
+      `LLM model is required. Set ${DEFAULT_MODEL_ENV} or LLM_MODEL.`,
+    );
+  }
+  return {
+    model,
+    provider: env.LLM_PROVIDER,
+    baseUrl: env.LLM_BASE_URL,
+    apiKey: env.LLM_API_KEY ?? process.env[DEFAULT_API_KEY_ENV],
+  };
+}
+
+
 function extractMessageText(content: TextContent[]): string {
   const message: Message = {
     role: "user",
@@ -708,13 +738,30 @@ async function start(): Promise<void> {
         return { reply: auth.reason ?? "Unauthorized" };
       }
 
-      const message = request.body as SmolpawsQueueMessage;
+      const message = request.body as SmolpawsRunnerRequest;
       const prompt = extractPromptFromMessage(message);
+      const fallbackReply = buildReplyFromComment(message);
       if (!prompt) {
-        return { reply: buildReplyFromComment(message) };
+        return { reply: fallbackReply };
       }
 
       try {
+        const llmConfig = buildLlmConfigFromEnv(env);
+        try {
+          const daytonaResult = await maybeRunInDaytona({
+            env,
+            message,
+            prompt,
+            llm: llmConfig,
+            persistenceDir,
+          });
+          if (daytonaResult?.reply) {
+            return { reply: daytonaResult.reply || fallbackReply };
+          }
+        } catch (error) {
+          console.error("Daytona runner error", error);
+        }
+
         const settings = buildSettingsFromEnv(env);
         const response = await runStandaloneQuestion(
           settings,
@@ -722,10 +769,10 @@ async function start(): Promise<void> {
           env.SMOLPAWS_WORKSPACE_ROOT,
           persistenceDir,
         );
-        return { reply: response || buildReplyFromComment(message) };
+        return { reply: response || fallbackReply };
       } catch (error) {
         console.error("Runner error", error);
-        return { reply: buildReplyFromComment(message) };
+        return { reply: fallbackReply };
       }
     },
   );
