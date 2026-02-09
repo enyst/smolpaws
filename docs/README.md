@@ -98,6 +98,10 @@ LLM_MODEL=<model> LLM_API_KEY=<key> npm run runner:dev
 Cloudflare Containers requires the **Workers Paid** plan. The Containers pricing page currently lists **no free tier** for Containers; usage is included under Workers Paid with additional usage billed separately.
 
 
+## Deployment alternatives
+
+See [deployment-alternatives.md](deployment-alternatives.md) for the two supported deployment shapes.
+
 ## Daytona integration
 
 When `DAYTONA_API_KEY` is set, the runner dispatches `/run` jobs into Daytona sandboxes.
