@@ -20,7 +20,8 @@ This repo has two viable deployment shapes depending on where you want the runne
 
 **Cons**
 - Runner availability is tied to sandbox uptime.
-- Requires a public Daytona preview URL (or equivalent proxy) for the Fastify port so Cloudflare can reach it.
+- Requires a public Daytona preview URL for the Fastify port so Cloudflare can reach it.
+  - Use the standard preview URL + `x-daytona-preview-token` header (skip signed URLs for now).
 
 ## Option B: Runner on a separate host, Daytona for execution only
 
