@@ -6,14 +6,20 @@ import type {
 } from "./shared/github.js";
 
 interface Env {
+  // GitHub App (webhook-installed repos)
   GITHUB_WEBHOOK_SECRET: string;
   GITHUB_APP_ID: string;
   GITHUB_APP_PRIVATE_KEY: string;
+
+  // GitHub user token (notifications polling for @smolpaws mentions)
+  GITHUB_USER_TOKEN?: string;
+
   ALLOWED_ACTORS?: string;
   ALLOWED_OWNERS?: string;
   ALLOWED_REPOS?: string;
   SMOLPAWS_QUEUE: Queue<SmolpawsQueueMessage>;
 
+  // Only applies to webhook flow (notifications have no installation id)
   ALLOWED_INSTALLATIONS?: string;
   SMOLPAWS_RUNNER_URL?: string;
   SMOLPAWS_RUNNER_TOKEN?: string;
@@ -91,12 +97,22 @@ export default {
       event,
       payload,
       delivery_id: request.headers.get("X-GitHub-Delivery") ?? undefined,
+      meta: { ingress: "github_webhook" },
     };
 
     await env.SMOLPAWS_QUEUE.send(queueMessage);
 
     return new Response("Queued", { status: 202 });
   },
+
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    ctx.waitUntil(pollGithubNotifications(env));
+  },
+
 
   async queue(
     batch: MessageBatch<SmolpawsQueueMessage>,
@@ -106,7 +122,7 @@ export default {
       batch.messages.map((message) => processQueueMessage(message, env)),
     );
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env, SmolpawsQueueMessage>;
 
 function parseList(value?: string): Set<string> {
   if (!value) {
@@ -154,11 +170,12 @@ function isAllowed(payload: GithubEventPayload, env: Env): boolean {
     return false;
   }
 
-  if (
-    allowedInstallations.size &&
-    (!installationId || !allowedInstallations.has(installationId))
-  ) {
-    return false;
+  // Notifications-based ingestion has no installation id; this allowlist is only
+  // applied when an installation id is present (i.e. GitHub App webhooks).
+  if (allowedInstallations.size && installationId) {
+    if (!allowedInstallations.has(installationId)) {
+      return false;
+    }
   }
 
   return true;
@@ -173,16 +190,17 @@ async function processQueueMessage(
   const repoFullName = payload.repository?.full_name;
   const issueNumber = payload.issue?.number ?? payload.pull_request?.number;
 
-  if (!installationId || !repoFullName || !issueNumber) {
+  if (!repoFullName || !issueNumber) {
     console.error("Queue message missing repository context", {
       delivery_id: message.body.delivery_id,
+      ingress: message.body.meta?.ingress,
     });
     message.ack();
     return;
   }
 
   try {
-    const token = await createInstallationToken(installationId, env);
+    const token = await resolveGithubToken({ env, installationId });
     const runnerReply = await dispatchToRunner(message.body, env, token);
     const replyBody =
       runnerReply ??
@@ -201,6 +219,311 @@ async function processQueueMessage(
     message.retry({ delaySeconds: 30 });
   }
 }
+
+
+type GithubNotification = {
+  id?: string;
+  reason?: string;
+  subject?: {
+    url?: string;
+    latest_comment_url?: string;
+    type?: string;
+  };
+  repository?: {
+    full_name?: string;
+    owner?: { login?: string };
+  };
+};
+
+type GithubMentionComment = {
+  id?: number;
+  body?: string;
+  user?: { login?: string; id?: number };
+  issue_url?: string;
+  pull_request_url?: string;
+};
+
+function normalizeToken(value?: string): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+async function githubApiFetch(
+  token: string,
+  url: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set("Accept", "application/vnd.github+json");
+  headers.set("Authorization", `Bearer ${token}`);
+  headers.set("User-Agent", USER_AGENT);
+  headers.set("X-GitHub-Api-Version", "2022-11-28");
+  return fetch(url, { ...init, headers });
+}
+
+async function resolveGithubToken(options: {
+  env: Env;
+  installationId?: number;
+}): Promise<string> {
+  if (options.installationId) {
+    return createInstallationToken(options.installationId, options.env);
+  }
+  const userToken = normalizeToken(options.env.GITHUB_USER_TOKEN);
+  if (!userToken) {
+    throw new Error("GITHUB_USER_TOKEN not configured");
+  }
+  return userToken;
+}
+
+function isReviewCommentUrl(url: string): boolean {
+  return url.includes("/pulls/comments/");
+}
+
+function parseRepoFullNameFromApiUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  const match = url.match(/\/repos\/([^/]+\/[^/]+)\//);
+  return match?.[1];
+}
+
+function parseIssueOrPrNumberFromApiUrl(url?: string): number | undefined {
+  if (!url) return undefined;
+  const match = url.match(/\/(issues|pulls)\/(\d+)(?:$|\b)/);
+  if (!match) return undefined;
+  return Number(match[2]);
+}
+
+async function markNotificationThreadRead(
+  threadId: string,
+  token: string,
+): Promise<void> {
+  const response = await githubApiFetch(
+    token,
+    `https://api.github.com/notifications/threads/${threadId}`,
+    { method: "PATCH" },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    console.error("Failed to mark notification read", {
+      threadId,
+      status: response.status,
+      text,
+    });
+  }
+}
+
+const NOTIFICATION_POLL_CONCURRENCY = 5;
+const NOTIFICATION_DEDUPE_TTL_SECONDS = 60 * 60 * 24;
+
+function isTrustedGithubApiUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" && url.hostname === "api.github.com";
+  } catch {
+    return false;
+  }
+}
+
+const NOTIFICATION_DEDUPE_CACHE = "smolpaws-notification-dedupe";
+
+function notificationDedupeKey(threadId: string): Request {
+  return new Request(
+    `https://smolpaws.internal/dedupe/notifications/${encodeURIComponent(threadId)}`,
+  );
+}
+
+async function getNotificationDedupeCache(): Promise<Cache> {
+  return caches.open(NOTIFICATION_DEDUPE_CACHE);
+}
+
+async function wasNotificationEnqueued(threadId: string): Promise<boolean> {
+  const cache = await getNotificationDedupeCache();
+  const cached = await cache.match(notificationDedupeKey(threadId));
+  return Boolean(cached);
+}
+
+async function markNotificationEnqueued(threadId: string): Promise<void> {
+  const cache = await getNotificationDedupeCache();
+  const response = new Response("1", {
+    headers: {
+      "Cache-Control": `max-age=${NOTIFICATION_DEDUPE_TTL_SECONDS}`,
+    },
+  });
+  await cache.put(notificationDedupeKey(threadId), response);
+}
+
+async function forEachWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  handler: (item: T) => Promise<void>,
+): Promise<void> {
+  const queue = items.slice();
+  const workerCount = Math.max(1, Math.min(concurrency, queue.length));
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        if (!item) return;
+        await handler(item);
+      }
+    }),
+  );
+}
+
+
+async function pollGithubNotifications(env: Env): Promise<void> {
+  const token = normalizeToken(env.GITHUB_USER_TOKEN);
+  if (!token) {
+    return;
+  }
+
+  const response = await githubApiFetch(
+    token,
+    "https://api.github.com/notifications?per_page=50",
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    console.error("Failed to fetch GitHub notifications", {
+      status: response.status,
+      text,
+    });
+    return;
+  }
+
+  const notifications = (await response.json()) as GithubNotification[];
+
+  await forEachWithConcurrency(
+    notifications,
+    NOTIFICATION_POLL_CONCURRENCY,
+    async (notification) => {
+      try {
+        await handleNotification(notification, env, token);
+      } catch (error) {
+        console.error("Notification handling error", error);
+      }
+    },
+  );
+}
+
+async function handleNotification(
+  notification: GithubNotification,
+  env: Env,
+  token: string,
+): Promise<void> {
+  if (notification.reason !== "mention") {
+    return;
+  }
+
+  const threadId = notification.id;
+  if (!threadId) {
+    return;
+  }
+
+  if (await wasNotificationEnqueued(threadId)) {
+    await markNotificationThreadRead(threadId, token);
+    return;
+  }
+
+  const latestCommentUrl = notification.subject?.latest_comment_url;
+  if (!latestCommentUrl) {
+    await markNotificationThreadRead(threadId, token);
+    return;
+  }
+
+  if (!isTrustedGithubApiUrl(latestCommentUrl)) {
+    console.error("Invalid latest_comment_url", { threadId, latestCommentUrl });
+    await markNotificationThreadRead(threadId, token);
+    return;
+  }
+
+  const commentResponse = await githubApiFetch(token, latestCommentUrl);
+  if (!commentResponse.ok) {
+    const text = await commentResponse.text();
+    console.error("Failed to fetch mention comment", {
+      threadId,
+      status: commentResponse.status,
+      text,
+    });
+    await markNotificationThreadRead(threadId, token);
+    return;
+  }
+
+  const comment = (await commentResponse.json()) as GithubMentionComment;
+  const commentBody = comment.body ?? "";
+  if (!containsMention(commentBody)) {
+    await markNotificationThreadRead(threadId, token);
+    return;
+  }
+
+  const senderLogin = comment.user?.login;
+  if (!senderLogin) {
+    await markNotificationThreadRead(threadId, token);
+    return;
+  }
+
+  if (senderLogin.toLowerCase() === "smolpaws") {
+    await markNotificationThreadRead(threadId, token);
+    return;
+  }
+
+  const repoFullName =
+    notification.repository?.full_name ??
+    parseRepoFullNameFromApiUrl(
+      comment.issue_url ?? comment.pull_request_url ?? notification.subject?.url,
+    );
+  const ownerLogin =
+    notification.repository?.owner?.login ??
+    (repoFullName ? repoFullName.split("/")[0] : undefined);
+  const number = parseIssueOrPrNumberFromApiUrl(
+    comment.issue_url ?? comment.pull_request_url ?? notification.subject?.url,
+  );
+
+  if (!repoFullName || !ownerLogin || !number) {
+    console.error("Notification missing repository context", {
+      threadId,
+      repoFullName,
+      ownerLogin,
+      number,
+    });
+    await markNotificationThreadRead(threadId, token);
+    return;
+  }
+
+  const event: SmolpawsEvent = isReviewCommentUrl(latestCommentUrl)
+    ? "pull_request_review_comment"
+    : "issue_comment";
+
+  const payload: GithubEventPayload = {
+    action: "created",
+    sender: { login: senderLogin, id: comment.user?.id },
+    comment: { body: commentBody, id: comment.id },
+    repository: { full_name: repoFullName, owner: { login: ownerLogin } },
+    ...(event === "issue_comment"
+      ? { issue: { number } }
+      : { pull_request: { number } }),
+  };
+
+  if (!isAllowed(payload, env)) {
+    await markNotificationThreadRead(threadId, token);
+    return;
+  }
+
+  const queueMessage: SmolpawsQueueMessage = {
+    event,
+    payload,
+    meta: {
+      ingress: "github_notifications",
+      notification_thread_id: threadId,
+    },
+  };
+
+  await env.SMOLPAWS_QUEUE.send(queueMessage);
+  await markNotificationEnqueued(threadId);
+  await markNotificationThreadRead(threadId, token);
+}
+
 
 
 async function verifySignature(
@@ -369,7 +692,9 @@ async function dispatchToRunner(
   }
 
   const runnerMessage: SmolpawsRunnerRequest = {
-    ...message,
+    event: message.event,
+    payload: message.payload,
+    delivery_id: message.delivery_id,
     github_token: githubToken,
   };
 
