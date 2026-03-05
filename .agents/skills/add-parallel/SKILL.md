@@ -1,3 +1,8 @@
+---
+name: add-parallel
+description: Add Parallel AI MCP integration to SmolPaws for web research with quick search and deep task APIs.
+---
+
 # Add Parallel AI Integration
 
 Adds Parallel AI MCP integration to SmolPaws for advanced web research capabilities.
