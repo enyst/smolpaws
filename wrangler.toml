@@ -15,4 +15,4 @@ max_batch_timeout = 5
 crons = ["*/1 * * * *"]
 
 [vars]
-ALLOWED_ACTORS = "enyst,xingyaoww,rbren,neubig,malhotra5,mamoodi"
+ALLOWED_ACTORS = "amanape,neubig,enyst,mamoodi,malhotra5,rbren,xingyaoww"

@@ -79,7 +79,7 @@ The Worker can restrict which mentions are accepted via environment variables:
 Recommended configuration for this deployment (respond only to specific GitHub users):
 
 ```toml
-ALLOWED_ACTORS = "enyst,xingyaoww,rbren,neubig,malhotra5,mamoodi"
+ALLOWED_ACTORS = "amanape,neubig,enyst,mamoodi,malhotra5,rbren,xingyaoww"
 ```
 
 Where to set it:
