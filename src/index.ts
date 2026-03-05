@@ -312,6 +312,66 @@ async function markNotificationThreadRead(
   }
 }
 
+const NOTIFICATION_POLL_CONCURRENCY = 5;
+const NOTIFICATION_DEDUPE_TTL_SECONDS = 60 * 60 * 24;
+
+function isTrustedGithubApiUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" && url.hostname === "api.github.com";
+  } catch {
+    return false;
+  }
+}
+
+const NOTIFICATION_DEDUPE_CACHE = "smolpaws-notification-dedupe";
+
+function notificationDedupeKey(threadId: string): Request {
+  return new Request(
+    `https://smolpaws.internal/dedupe/notifications/${encodeURIComponent(threadId)}`,
+  );
+}
+
+async function getNotificationDedupeCache(): Promise<Cache> {
+  return caches.open(NOTIFICATION_DEDUPE_CACHE);
+}
+
+async function wasNotificationEnqueued(threadId: string): Promise<boolean> {
+  const cache = await getNotificationDedupeCache();
+  const cached = await cache.match(notificationDedupeKey(threadId));
+  return Boolean(cached);
+}
+
+async function markNotificationEnqueued(threadId: string): Promise<void> {
+  const cache = await getNotificationDedupeCache();
+  const response = new Response("1", {
+    headers: {
+      "Cache-Control": `max-age=${NOTIFICATION_DEDUPE_TTL_SECONDS}`,
+    },
+  });
+  await cache.put(notificationDedupeKey(threadId), response);
+}
+
+async function forEachWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  handler: (item: T) => Promise<void>,
+): Promise<void> {
+  const queue = items.slice();
+  const workerCount = Math.max(1, Math.min(concurrency, queue.length));
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        if (!item) return;
+        await handler(item);
+      }
+    }),
+  );
+}
+
+
 async function pollGithubNotifications(env: Env): Promise<void> {
   const token = normalizeToken(env.GITHUB_USER_TOKEN);
   if (!token) {
@@ -333,13 +393,18 @@ async function pollGithubNotifications(env: Env): Promise<void> {
   }
 
   const notifications = (await response.json()) as GithubNotification[];
-  for (const notification of notifications) {
-    try {
-      await handleNotification(notification, env, token);
-    } catch (error) {
-      console.error("Notification handling error", error);
-    }
-  }
+
+  await forEachWithConcurrency(
+    notifications,
+    NOTIFICATION_POLL_CONCURRENCY,
+    async (notification) => {
+      try {
+        await handleNotification(notification, env, token);
+      } catch (error) {
+        console.error("Notification handling error", error);
+      }
+    },
+  );
 }
 
 async function handleNotification(
@@ -356,8 +421,19 @@ async function handleNotification(
     return;
   }
 
+  if (await wasNotificationEnqueued(threadId)) {
+    await markNotificationThreadRead(threadId, token);
+    return;
+  }
+
   const latestCommentUrl = notification.subject?.latest_comment_url;
   if (!latestCommentUrl) {
+    await markNotificationThreadRead(threadId, token);
+    return;
+  }
+
+  if (!isTrustedGithubApiUrl(latestCommentUrl)) {
+    console.error("Invalid latest_comment_url", { threadId, latestCommentUrl });
     await markNotificationThreadRead(threadId, token);
     return;
   }
@@ -444,6 +520,7 @@ async function handleNotification(
   };
 
   await env.SMOLPAWS_QUEUE.send(queueMessage);
+  await markNotificationEnqueued(threadId);
   await markNotificationThreadRead(threadId, token);
 }
 
