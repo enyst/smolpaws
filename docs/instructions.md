@@ -9,6 +9,18 @@ Both paths converge into the same pipeline:
 
 GitHub -> Worker -> Queue -> Runner -> GitHub comment reply
 
+## Cloudflare free plan notes
+
+This implementation is intended to run on Cloudflare using only features that are available on the Workers Free plan:
+
+- Workers (HTTP handler)
+- Cron Triggers (scheduled polling)
+- Queues (buffering + retries)
+- Cache API (best-effort dedupe for notification thread IDs)
+
+We intentionally avoid requiring Durable Objects, D1, or KV for correctness. If you need stronger dedupe guarantees than the Cache API can provide (for example across cache eviction), the next step would be KV/D1, but this PR keeps the core path free-plan-friendly.
+
+
 ## 1) Webhook path (GitHub App)
 
 ### What you get
