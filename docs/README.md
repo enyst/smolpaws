@@ -93,10 +93,6 @@ LLM_MODEL=<model> LLM_API_KEY=<key> npm run runner:dev
 - `DAYTONA_TARGET` (optional)
 - `SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES` (optional; defaults to 30)
 
-## Cloudflare Containers note
-
-Cloudflare Containers requires the **Workers Paid** plan. The Containers pricing page currently lists **no free tier** for Containers; usage is included under Workers Paid with additional usage billed separately.
-
 
 ## Deployment alternatives
 
@@ -121,7 +117,7 @@ When `DAYTONA_API_KEY` is set, the runner dispatches `/run` jobs into Daytona sa
 5. Per-job sandboxes are deleted; per-PR sandboxes are left for Daytona auto-stop.
 
 **Notes**
-- Use `SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES` to control auto-stop.
+- Use `SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES` to control auto-stop. (default 30)
 - Use Daytona process sessions for streaming logs when we add websocket support.
 - Persistence lives on the runner host (`SMOLPAWS_PERSISTENCE_DIR`) while sandbox runs are ephemeral.
 
@@ -137,10 +133,8 @@ When `DAYTONA_API_KEY` is set, the runner dispatches `/run` jobs into Daytona sa
 - Returns `{ items: [{ id, created_at, updated_at, execution_status }] }`.
 
 
-
 ## Remaining work
 
-- Implement repo checkout for non-Daytona runs (clone + working dir setup).
+- Implement repo checkout for non-Daytona runs (clone + working dir setup) - can we in Workers?
 - Add websocket streaming endpoints for events.
 - Implement `/api/bash`, `/api/file`, `/api/git` for full remote workspace compatibility.
-- Confirm Fastify runner deployment target (Cloudflare Containers vs other host).
