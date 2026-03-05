@@ -2,12 +2,12 @@
 
 This repo supports two independent ways to trigger the agent when someone comments `@smolpaws ...`.
 
-- **Webhook path (GitHub App)**: near-real-time for repos where the GitHub App is installed.
-- **Notifications path (GitHub user token)**: works across *any* repo where the `smolpaws` user receives a GitHub notification for the mention.
+- Webhook path (GitHub App): near-real-time for repos where the GitHub App is installed.
+- Notifications path (GitHub user token): works across any repo where the `smolpaws` user receives a GitHub notification for the mention.
 
 Both paths converge into the same pipeline:
 
-GitHub → Worker → Queue → Runner → GitHub comment reply
+GitHub -> Worker -> Queue -> Runner -> GitHub comment reply
 
 ## 1) Webhook path (GitHub App)
 
@@ -27,25 +27,30 @@ Set these as Cloudflare Worker secrets (e.g. via `wrangler secret put ...`):
 - Subscribe to webhook events:
   - `issue_comment` (created)
   - `pull_request_review_comment` (created)
-- Webhook URL: `https://<your-worker-domain>/webhooks/github`
+- Webhook URL:
+  - `https://<your-worker-domain>/webhooks/github`
 
 ## 2) Notifications path (GitHub user token)
 
 ### What you get
-- Works for mentions in **any repo** where the `smolpaws` GitHub user can see the thread
-- Does **not** require the GitHub App to be installed
+- Works for mentions in any repo where the `smolpaws` GitHub user can see the thread
+- Does not require the GitHub App to be installed
 - Polling-based (cron), not instant
 
 ### Required Worker secret
 - `GITHUB_USER_TOKEN`
 
-This should be a token for the **`smolpaws` GitHub user**.
+This should be a token for the `smolpaws` GitHub user.
 
 Minimum permissions depend on where you want it to operate:
-- To *read mentions*: needs access to **Notifications**.
-- To *reply back*: needs permission to **create issue comments** in the target repos.
-  - Public-only: typically `public_repo` (classic PAT) is sufficient.
-  - Private repos: requires broader repo access.
+- To read mentions: needs access to Notifications.
+- To reply back: needs permission to create issue comments in the target repos.
+
+Token guidance:
+- If you truly want "any repo" (across all of GitHub where the `smolpaws` user has visibility), a classic PAT is usually the simplest option.
+  - Public-only replying: `public_repo` + `notifications`
+  - Public + private replying: `repo` + `notifications`
+- A fine-grained PAT is typically limited to a single owner (user/org) and selected repositories, so it usually cannot cover "any repo" unless you intentionally restrict the scope.
 
 ### Cron trigger
 The Worker is configured with a 1-minute cron schedule in `wrangler.toml`:
@@ -66,18 +71,28 @@ On each tick the Worker:
 
 The Worker can restrict which mentions are accepted via environment variables:
 
-- `ALLOWED_ACTORS` — comma-separated GitHub usernames
-- `ALLOWED_OWNERS` — comma-separated repo owners/orgs
-- `ALLOWED_REPOS` — comma-separated full repo names (`owner/repo`)
-- `ALLOWED_INSTALLATIONS` — comma-separated GitHub App installation IDs (only applies when an installation id is present)
+- `ALLOWED_ACTORS`: comma-separated GitHub usernames
+- `ALLOWED_OWNERS`: comma-separated repo owners/orgs
+- `ALLOWED_REPOS`: comma-separated full repo names (`owner/repo`)
+- `ALLOWED_INSTALLATIONS`: comma-separated GitHub App installation IDs (only applies when an installation id is present)
+
+Recommended configuration for this deployment (respond only to specific GitHub users):
+
+```toml
+ALLOWED_ACTORS = "enyst,xingyaoww,rbren,neubig,malhotra5,mamoodi"
+```
+
+Where to set it:
+- Production: set `ALLOWED_ACTORS` as a Worker variable in the Cloudflare dashboard (or via `wrangler deploy --var ...`).
+- Local/dev: you can also commit it in `wrangler.toml` under `[vars]`.
 
 Notes:
-- For the notifications path there is **no** `installation.id`, so `ALLOWED_INSTALLATIONS` is ignored.
+- For the notifications path there is no `installation.id`, so `ALLOWED_INSTALLATIONS` is ignored.
 - If you enable notifications without allowlists, anyone can mention `@smolpaws` in public repos and trigger replies.
 
 ## 4) Runner integration
 
-### Worker → Runner
+### Worker -> Runner
 If configured, the Worker will call the Runner URL:
 
 - `SMOLPAWS_RUNNER_URL` (e.g. `https://runner.example.com/run`)
@@ -106,4 +121,4 @@ Optional:
 ## 5) Operational notes
 
 - The notifications path marks threads as read after enqueueing. If a queue job fails and retries, it will not be re-enqueued by polling (but the queued message will still retry).
-- For private repos, the `smolpaws` user must have repo access or notifications won’t be delivered.
+- For private repos, the `smolpaws` user must have repo access or notifications will not be delivered.

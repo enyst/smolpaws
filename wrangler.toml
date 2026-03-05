@@ -13,3 +13,6 @@ max_batch_timeout = 5
 
 [triggers]
 crons = ["*/1 * * * *"]
+
+[vars]
+ALLOWED_ACTORS = "enyst,xingyaoww,rbren,neubig,malhotra5,mamoodi"
