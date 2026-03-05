@@ -1,7 +1,7 @@
 import { Daytona, type Sandbox } from "@daytonaio/sdk";
 import type { SmolpawsRunnerRequest } from "./shared/github.js";
 
-const AGENT_SDK_VERSION = "@smolpaws/agent-sdk@0.8.0";
+const AGENT_SDK_VERSION = "@smolpaws/agent-sdk@0.9.0";
 const RESPONSE_MARKER = "__SMOLPAWS_RESPONSE__";
 
 export type DaytonaEnv = {
