@@ -10,3 +10,6 @@ binding = "SMOLPAWS_QUEUE"
 queue = "smolpaws-queue"
 max_batch_size = 1
 max_batch_timeout = 5
+
+[triggers]
+crons = ["*/1 * * * *"]

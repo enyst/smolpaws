@@ -13,12 +13,24 @@ export type GithubEventPayload = {
   installation?: { id?: number };
 };
 
+export type SmolpawsIngress = "github_webhook" | "github_notifications";
+
+export type SmolpawsQueueMeta = {
+  ingress: SmolpawsIngress;
+  notification_thread_id?: string;
+};
+
 export type SmolpawsQueueMessage = {
   event: SmolpawsEvent;
   payload: GithubEventPayload;
   delivery_id?: string;
+  meta?: SmolpawsQueueMeta;
 };
 
-export type SmolpawsRunnerRequest = SmolpawsQueueMessage & {
+// Must match the runner's `/run` schema (no extra top-level fields).
+export type SmolpawsRunnerRequest = {
+  event: SmolpawsEvent;
+  payload: GithubEventPayload;
+  delivery_id?: string;
   github_token?: string;
 };

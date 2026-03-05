@@ -5,7 +5,9 @@ import {
   FileStore,
   LocalConversation,
   Workspace,
+  isMessageEvent,
   type Event,
+  type MessageEvent,
   type Message,
   type OpenHandsSettings,
   type TextContent,
@@ -425,7 +427,10 @@ function buildSettingsFromRequest(
   }
   const settings: OpenHandsSettings = {
     llm: {
-      provider: typeof llm.provider === "string" ? llm.provider : undefined,
+      provider:
+        typeof llm.provider === "string"
+          ? (llm.provider as OpenHandsSettings["llm"]["provider"])
+          : undefined,
       model,
       baseUrl: typeof llm.base_url === "string" ? llm.base_url : undefined,
       apiVersion: typeof llm.api_version === "string" ? llm.api_version : undefined,
@@ -443,11 +448,11 @@ function buildSettingsFromRequest(
           : undefined,
       reasoningEffort:
         typeof llm.reasoning_effort === "string"
-          ? llm.reasoning_effort
+          ? (llm.reasoning_effort as OpenHandsSettings["llm"]["reasoningEffort"])
           : undefined,
       reasoningSummary:
         typeof llm.reasoning_summary === "string"
-          ? llm.reasoning_summary
+          ? (llm.reasoning_summary as OpenHandsSettings["llm"]["reasoningSummary"])
           : undefined,
     },
     agent: {
@@ -513,7 +518,7 @@ function buildSettingsFromEnv(env: RunnerEnv): OpenHandsSettings {
 
   return {
     llm: {
-      provider: env.LLM_PROVIDER,
+      provider: env.LLM_PROVIDER as OpenHandsSettings["llm"]["provider"],
       model,
       baseUrl: env.LLM_BASE_URL,
     },
@@ -561,12 +566,19 @@ function extractMessageText(content: TextContent[]): string {
   return reduceTextContent(message).trim();
 }
 
-function extractTextFromRequest(message?: {
-  content?: TextContent[];
-  extended_content?: TextContent[];
-}): string {
-  if (!message?.content?.length) return "";
-  return extractMessageText(message.content);
+function isTextContentLike(value: unknown): value is TextContent {
+  if (!value || typeof value !== "object") return false;
+  const record = value as { type?: unknown; text?: unknown };
+  return record.type === "text" && typeof record.text === "string";
+}
+
+function extractTextFromRequest(message?: unknown): string {
+  if (!message || typeof message !== "object") return "";
+  const record = message as { content?: unknown };
+  const content = Array.isArray(record.content) ? record.content : [];
+  const textContent = content.filter(isTextContentLike);
+  if (!textContent.length) return "";
+  return extractMessageText(textContent);
 }
 
 async function buildConversationInfoFromPersistence(
@@ -772,13 +784,14 @@ function generateTitleFromEvents(
   maxLength: number,
 ): string {
   const userMessages = events.filter(
-    (event) => event.kind === "MessageEvent" && event.llm_message?.role === "user",
+    (event): event is MessageEvent =>
+      isMessageEvent(event) && event.llm_message.role === "user",
   );
+
   const base = userMessages
-    .map((event) =>
-      extractMessageText(event.llm_message.content as TextContent[]),
-    )
-    .find((text) => text.trim().length > 0);
+    .map((event) => reduceTextContent(event.llm_message).trim())
+    .find((text) => text.length > 0);
+
   const fallback = base ?? "Conversation";
   return fallback.slice(0, Math.max(1, maxLength)).trim();
 }
@@ -1171,7 +1184,8 @@ async function start(): Promise<void> {
       reply.status(400).send({ error: "Only user messages are supported" });
       return;
     }
-    reply.status(500).send({ error: error.message });
+    const message = error instanceof Error ? error.message : String(error);
+    reply.status(500).send({ error: message });
   });
 
   const port = Number(env.PORT ?? env.RUNNER_PORT ?? 8788);
