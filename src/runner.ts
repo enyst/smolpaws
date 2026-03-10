@@ -409,7 +409,7 @@ function isAuthorized(
   return { allowed: true };
 }
 
-function isWithinRoot(targetPath: string, rootPath: string): boolean {
+function isWithinResolvedRoot(targetPath: string, rootPath: string): boolean {
   const normalizedTarget = path.resolve(targetPath);
   const normalizedRoot = path.resolve(rootPath);
   return (
@@ -418,16 +418,13 @@ function isWithinRoot(targetPath: string, rootPath: string): boolean {
   );
 }
 
-function listAllowedWorkspaceRoots(env: RunnerEnv): string[] {
-  const roots = new Set<string>();
+function getConfiguredWorkspaceRoot(env: RunnerEnv): string {
   const configuredRoot = env.SMOLPAWS_WORKSPACE_ROOT?.trim();
-  if (configuredRoot) {
-    roots.add(path.resolve(configuredRoot));
-  }
-  for (const record of conversations.values()) {
-    roots.add(path.resolve(record.workspaceRoot));
-  }
-  return Array.from(roots);
+  return path.resolve(configuredRoot || process.cwd());
+}
+
+function listAllowedWorkspaceRoots(env: RunnerEnv): string[] {
+  return [getConfiguredWorkspaceRoot(env)];
 }
 
 function resolveRequestedAbsolutePath(rawPath: string): string {
@@ -439,12 +436,62 @@ function resolveRequestedAbsolutePath(rawPath: string): string {
   return path.resolve(decodeURIComponent(withLeadingSlash));
 }
 
-function isAllowedWorkspacePath(targetPath: string, env: RunnerEnv): boolean {
+async function findNearestExistingPath(targetPath: string): Promise<string> {
+  let currentPath = path.resolve(targetPath);
+  while (true) {
+    try {
+      return await fs.realpath(currentPath);
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code !== "ENOENT") {
+        throw error;
+      }
+      const parent = path.dirname(currentPath);
+      if (parent === currentPath) {
+        throw error;
+      }
+      currentPath = parent;
+    }
+  }
+}
+
+async function isAllowedWorkspacePath(
+  targetPath: string,
+  env: RunnerEnv,
+  mode: "read" | "write",
+): Promise<boolean> {
   const roots = listAllowedWorkspaceRoots(env);
   if (!roots.length) {
     return false;
   }
-  return roots.some((root) => isWithinRoot(targetPath, root));
+
+  const canonicalTarget = mode === "read"
+    ? await fs.realpath(targetPath)
+    : await findNearestExistingPath(targetPath);
+
+  for (const root of roots) {
+    const canonicalRoot = await fs.realpath(root).catch(() => path.resolve(root));
+    if (isWithinResolvedRoot(canonicalTarget, canonicalRoot)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function resolveWorkspaceRoot(
+  request: StartConversationRequest,
+  env: RunnerEnv,
+): string {
+  const configuredRoot = getConfiguredWorkspaceRoot(env);
+  const requested = request.workspace?.working_dir;
+  if (typeof requested !== "string" || !requested.trim()) {
+    return configuredRoot;
+  }
+  const resolved = path.resolve(requested.trim());
+  if (!isWithinResolvedRoot(resolved, configuredRoot)) {
+    throw new Error("workspace_root_not_allowed");
+  }
+  return resolved;
 }
 
 function startBashCommand(
@@ -550,14 +597,6 @@ function registerSecrets(
     if (key === "CUSTOM_SECRET_2") settings.secrets.customSecret2 = value;
     if (key === "CUSTOM_SECRET_3") settings.secrets.customSecret3 = value;
   }
-}
-
-function extractWorkingDir(request: StartConversationRequest): string {
-  const workingDir = request.workspace?.working_dir;
-  if (typeof workingDir === "string" && workingDir.trim()) {
-    return workingDir.trim();
-  }
-  return process.cwd();
 }
 
 function buildSettingsFromRequest(
@@ -805,12 +844,13 @@ async function runStandaloneQuestion(
 
 function createConversationRecord(
   request: StartConversationRequest,
+  env: RunnerEnv,
   persistenceDir?: string,
 ): ConversationRecord {
   const id = randomUUID();
   const registry = new SecretRegistry();
   const settings = buildSettingsFromRequest(request, registry);
-  const workspaceRoot = extractWorkingDir(request);
+  const workspaceRoot = resolveWorkspaceRoot(request, env);
   const workspace = Workspace({ kind: "local", root: workspaceRoot });
   const conversation = new LocalConversation({
     settings,
@@ -970,14 +1010,14 @@ async function start(): Promise<void> {
         return;
       }
 
-      if (!isAllowedWorkspacePath(absolutePath, env)) {
-        reply.status(403).send({
-          error: "Path is outside allowed workspace roots",
-        });
-        return;
-      }
-
       try {
+        if (!(await isAllowedWorkspacePath(absolutePath, env, "read"))) {
+          reply.status(403).send({
+            error: "Path is outside allowed workspace roots",
+          });
+          return;
+        }
+
         const content = await fs.readFile(absolutePath);
         reply.header("Content-Type", "application/octet-stream");
         reply.send(content);
@@ -1011,7 +1051,7 @@ async function start(): Promise<void> {
         return;
       }
 
-      if (!isAllowedWorkspacePath(absolutePath, env)) {
+      if (!(await isAllowedWorkspacePath(absolutePath, env, "write"))) {
         reply.status(403).send({
           error: "Path is outside allowed workspace roots",
         });
@@ -1061,9 +1101,18 @@ async function start(): Promise<void> {
         };
       }
 
-      if (!isAllowedWorkspacePath(cwd, env)) {
-        reply.status(403);
-        return { error: "Path is outside allowed workspace roots" };
+      try {
+        if (!(await isAllowedWorkspacePath(cwd, env, "read"))) {
+          reply.status(403);
+          return { error: "Path is outside allowed workspace roots" };
+        }
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === "ENOENT") {
+          reply.status(400);
+          return { error: "Working directory not found" };
+        }
+        throw error;
       }
 
       const timeoutSeconds =
@@ -1218,7 +1267,7 @@ async function start(): Promise<void> {
       },
     },
     async (request, reply): Promise<ConversationInfo> => {
-      const record = createConversationRecord(request.body, persistenceDir);
+      const record = createConversationRecord(request.body, env, persistenceDir);
       if (request.body.initial_message) {
         const messageText = extractTextFromRequest(request.body.initial_message);
         if (messageText) {
@@ -1483,6 +1532,10 @@ async function start(): Promise<void> {
     }
     if (error instanceof Error && error.message === "only_user_messages_supported") {
       reply.status(400).send({ error: "Only user messages are supported" });
+      return;
+    }
+    if (error instanceof Error && error.message === "workspace_root_not_allowed") {
+      reply.status(403).send({ error: "Workspace root is outside allowed roots" });
       return;
     }
     const message = error instanceof Error ? error.message : String(error);
