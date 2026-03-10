@@ -18,6 +18,7 @@ import {
   reduceTextContent,
 } from "@smolpaws/agent-sdk";
 import { randomUUID } from "crypto";
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -172,6 +173,31 @@ const ConversationListSchema = Type.Object({
   items: Type.Array(ConversationInfoSchema),
 });
 
+const StartBashCommandRequestSchema = Type.Object({
+  command: Type.String(),
+  cwd: Type.Optional(Type.String()),
+  timeout: Type.Optional(Type.Number()),
+});
+
+const StartBashCommandResponseSchema = Type.Object({
+  id: Type.String(),
+});
+
+const BashOutputEventSchema = Type.Object({
+  kind: Type.Literal("BashOutput"),
+  id: Type.String(),
+  timestamp: Type.String(),
+  command_id: Type.String(),
+  stdout: Type.Optional(Type.String()),
+  stderr: Type.Optional(Type.String()),
+  exit_code: Type.Union([Type.Number(), Type.Null()]),
+});
+
+const BashEventPageSchema = Type.Object({
+  items: Type.Array(BashOutputEventSchema),
+  next_page_id: Type.Optional(Type.String()),
+});
+
 const GenerateTitleRequestSchema = Type.Object({
   max_length: Type.Optional(Type.Number()),
   llm: Type.Optional(Type.Any()),
@@ -224,6 +250,10 @@ type EventPage = Static<typeof EventPageSchema>;
 type RunRequest = Static<typeof RunRequestSchema>;
 type RunResponse = Static<typeof RunResponseSchema>;
 type ConversationList = Static<typeof ConversationListSchema>;
+type StartBashCommandRequest = Static<typeof StartBashCommandRequestSchema>;
+type StartBashCommandResponse = Static<typeof StartBashCommandResponseSchema>;
+type BashOutputEvent = Static<typeof BashOutputEventSchema>;
+type BashEventPage = Static<typeof BashEventPageSchema>;
 type ErrorResponse = Static<typeof ErrorSchema>;
 
 
@@ -264,7 +294,13 @@ type AuthResult = {
   reason?: string;
 };
 
+type BashCommandRecord = {
+  id: string;
+  event: BashOutputEvent | null;
+};
+
 const conversations = new Map<string, ConversationRecord>();
+const bashCommands = new Map<string, BashCommandRecord>();
 const serverStart = Date.now();
 let lastEventAt = Date.now();
 
@@ -409,6 +445,66 @@ function isAllowedWorkspacePath(targetPath: string, env: RunnerEnv): boolean {
     return false;
   }
   return roots.some((root) => isWithinRoot(targetPath, root));
+}
+
+function startBashCommand(
+  command: string,
+  cwd: string,
+  timeoutSeconds: number,
+): BashCommandRecord {
+  const commandId = randomUUID();
+  const record: BashCommandRecord = { id: commandId, event: null };
+  bashCommands.set(commandId, record);
+
+  const child = spawn("bash", ["-lc", command], {
+    cwd,
+    env: process.env,
+  });
+
+  let stdout = "";
+  let stderr = "";
+  let finished = false;
+
+  const finalize = (exitCode: number, extraStderr = "") => {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    record.event = {
+      kind: "BashOutput",
+      id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      command_id: commandId,
+      stdout,
+      stderr: `${stderr}${extraStderr}`,
+      exit_code: exitCode,
+    };
+    lastEventAt = Date.now();
+  };
+
+  child.stdout.on("data", (chunk: Buffer | string) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk: Buffer | string) => {
+    stderr += chunk.toString();
+  });
+  child.on("error", (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    finalize(1, message);
+  });
+  child.on("close", (code) => {
+    finalize(typeof code === "number" ? code : 1);
+  });
+
+  setTimeout(() => {
+    if (finished) {
+      return;
+    }
+    child.kill("SIGKILL");
+    finalize(-1, `Command timed out after ${timeoutSeconds} seconds.`);
+  }, Math.max(1, timeoutSeconds) * 1000);
+
+  return record;
 }
 
 function buildReplyFromComment(message: SmolpawsQueueMessage): string {
@@ -932,6 +1028,81 @@ async function start(): Promise<void> {
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       await fs.writeFile(absolutePath, bytes);
       reply.send({ success: true });
+    },
+  );
+  app.post<{ Body: StartBashCommandRequest; Reply: StartBashCommandResponse | ErrorResponse }>(
+    "/api/bash/start_bash_command",
+    {
+      schema: {
+        body: StartBashCommandRequestSchema,
+        response: {
+          200: StartBashCommandResponseSchema,
+          400: ErrorSchema,
+          401: ErrorSchema,
+          403: ErrorSchema,
+        },
+      },
+    },
+    async (request, reply): Promise<StartBashCommandResponse | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+
+      const rawCwd = request.body.cwd ?? process.cwd();
+      let cwd: string;
+      try {
+        cwd = resolveRequestedAbsolutePath(rawCwd);
+      } catch (error) {
+        reply.status(400);
+        return {
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+
+      if (!isAllowedWorkspacePath(cwd, env)) {
+        reply.status(403);
+        return { error: "Path is outside allowed workspace roots" };
+      }
+
+      const timeoutSeconds =
+        typeof request.body.timeout === "number" && Number.isFinite(request.body.timeout)
+          ? Math.max(1, Math.trunc(request.body.timeout))
+          : 30;
+      const record = startBashCommand(request.body.command, cwd, timeoutSeconds);
+      return { id: record.id };
+    },
+  );
+  app.get<{ Querystring: { command_id__eq?: string; kind__eq?: string }; Reply: BashEventPage | ErrorResponse }>(
+    "/api/bash/bash_events/search",
+    {
+      schema: {
+        response: {
+          200: BashEventPageSchema,
+          401: ErrorSchema,
+        },
+      },
+    },
+    async (request, reply): Promise<BashEventPage | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+
+      if (request.query.kind__eq && request.query.kind__eq !== "BashOutput") {
+        return { items: [] };
+      }
+      const commandId = request.query.command_id__eq?.trim();
+      if (!commandId) {
+        return { items: [] };
+      }
+      const record = bashCommands.get(commandId);
+      if (!record?.event) {
+        return { items: [] };
+      }
+      return { items: [record.event] };
     },
   );
   app.get(
