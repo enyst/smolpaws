@@ -1,3 +1,4 @@
+import multipart from "@fastify/multipart";
 import Fastify from "fastify";
 import { Type, type Static } from "@sinclair/typebox";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
@@ -838,6 +839,7 @@ async function start(): Promise<void> {
   const env = getEnv();
   const persistenceDir = resolvePersistenceDir(env);
   const app = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>();
+  await app.register(multipart);
 
   app.get("/health", async () => ({ ok: true }));
   app.get("/api/health", async () => ({ ok: true }));
@@ -882,6 +884,45 @@ async function start(): Promise<void> {
         }
         throw error;
       }
+    },
+  );
+  app.post<{ Params: { "*": string } }>(
+    "/api/file/upload/*",
+    async (request, reply) => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401).send({ error: auth.reason ?? "Unauthorized" });
+        return;
+      }
+
+      const rawPath = request.params["*"];
+      let absolutePath: string;
+      try {
+        absolutePath = resolveRequestedAbsolutePath(rawPath);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        reply.status(400).send({ error: message });
+        return;
+      }
+
+      if (!isAllowedWorkspacePath(absolutePath, env)) {
+        reply.status(403).send({
+          error: "Path is outside allowed workspace roots",
+        });
+        return;
+      }
+
+      const part = await request.file();
+      if (!part) {
+        reply.status(400).send({ error: "Missing file upload payload" });
+        return;
+      }
+
+      const bytes = await part.toBuffer();
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(absolutePath, bytes);
+      reply.send({ success: true });
     },
   );
   app.get(

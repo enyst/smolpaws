@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.148.0",
+    "@fastify/multipart": "^9.4.0",
     "@fastify/type-provider-typebox": "^6.1.0",
     "@sinclair/typebox": "^0.34.48",
     "@smolpaws/agent-sdk": "^0.9.0",
