@@ -363,6 +363,44 @@ function isAuthorized(
   return { allowed: true };
 }
 
+function isWithinRoot(targetPath: string, rootPath: string): boolean {
+  const normalizedTarget = path.resolve(targetPath);
+  const normalizedRoot = path.resolve(rootPath);
+  return (
+    normalizedTarget === normalizedRoot ||
+    normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`)
+  );
+}
+
+function listAllowedWorkspaceRoots(env: RunnerEnv): string[] {
+  const roots = new Set<string>();
+  const configuredRoot = env.SMOLPAWS_WORKSPACE_ROOT?.trim();
+  if (configuredRoot) {
+    roots.add(path.resolve(configuredRoot));
+  }
+  for (const record of conversations.values()) {
+    roots.add(path.resolve(record.workspaceRoot));
+  }
+  return Array.from(roots);
+}
+
+function resolveRequestedAbsolutePath(rawPath: string): string {
+  const trimmed = rawPath.trim();
+  if (!trimmed) {
+    throw new Error("Missing path");
+  }
+  const withLeadingSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return path.resolve(decodeURIComponent(withLeadingSlash));
+}
+
+function isAllowedWorkspacePath(targetPath: string, env: RunnerEnv): boolean {
+  const roots = listAllowedWorkspaceRoots(env);
+  if (!roots.length) {
+    return false;
+  }
+  return roots.some((root) => isWithinRoot(targetPath, root));
+}
+
 function buildReplyFromComment(message: SmolpawsQueueMessage): string {
   const actor = message.payload.sender?.login ?? "there";
   const repo = message.payload.repository?.full_name ?? "your repo";
@@ -805,6 +843,47 @@ async function start(): Promise<void> {
   app.get("/api/health", async () => ({ ok: true }));
   app.get("/alive", async () => ({ status: "ok" }));
   app.get("/ready", async () => ({ status: "ready" }));
+  app.get<{ Params: { "*": string } }>(
+    "/api/file/download/*",
+    async (request, reply) => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401).send({ error: auth.reason ?? "Unauthorized" });
+        return;
+      }
+
+      const rawPath = request.params["*"];
+      let absolutePath: string;
+      try {
+        absolutePath = resolveRequestedAbsolutePath(rawPath);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        reply.status(400).send({ error: message });
+        return;
+      }
+
+      if (!isAllowedWorkspacePath(absolutePath, env)) {
+        reply.status(403).send({
+          error: "Path is outside allowed workspace roots",
+        });
+        return;
+      }
+
+      try {
+        const content = await fs.readFile(absolutePath);
+        reply.header("Content-Type", "application/octet-stream");
+        reply.send(content);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === "ENOENT") {
+          reply.status(404).send({ error: "File not found" });
+          return;
+        }
+        throw error;
+      }
+    },
+  );
   app.get(
     "/server_info",
     {
