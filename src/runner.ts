@@ -866,6 +866,17 @@ async function listConversationInfos(
   return items;
 }
 
+function hasPersistedConversation(
+  conversationId: string,
+  persistenceDir: string,
+): boolean {
+  if (!isSafeConversationId(conversationId)) {
+    return false;
+  }
+  const rootDir = resolvePersistenceRoot(persistenceDir);
+  return FileStore.listConversations(rootDir).includes(conversationId);
+}
+
 async function getConversationInfoOrThrow(
   conversationId: string,
   persistenceDir: string,
@@ -873,9 +884,7 @@ async function getConversationInfoOrThrow(
   if (!isSafeConversationId(conversationId)) {
     throw new Error("conversation_not_found");
   }
-  const rootDir = resolvePersistenceRoot(persistenceDir);
-  const persistedIds = new Set(FileStore.listConversations(rootDir));
-  if (!persistedIds.has(conversationId) && !conversations.has(conversationId)) {
+  if (!hasPersistedConversation(conversationId, persistenceDir) && !conversations.has(conversationId)) {
     throw new Error("conversation_not_found");
   }
   return buildConversationInfoFromPersistence(
@@ -947,8 +956,18 @@ async function createConversationRecord(
   request: StartConversationRequest,
   env: RunnerEnv,
   persistenceDir?: string,
-): Promise<ConversationRecord> {
+): Promise<{ record: ConversationRecord; isNew: boolean }> {
   const requestedId = request.conversation_id?.trim();
+  if (requestedId && !isSafeConversationId(requestedId)) {
+    throw new Error("invalid_conversation_id");
+  }
+  if (requestedId) {
+    const existing = conversations.get(requestedId);
+    if (existing) {
+      return { record: existing, isNew: false };
+    }
+  }
+
   const registry = new SecretRegistry();
   const settings = buildSettingsFromRequest(request, registry);
   const workspaceRoot = resolveWorkspaceRoot(request, env);
@@ -965,6 +984,12 @@ async function createConversationRecord(
   if (!id) {
     throw new Error("conversation_id_unavailable");
   }
+
+  const persistenceRoot = persistenceDir ?? DEFAULT_PERSISTENCE_DIR;
+  const wasPersisted = requestedId
+    ? hasPersistedConversation(requestedId, persistenceRoot)
+    : false;
+
   if (requestedId) {
     conversation.restoreConversation(id);
   }
@@ -974,11 +999,20 @@ async function createConversationRecord(
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     conversation,
-    events: [],
+    events: requestedId
+      ? await readPersistedEventsOrThrow(id, persistenceRoot).catch(() => [])
+      : [],
     settings,
     secrets: registry,
     workspaceRoot,
   };
+
+  if (record.events.length) {
+    const lastEvent = record.events[record.events.length - 1];
+    if (lastEvent?.timestamp) {
+      record.updatedAt = lastEvent.timestamp;
+    }
+  }
 
   conversation.on("event", (event: Event) => {
     record.events.push(event);
@@ -988,7 +1022,7 @@ async function createConversationRecord(
   });
 
   conversations.set(id, record);
-  return record;
+  return { record, isNew: !requestedId || !wasPersisted };
 }
 
 function getConversationOrThrow(id: string): ConversationRecord {
@@ -1418,7 +1452,7 @@ async function start(): Promise<void> {
       },
     },
     async (request, reply): Promise<ConversationInfo> => {
-      const record = await createConversationRecord(
+      const { record, isNew } = await createConversationRecord(
         request.body,
         env,
         persistenceDir,
@@ -1433,17 +1467,22 @@ async function start(): Promise<void> {
           });
         }
       }
-      reply.status(201);
+      reply.status(isNew ? 201 : 200);
       return buildConversationInfo(record);
     },
   );
 
-  app.get<{ Params: { conversationId: string }; Reply: ConversationInfo }>(
+  app.get<{ Params: { conversationId: string }; Reply: ConversationInfo | ErrorResponse }>(
     "/api/conversations/:conversationId",
     {
-      schema: { response: { 200: ConversationInfoSchema } },
+      schema: { response: { 200: ConversationInfoSchema, 401: ErrorSchema } },
     },
-    async (request): Promise<ConversationInfo> => {
+    async (request, reply): Promise<ConversationInfo | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
       return getConversationInfoOrThrow(
         request.params.conversationId,
         persistenceDir,
@@ -1608,12 +1647,17 @@ async function start(): Promise<void> {
     },
   );
 
-  app.get<{ Params: { conversationId: string }; Querystring: { page_id?: string; limit?: number }; Reply: EventPage }>(
+  app.get<{ Params: { conversationId: string }; Querystring: { page_id?: string; limit?: number }; Reply: EventPage | ErrorResponse }>(
     "/api/conversations/:conversationId/events/search",
     {
-      schema: { response: { 200: EventPageSchema } },
+      schema: { response: { 200: EventPageSchema, 401: ErrorSchema } },
     },
-    async (request): Promise<EventPage> => {
+    async (request, reply): Promise<EventPage | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
       const params = {
         pageId: request.query.page_id,
         limit:
@@ -1697,6 +1741,10 @@ async function start(): Promise<void> {
     }
     if (error instanceof Error && error.message === "workspace_root_not_allowed") {
       reply.status(403).send({ error: "Workspace root is outside allowed roots" });
+      return;
+    }
+    if (error instanceof Error && error.message === "invalid_conversation_id") {
+      reply.status(400).send({ error: "Conversation id is invalid" });
       return;
     }
     const message = error instanceof Error ? error.message : String(error);
