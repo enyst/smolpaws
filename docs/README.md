@@ -1,5 +1,9 @@
 # Smolpaws Ops Notes
 
+## Planning / progress
+
+- [TypeScript runtime compatibility plan progress](compatibility-plan-progress.md)
+
 ## Architecture (current)
 
 1. **GitHub App** receives `issue_comment` + `pull_request_review_comment` webhooks.

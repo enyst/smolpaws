@@ -1,3 +1,4 @@
+import multipart from "@fastify/multipart";
 import Fastify from "fastify";
 import { Type, type Static } from "@sinclair/typebox";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
@@ -17,6 +18,7 @@ import {
   reduceTextContent,
 } from "@smolpaws/agent-sdk";
 import { randomUUID } from "crypto";
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -171,6 +173,31 @@ const ConversationListSchema = Type.Object({
   items: Type.Array(ConversationInfoSchema),
 });
 
+const StartBashCommandRequestSchema = Type.Object({
+  command: Type.String(),
+  cwd: Type.Optional(Type.String()),
+  timeout: Type.Optional(Type.Number()),
+});
+
+const StartBashCommandResponseSchema = Type.Object({
+  id: Type.String(),
+});
+
+const BashOutputEventSchema = Type.Object({
+  kind: Type.Literal("BashOutput"),
+  id: Type.String(),
+  timestamp: Type.String(),
+  command_id: Type.String(),
+  stdout: Type.Optional(Type.String()),
+  stderr: Type.Optional(Type.String()),
+  exit_code: Type.Union([Type.Number(), Type.Null()]),
+});
+
+const BashEventPageSchema = Type.Object({
+  items: Type.Array(BashOutputEventSchema),
+  next_page_id: Type.Optional(Type.String()),
+});
+
 const GenerateTitleRequestSchema = Type.Object({
   max_length: Type.Optional(Type.Number()),
   llm: Type.Optional(Type.Any()),
@@ -223,6 +250,10 @@ type EventPage = Static<typeof EventPageSchema>;
 type RunRequest = Static<typeof RunRequestSchema>;
 type RunResponse = Static<typeof RunResponseSchema>;
 type ConversationList = Static<typeof ConversationListSchema>;
+type StartBashCommandRequest = Static<typeof StartBashCommandRequestSchema>;
+type StartBashCommandResponse = Static<typeof StartBashCommandResponseSchema>;
+type BashOutputEvent = Static<typeof BashOutputEventSchema>;
+type BashEventPage = Static<typeof BashEventPageSchema>;
 type ErrorResponse = Static<typeof ErrorSchema>;
 
 
@@ -263,7 +294,13 @@ type AuthResult = {
   reason?: string;
 };
 
+type BashCommandRecord = {
+  id: string;
+  event: BashOutputEvent | null;
+};
+
 const conversations = new Map<string, ConversationRecord>();
+const bashCommands = new Map<string, BashCommandRecord>();
 const serverStart = Date.now();
 let lastEventAt = Date.now();
 
@@ -352,15 +389,169 @@ function isAuthorized(
   if (!token) {
     return { allowed: true };
   }
+
+  const sessionApiKey = normalizeHeader(request.headers["x-session-api-key"]);
+  if (sessionApiKey === token) {
+    return { allowed: true };
+  }
+
   const authorization = normalizeHeader(request.headers.authorization);
   if (!authorization) {
-    return { allowed: false, reason: "Missing Authorization header" };
+    return {
+      allowed: false,
+      reason: "Missing Authorization or X-Session-API-Key header",
+    };
   }
   const [scheme, value] = authorization.split(" ");
   if (scheme !== "Bearer" || value !== token) {
     return { allowed: false, reason: "Invalid Authorization token" };
   }
   return { allowed: true };
+}
+
+function isWithinResolvedRoot(targetPath: string, rootPath: string): boolean {
+  const normalizedTarget = path.resolve(targetPath);
+  const normalizedRoot = path.resolve(rootPath);
+  return (
+    normalizedTarget === normalizedRoot ||
+    normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`)
+  );
+}
+
+function getConfiguredWorkspaceRoot(env: RunnerEnv): string {
+  const configuredRoot = env.SMOLPAWS_WORKSPACE_ROOT?.trim();
+  return path.resolve(configuredRoot || process.cwd());
+}
+
+function listAllowedWorkspaceRoots(env: RunnerEnv): string[] {
+  return [getConfiguredWorkspaceRoot(env)];
+}
+
+function resolveRequestedAbsolutePath(rawPath: string): string {
+  const trimmed = rawPath.trim();
+  if (!trimmed) {
+    throw new Error("Missing path");
+  }
+  const withLeadingSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return path.resolve(decodeURIComponent(withLeadingSlash));
+}
+
+async function findNearestExistingPath(targetPath: string): Promise<string> {
+  let currentPath = path.resolve(targetPath);
+  while (true) {
+    try {
+      return await fs.realpath(currentPath);
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code !== "ENOENT") {
+        throw error;
+      }
+      const parent = path.dirname(currentPath);
+      if (parent === currentPath) {
+        throw error;
+      }
+      currentPath = parent;
+    }
+  }
+}
+
+async function isAllowedWorkspacePath(
+  targetPath: string,
+  env: RunnerEnv,
+  mode: "read" | "write",
+): Promise<boolean> {
+  const roots = listAllowedWorkspaceRoots(env);
+  if (!roots.length) {
+    return false;
+  }
+
+  const canonicalTarget = mode === "read"
+    ? await fs.realpath(targetPath)
+    : await findNearestExistingPath(targetPath);
+
+  for (const root of roots) {
+    const canonicalRoot = await fs.realpath(root).catch(() => path.resolve(root));
+    if (isWithinResolvedRoot(canonicalTarget, canonicalRoot)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function resolveWorkspaceRoot(
+  request: StartConversationRequest,
+  env: RunnerEnv,
+): string {
+  const configuredRoot = getConfiguredWorkspaceRoot(env);
+  const requested = request.workspace?.working_dir;
+  if (typeof requested !== "string" || !requested.trim()) {
+    return configuredRoot;
+  }
+  const resolved = path.resolve(requested.trim());
+  if (!isWithinResolvedRoot(resolved, configuredRoot)) {
+    throw new Error("workspace_root_not_allowed");
+  }
+  return resolved;
+}
+
+function startBashCommand(
+  command: string,
+  cwd: string,
+  timeoutSeconds: number,
+): BashCommandRecord {
+  const commandId = randomUUID();
+  const record: BashCommandRecord = { id: commandId, event: null };
+  bashCommands.set(commandId, record);
+
+  const child = spawn("bash", ["-lc", command], {
+    cwd,
+    env: process.env,
+  });
+
+  let stdout = "";
+  let stderr = "";
+  let finished = false;
+
+  const finalize = (exitCode: number, extraStderr = "") => {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    record.event = {
+      kind: "BashOutput",
+      id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      command_id: commandId,
+      stdout,
+      stderr: `${stderr}${extraStderr}`,
+      exit_code: exitCode,
+    };
+    lastEventAt = Date.now();
+  };
+
+  child.stdout.on("data", (chunk: Buffer | string) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk: Buffer | string) => {
+    stderr += chunk.toString();
+  });
+  child.on("error", (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    finalize(1, message);
+  });
+  child.on("close", (code) => {
+    finalize(typeof code === "number" ? code : 1);
+  });
+
+  setTimeout(() => {
+    if (finished) {
+      return;
+    }
+    child.kill("SIGKILL");
+    finalize(-1, `Command timed out after ${timeoutSeconds} seconds.`);
+  }, Math.max(1, timeoutSeconds) * 1000);
+
+  return record;
 }
 
 function buildReplyFromComment(message: SmolpawsQueueMessage): string {
@@ -406,14 +597,6 @@ function registerSecrets(
     if (key === "CUSTOM_SECRET_2") settings.secrets.customSecret2 = value;
     if (key === "CUSTOM_SECRET_3") settings.secrets.customSecret3 = value;
   }
-}
-
-function extractWorkingDir(request: StartConversationRequest): string {
-  const workingDir = request.workspace?.working_dir;
-  if (typeof workingDir === "string" && workingDir.trim()) {
-    return workingDir.trim();
-  }
-  return process.cwd();
 }
 
 function buildSettingsFromRequest(
@@ -661,12 +844,13 @@ async function runStandaloneQuestion(
 
 function createConversationRecord(
   request: StartConversationRequest,
+  env: RunnerEnv,
   persistenceDir?: string,
 ): ConversationRecord {
   const id = randomUUID();
   const registry = new SecretRegistry();
   const settings = buildSettingsFromRequest(request, registry);
-  const workspaceRoot = extractWorkingDir(request);
+  const workspaceRoot = resolveWorkspaceRoot(request, env);
   const workspace = Workspace({ kind: "local", root: workspaceRoot });
   const conversation = new LocalConversation({
     settings,
@@ -800,10 +984,176 @@ async function start(): Promise<void> {
   const env = getEnv();
   const persistenceDir = resolvePersistenceDir(env);
   const app = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>();
+  await app.register(multipart);
 
   app.get("/health", async () => ({ ok: true }));
+  app.get("/api/health", async () => ({ ok: true }));
   app.get("/alive", async () => ({ status: "ok" }));
   app.get("/ready", async () => ({ status: "ready" }));
+  app.get<{ Params: { "*": string } }>(
+    "/api/file/download/*",
+    async (request, reply) => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401).send({ error: auth.reason ?? "Unauthorized" });
+        return;
+      }
+
+      const rawPath = request.params["*"];
+      let absolutePath: string;
+      try {
+        absolutePath = resolveRequestedAbsolutePath(rawPath);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        reply.status(400).send({ error: message });
+        return;
+      }
+
+      try {
+        if (!(await isAllowedWorkspacePath(absolutePath, env, "read"))) {
+          reply.status(403).send({
+            error: "Path is outside allowed workspace roots",
+          });
+          return;
+        }
+
+        const content = await fs.readFile(absolutePath);
+        reply.header("Content-Type", "application/octet-stream");
+        reply.send(content);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === "ENOENT") {
+          reply.status(404).send({ error: "File not found" });
+          return;
+        }
+        throw error;
+      }
+    },
+  );
+  app.post<{ Params: { "*": string } }>(
+    "/api/file/upload/*",
+    async (request, reply) => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401).send({ error: auth.reason ?? "Unauthorized" });
+        return;
+      }
+
+      const rawPath = request.params["*"];
+      let absolutePath: string;
+      try {
+        absolutePath = resolveRequestedAbsolutePath(rawPath);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        reply.status(400).send({ error: message });
+        return;
+      }
+
+      if (!(await isAllowedWorkspacePath(absolutePath, env, "write"))) {
+        reply.status(403).send({
+          error: "Path is outside allowed workspace roots",
+        });
+        return;
+      }
+
+      const part = await request.file();
+      if (!part) {
+        reply.status(400).send({ error: "Missing file upload payload" });
+        return;
+      }
+
+      const bytes = await part.toBuffer();
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(absolutePath, bytes);
+      reply.send({ success: true });
+    },
+  );
+  app.post<{ Body: StartBashCommandRequest; Reply: StartBashCommandResponse | ErrorResponse }>(
+    "/api/bash/start_bash_command",
+    {
+      schema: {
+        body: StartBashCommandRequestSchema,
+        response: {
+          200: StartBashCommandResponseSchema,
+          400: ErrorSchema,
+          401: ErrorSchema,
+          403: ErrorSchema,
+        },
+      },
+    },
+    async (request, reply): Promise<StartBashCommandResponse | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+
+      const rawCwd = request.body.cwd ?? process.cwd();
+      let cwd: string;
+      try {
+        cwd = resolveRequestedAbsolutePath(rawCwd);
+      } catch (error) {
+        reply.status(400);
+        return {
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+
+      try {
+        if (!(await isAllowedWorkspacePath(cwd, env, "read"))) {
+          reply.status(403);
+          return { error: "Path is outside allowed workspace roots" };
+        }
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === "ENOENT") {
+          reply.status(400);
+          return { error: "Working directory not found" };
+        }
+        throw error;
+      }
+
+      const timeoutSeconds =
+        typeof request.body.timeout === "number" && Number.isFinite(request.body.timeout)
+          ? Math.max(1, Math.trunc(request.body.timeout))
+          : 30;
+      const record = startBashCommand(request.body.command, cwd, timeoutSeconds);
+      return { id: record.id };
+    },
+  );
+  app.get<{ Querystring: { command_id__eq?: string; kind__eq?: string }; Reply: BashEventPage | ErrorResponse }>(
+    "/api/bash/bash_events/search",
+    {
+      schema: {
+        response: {
+          200: BashEventPageSchema,
+          401: ErrorSchema,
+        },
+      },
+    },
+    async (request, reply): Promise<BashEventPage | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+
+      if (request.query.kind__eq && request.query.kind__eq !== "BashOutput") {
+        return { items: [] };
+      }
+      const commandId = request.query.command_id__eq?.trim();
+      if (!commandId) {
+        return { items: [] };
+      }
+      const record = bashCommands.get(commandId);
+      if (!record?.event) {
+        return { items: [] };
+      }
+      return { items: [record.event] };
+    },
+  );
   app.get(
     "/server_info",
     {
@@ -917,7 +1267,7 @@ async function start(): Promise<void> {
       },
     },
     async (request, reply): Promise<ConversationInfo> => {
-      const record = createConversationRecord(request.body, persistenceDir);
+      const record = createConversationRecord(request.body, env, persistenceDir);
       if (request.body.initial_message) {
         const messageText = extractTextFromRequest(request.body.initial_message);
         if (messageText) {
@@ -1182,6 +1532,10 @@ async function start(): Promise<void> {
     }
     if (error instanceof Error && error.message === "only_user_messages_supported") {
       reply.status(400).send({ error: "Only user messages are supported" });
+      return;
+    }
+    if (error instanceof Error && error.message === "workspace_root_not_allowed") {
+      reply.status(403).send({ error: "Workspace root is outside allowed roots" });
       return;
     }
     const message = error instanceof Error ? error.message : String(error);
