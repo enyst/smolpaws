@@ -1,4 +1,4 @@
-# TypeScript runtime compatibility plan progress
+# Paw-print Eval: TypeScript runtime compatibility plan progress
 
 This document tracks progress against the cross-repo convergence plan originally captured in `/workspace/project/.agents_tmp/PLAN.md` and mirrored to [enyst/OpenHands-Tab#996](https://github.com/enyst/OpenHands-Tab/issues/996).
 
