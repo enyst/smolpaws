@@ -140,5 +140,6 @@ When `DAYTONA_API_KEY` is set, the runner dispatches `/run` jobs into Daytona sa
 ## Remaining work
 
 - Implement repo checkout for non-Daytona runs (clone + working dir setup) - can we in Workers?
-- Validate websocket behavior directly against the TypeScript `RemoteConversation` client and close any parity gaps.
-- Implement the remaining `/api/git` and conversation-surface parity needed for full remote workspace compatibility.
+- Validate websocket behavior directly against the TypeScript `RemoteConversation` client and close any remaining parity gaps.
+- Finish the conversation-surface cleanup (for example, decide how persisted-but-not-live conversations should behave under resume / control operations).
+- Implement the remaining `/api/git` compatibility needed for the remote workspace surface.

@@ -866,6 +866,57 @@ async function listConversationInfos(
   return items;
 }
 
+async function getConversationInfoOrThrow(
+  conversationId: string,
+  persistenceDir: string,
+): Promise<ConversationInfo> {
+  if (!isSafeConversationId(conversationId)) {
+    throw new Error("conversation_not_found");
+  }
+  const rootDir = resolvePersistenceRoot(persistenceDir);
+  const persistedIds = new Set(FileStore.listConversations(rootDir));
+  if (!persistedIds.has(conversationId) && !conversations.has(conversationId)) {
+    throw new Error("conversation_not_found");
+  }
+  return buildConversationInfoFromPersistence(
+    conversationId,
+    persistenceDir,
+    conversations.get(conversationId),
+  );
+}
+
+async function readPersistedEventsOrThrow(
+  conversationId: string,
+  persistenceDir: string,
+): Promise<Event[]> {
+  if (!isSafeConversationId(conversationId)) {
+    throw new Error("conversation_not_found");
+  }
+  const eventsPath = buildEventsFilePath(conversationId, persistenceDir);
+  try {
+    const content = await fs.readFile(eventsPath, "utf8");
+    const events: Event[] = [];
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      try {
+        events.push(JSON.parse(trimmed) as Event);
+      } catch (error) {
+        console.error(`Skipping corrupted persisted event: ${String(error)}`);
+      }
+    }
+    return events;
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === "ENOENT") {
+      throw new Error("conversation_not_found");
+    }
+    throw error;
+  }
+}
+
 async function runStandaloneQuestion(
   settings: OpenHandsSettings,
   prompt: string,
@@ -892,12 +943,12 @@ async function runStandaloneQuestion(
   return responses[responses.length - 1] ?? "";
 }
 
-function createConversationRecord(
+async function createConversationRecord(
   request: StartConversationRequest,
   env: RunnerEnv,
   persistenceDir?: string,
-): ConversationRecord {
-  const id = randomUUID();
+): Promise<ConversationRecord> {
+  const requestedId = request.conversation_id?.trim();
   const registry = new SecretRegistry();
   const settings = buildSettingsFromRequest(request, registry);
   const workspaceRoot = resolveWorkspaceRoot(request, env);
@@ -909,6 +960,14 @@ function createConversationRecord(
     includeDefaultTools: true,
     persistenceDir,
   });
+
+  const id = requestedId || (await conversation.startNewConversation());
+  if (!id) {
+    throw new Error("conversation_id_unavailable");
+  }
+  if (requestedId) {
+    conversation.restoreConversation(id);
+  }
 
   const record: ConversationRecord = {
     id,
@@ -986,8 +1045,8 @@ async function applySecurityAnalyzer(
   await record.conversation.setSecurityAnalyzer(null);
 }
 
-function listEvents(
-  record: ConversationRecord,
+function paginateEvents(
+  events: Event[],
   params: { pageId?: string; limit?: number },
 ): EventPage {
   const limit =
@@ -996,12 +1055,19 @@ function listEvents(
       : 100;
   const offset = params.pageId ? Number(params.pageId) : 0;
   const safeOffset = Number.isFinite(offset) && offset >= 0 ? offset : 0;
-  const items = record.events.slice(safeOffset, safeOffset + limit);
+  const items = events.slice(safeOffset, safeOffset + limit);
   const nextOffset = safeOffset + items.length;
   return {
     items,
-    next_page_id: nextOffset < record.events.length ? String(nextOffset) : undefined,
+    next_page_id: nextOffset < events.length ? String(nextOffset) : undefined,
   };
+}
+
+function listEvents(
+  record: ConversationRecord,
+  params: { pageId?: string; limit?: number },
+): EventPage {
+  return paginateEvents(record.events, params);
 }
 
 function extractPromptFromComment(comment?: string | null): string {
@@ -1326,7 +1392,6 @@ async function start(): Promise<void> {
         response: {
           200: ConversationListSchema,
           401: ErrorSchema,
-          404: ErrorSchema,
         },
       },
     },
@@ -1335,10 +1400,6 @@ async function start(): Promise<void> {
       if (!auth.allowed) {
         reply.status(401);
         return { error: auth.reason ?? "Unauthorized" };
-      }
-      if (!env.DAYTONA_API_KEY) {
-        reply.status(404);
-        return { error: "Daytona not configured" };
       }
       const items = await listConversationInfos(persistenceDir);
       return { items };
@@ -1357,7 +1418,11 @@ async function start(): Promise<void> {
       },
     },
     async (request, reply): Promise<ConversationInfo> => {
-      const record = createConversationRecord(request.body, env, persistenceDir);
+      const record = await createConversationRecord(
+        request.body,
+        env,
+        persistenceDir,
+      );
       if (request.body.initial_message) {
         const messageText = extractTextFromRequest(request.body.initial_message);
         if (messageText) {
@@ -1379,8 +1444,10 @@ async function start(): Promise<void> {
       schema: { response: { 200: ConversationInfoSchema } },
     },
     async (request): Promise<ConversationInfo> => {
-      const record = getConversationOrThrow(request.params.conversationId);
-      return buildConversationInfo(record);
+      return getConversationInfoOrThrow(
+        request.params.conversationId,
+        persistenceDir,
+      );
     },
   );
 
@@ -1547,14 +1614,22 @@ async function start(): Promise<void> {
       schema: { response: { 200: EventPageSchema } },
     },
     async (request): Promise<EventPage> => {
-      const record = getConversationOrThrow(request.params.conversationId);
-      return listEvents(record, {
+      const params = {
         pageId: request.query.page_id,
         limit:
           typeof request.query.limit === "string"
             ? Number(request.query.limit)
             : request.query.limit,
-      });
+      };
+      const record = conversations.get(request.params.conversationId);
+      if (record) {
+        return listEvents(record, params);
+      }
+      const events = await readPersistedEventsOrThrow(
+        request.params.conversationId,
+        persistenceDir,
+      );
+      return paginateEvents(events, params);
     },
   );
 
@@ -1564,10 +1639,6 @@ async function start(): Promise<void> {
       const auth = isAuthorized(request, env);
       if (!auth.allowed) {
         reply.status(401).send({ error: auth.reason ?? "Unauthorized" });
-        return;
-      }
-      if (!env.DAYTONA_API_KEY) {
-        reply.status(404).send({ error: "Daytona not configured" });
         return;
       }
       const conversationId = request.params.conversationId;
