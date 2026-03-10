@@ -32,6 +32,7 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
   - `POST /api/file/upload/*`
   - `POST /api/bash/start_bash_command`
   - `GET /api/bash/bash_events/search`
+  - `GET /sockets/events/:conversationId`
 - **Initial auth compatibility added**
   - compatibility routes accept `X-Session-API-Key` as well as Bearer auth.
 - **Workspace boundary hardening added**
@@ -42,14 +43,13 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
 ### In progress
 
 - **Remote agent-server contract parity in `enyst-smolpaws`**
-  - The open work is being tracked in `enyst/smolpaws#4`.
-  - The runner now covers a meaningful subset of the TypeScript `RemoteWorkspace` contract, but it is still incomplete.
+  - The open work is being tracked in the next PR after `enyst/smolpaws#4`.
+  - The runner now covers a meaningful subset of the TypeScript `RemoteWorkspace` contract and now has an initial websocket event stream for `RemoteConversation`, but it is still incomplete.
 - **Canonical ownership / boundary documentation**
   - We are working with the assumption that OpenHands-Tab owns the SDK source, but this still needs to be made explicit enough that future changes do not drift again.
 
 ### Not started yet
 
-- **WebSocket event streaming** at `/sockets/events/:conversationId`
 - **Conversation contract parity review** against the Python OpenHands agent-server
 - **Browser strategy convergence** (`browser_use` replacement / `agent-browser` standardization)
 - **Ingress convergence** between WhatsApp and GitHub around one shared execution surface
@@ -76,7 +76,7 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
 
 ### 5. Remote agent-server contract
 - [ ] `/api/conversations` lifecycle parity review
-- [ ] `/sockets/events/:conversationId`
+- [x] `/sockets/events/:conversationId`
 - [x] `/api/file/download/*`
 - [x] `/api/file/upload/*`
 - [x] `/api/bash/start_bash_command`
@@ -110,7 +110,8 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
   - bash command start + bash event search
   - symlink escape blocking
   - rejecting out-of-root `workspace.working_dir`
+- websocket route validation via live runner logs while creating a conversation, opening `/sockets/events/:conversationId`, and sending follow-up conversation events
 
 ## Next recommended slice
 
-The next meaningful slice is **websocket event streaming** for `/sockets/events/:conversationId`, because that is the biggest remaining gap between the current Fastify runner and what `RemoteConversation` expects from an actual agent-server.
+The next meaningful slice is **conversation parity cleanup**: validate the websocket stream directly against `RemoteConversation`, decide whether more of the Python conversation semantics need to be mirrored, and then fill the next contract gaps instead of adding more ad-hoc runner behavior.
