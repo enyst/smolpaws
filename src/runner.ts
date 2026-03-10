@@ -1,4 +1,5 @@
 import multipart from "@fastify/multipart";
+import websocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { Type, type Static } from "@sinclair/typebox";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
@@ -35,6 +36,7 @@ import {
 
 const DEFAULT_MODEL_ENV = "LLM_MODEL";
 const DEFAULT_API_KEY_ENV = "LLM_API_KEY";
+const OPEN_SOCKET_STATE = 1;
 
 const TextContentSchema = Type.Object(
   {
@@ -299,8 +301,11 @@ type BashCommandRecord = {
   event: BashOutputEvent | null;
 };
 
+type EventSubscriber = (event: Event) => void;
+
 const conversations = new Map<string, ConversationRecord>();
 const bashCommands = new Map<string, BashCommandRecord>();
+const eventSubscribers = new Map<string, Set<EventSubscriber>>();
 const serverStart = Date.now();
 let lastEventAt = Date.now();
 
@@ -384,13 +389,16 @@ function normalizeHeader(
 function isAuthorized(
   request: { headers: Record<string, string | string[] | undefined> },
   env: RunnerEnv,
+  options: { sessionApiKey?: string } = {},
 ): AuthResult {
   const token = env.SMOLPAWS_RUNNER_TOKEN;
   if (!token) {
     return { allowed: true };
   }
 
-  const sessionApiKey = normalizeHeader(request.headers["x-session-api-key"]);
+  const sessionApiKey =
+    options.sessionApiKey ??
+    normalizeHeader(request.headers["x-session-api-key"]);
   if (sessionApiKey === token) {
     return { allowed: true };
   }
@@ -552,6 +560,38 @@ function startBashCommand(
   }, Math.max(1, timeoutSeconds) * 1000);
 
   return record;
+}
+
+function addEventSubscriber(
+  conversationId: string,
+  subscriber: EventSubscriber,
+): () => void {
+  let subscribers = eventSubscribers.get(conversationId);
+  if (!subscribers) {
+    subscribers = new Set<EventSubscriber>();
+    eventSubscribers.set(conversationId, subscribers);
+  }
+  subscribers.add(subscriber);
+  return () => {
+    const current = eventSubscribers.get(conversationId);
+    if (!current) {
+      return;
+    }
+    current.delete(subscriber);
+    if (!current.size) {
+      eventSubscribers.delete(conversationId);
+    }
+  };
+}
+
+function broadcastConversationEvent(conversationId: string, event: Event): void {
+  const subscribers = eventSubscribers.get(conversationId);
+  if (!subscribers?.size) {
+    return;
+  }
+  for (const subscriber of Array.from(subscribers)) {
+    subscriber(event);
+  }
 }
 
 function buildReplyFromComment(message: SmolpawsQueueMessage): string {
@@ -875,6 +915,7 @@ function createConversationRecord(
     record.events.push(event);
     record.updatedAt = new Date().toISOString();
     lastEventAt = Date.now();
+    broadcastConversationEvent(id, event);
   });
 
   conversations.set(id, record);
@@ -984,12 +1025,49 @@ async function start(): Promise<void> {
   const env = getEnv();
   const persistenceDir = resolvePersistenceDir(env);
   const app = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>();
+  await app.register(websocket);
   await app.register(multipart);
 
   app.get("/health", async () => ({ ok: true }));
   app.get("/api/health", async () => ({ ok: true }));
   app.get("/alive", async () => ({ status: "ok" }));
   app.get("/ready", async () => ({ status: "ready" }));
+  app.get<{
+    Params: { conversationId: string };
+    Querystring: { resend_all?: string; session_api_key?: string };
+  }>(
+    "/sockets/events/:conversationId",
+    {
+      websocket: true,
+      preValidation: async (request, reply) => {
+        const auth = isAuthorized(request, env, {
+          sessionApiKey: request.query.session_api_key,
+        });
+        if (!auth.allowed) {
+          reply.status(401).send({ error: auth.reason ?? "Unauthorized" });
+          return;
+        }
+        getConversationOrThrow(request.params.conversationId);
+      },
+    },
+    (socket, request) => {
+      const record = getConversationOrThrow(request.params.conversationId);
+      const sendEvent = (event: Event) => {
+        if (socket.readyState !== OPEN_SOCKET_STATE) {
+          return;
+        }
+        socket.send(JSON.stringify(event));
+      };
+      const unsubscribe = addEventSubscriber(record.id, sendEvent);
+      if (request.query.resend_all === "true") {
+        for (const event of record.events) {
+          sendEvent(event);
+        }
+      }
+      socket.on("close", unsubscribe);
+      socket.on("error", unsubscribe);
+    },
+  );
   app.get<{ Params: { "*": string } }>(
     "/api/file/download/*",
     async (request, reply) => {
