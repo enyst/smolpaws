@@ -54,7 +54,7 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
 - **Browser strategy convergence** (`browser_use` replacement / `agent-browser` standardization)
 - **Ingress convergence** between WhatsApp and GitHub around one shared execution surface
 - **Repository consolidation decision** after the interfaces stabilize
-- **Daytona-specific cleanup** after the shared gateway contract is stable
+- **Daytona-specific cleanup** = optional, and after the shared gateway contract is stable
 
 ## Plan checklist
 
