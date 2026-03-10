@@ -353,9 +353,18 @@ function isAuthorized(
   if (!token) {
     return { allowed: true };
   }
+
+  const sessionApiKey = normalizeHeader(request.headers["x-session-api-key"]);
+  if (sessionApiKey === token) {
+    return { allowed: true };
+  }
+
   const authorization = normalizeHeader(request.headers.authorization);
   if (!authorization) {
-    return { allowed: false, reason: "Missing Authorization header" };
+    return {
+      allowed: false,
+      reason: "Missing Authorization or X-Session-API-Key header",
+    };
   }
   const [scheme, value] = authorization.split(" ");
   if (scheme !== "Bearer" || value !== token) {
