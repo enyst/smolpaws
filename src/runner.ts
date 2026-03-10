@@ -200,6 +200,14 @@ const BashEventPageSchema = Type.Object({
   next_page_id: Type.Optional(Type.String()),
 });
 
+const ConversationIdParamsSchema = Type.Object({
+  conversationId: Type.String(),
+});
+
+const SocketsEventsQuerySchema = Type.Object({
+  resend_all: Type.Optional(Type.String()),
+});
+
 const GenerateTitleRequestSchema = Type.Object({
   max_length: Type.Optional(Type.Number()),
   llm: Type.Optional(Type.Any()),
@@ -256,6 +264,8 @@ type StartBashCommandRequest = Static<typeof StartBashCommandRequestSchema>;
 type StartBashCommandResponse = Static<typeof StartBashCommandResponseSchema>;
 type BashOutputEvent = Static<typeof BashOutputEventSchema>;
 type BashEventPage = Static<typeof BashEventPageSchema>;
+type ConversationIdParams = Static<typeof ConversationIdParamsSchema>;
+type SocketsEventsQuery = Static<typeof SocketsEventsQuerySchema>;
 type ErrorResponse = Static<typeof ErrorSchema>;
 
 
@@ -1033,16 +1043,18 @@ async function start(): Promise<void> {
   app.get("/alive", async () => ({ status: "ok" }));
   app.get("/ready", async () => ({ status: "ready" }));
   app.get<{
-    Params: { conversationId: string };
-    Querystring: { resend_all?: string; session_api_key?: string };
+    Params: ConversationIdParams;
+    Querystring: SocketsEventsQuery;
   }>(
     "/sockets/events/:conversationId",
     {
       websocket: true,
+      schema: {
+        params: ConversationIdParamsSchema,
+        querystring: SocketsEventsQuerySchema,
+      },
       preValidation: async (request, reply) => {
-        const auth = isAuthorized(request, env, {
-          sessionApiKey: request.query.session_api_key,
-        });
+        const auth = isAuthorized(request, env);
         if (!auth.allowed) {
           reply.status(401).send({ error: auth.reason ?? "Unauthorized" });
           return;
@@ -1058,11 +1070,11 @@ async function start(): Promise<void> {
         }
         socket.send(JSON.stringify(event));
       };
+      const replayEvents =
+        request.query.resend_all === "true" ? [...record.events] : [];
       const unsubscribe = addEventSubscriber(record.id, sendEvent);
-      if (request.query.resend_all === "true") {
-        for (const event of record.events) {
-          sendEvent(event);
-        }
+      for (const event of replayEvents) {
+        sendEvent(event);
       }
       socket.on("close", unsubscribe);
       socket.on("error", unsubscribe);
