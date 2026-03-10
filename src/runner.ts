@@ -882,7 +882,7 @@ async function getConversationInfoOrThrow(
   persistenceDir: string,
 ): Promise<ConversationInfo> {
   if (!isSafeConversationId(conversationId)) {
-    throw new Error("conversation_not_found");
+    throw new Error("invalid_conversation_id");
   }
   if (!hasPersistedConversation(conversationId, persistenceDir) && !conversations.has(conversationId)) {
     throw new Error("conversation_not_found");
@@ -899,7 +899,7 @@ async function readPersistedEventsOrThrow(
   persistenceDir: string,
 ): Promise<Event[]> {
   if (!isSafeConversationId(conversationId)) {
-    throw new Error("conversation_not_found");
+    throw new Error("invalid_conversation_id");
   }
   const eventsPath = buildEventsFilePath(conversationId, persistenceDir);
   try {
@@ -994,10 +994,13 @@ async function createConversationRecord(
     conversation.restoreConversation(id);
   }
 
+  const persistedInfo = requestedId && wasPersisted
+    ? await buildConversationInfoFromPersistence(id, persistenceRoot)
+    : undefined;
   const record: ConversationRecord = {
     id,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: persistedInfo?.created_at ?? new Date().toISOString(),
+    updatedAt: persistedInfo?.updated_at ?? new Date().toISOString(),
     conversation,
     events: requestedId
       ? await readPersistedEventsOrThrow(id, persistenceRoot).catch(() => [])
@@ -1008,7 +1011,11 @@ async function createConversationRecord(
   };
 
   if (record.events.length) {
+    const firstEvent = record.events[0];
     const lastEvent = record.events[record.events.length - 1];
+    if (firstEvent?.timestamp) {
+      record.createdAt = firstEvent.timestamp;
+    }
     if (lastEvent?.timestamp) {
       record.updatedAt = lastEvent.timestamp;
     }
@@ -1475,7 +1482,7 @@ async function start(): Promise<void> {
   app.get<{ Params: { conversationId: string }; Reply: ConversationInfo | ErrorResponse }>(
     "/api/conversations/:conversationId",
     {
-      schema: { response: { 200: ConversationInfoSchema, 401: ErrorSchema } },
+      schema: { response: { 200: ConversationInfoSchema, 400: ErrorSchema, 401: ErrorSchema } },
     },
     async (request, reply): Promise<ConversationInfo | ErrorResponse> => {
       const auth = isAuthorized(request, env);
@@ -1650,7 +1657,7 @@ async function start(): Promise<void> {
   app.get<{ Params: { conversationId: string }; Querystring: { page_id?: string; limit?: number }; Reply: EventPage | ErrorResponse }>(
     "/api/conversations/:conversationId/events/search",
     {
-      schema: { response: { 200: EventPageSchema, 401: ErrorSchema } },
+      schema: { response: { 200: EventPageSchema, 400: ErrorSchema, 401: ErrorSchema } },
     },
     async (request, reply): Promise<EventPage | ErrorResponse> => {
       const auth = isAuthorized(request, env);
