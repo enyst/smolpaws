@@ -802,6 +802,7 @@ async function start(): Promise<void> {
   const app = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>();
 
   app.get("/health", async () => ({ ok: true }));
+  app.get("/api/health", async () => ({ ok: true }));
   app.get("/alive", async () => ({ status: "ok" }));
   app.get("/ready", async () => ({ status: "ready" }));
   app.get(
