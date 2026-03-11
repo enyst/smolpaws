@@ -45,7 +45,7 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
 ### In progress
 
 - **Remote agent-server contract parity in `enyst-smolpaws`**
-  - The open work is being tracked in the next PR after `enyst/smolpaws#4`.
+  - The open work is currently split across a series of small compatibility PRs.
   - The runner now covers a meaningful subset of the TypeScript `RemoteWorkspace` contract and now has an initial websocket event stream for `RemoteConversation`, but it is still incomplete.
 - **Canonical ownership / boundary documentation**
   - We are working with the assumption that OpenHands-Tab owns the SDK source, but this still needs to be made explicit enough that future changes do not drift again.
@@ -99,7 +99,8 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
 
 - **Plan issue**: [enyst/OpenHands-Tab#996](https://github.com/enyst/OpenHands-Tab/issues/996)
 - **Merged SDK alignment PR**: [smolpaws/smolpaws#2](https://github.com/smolpaws/smolpaws/pull/2)
-- **Current compatibility PR**: [enyst/smolpaws#4](https://github.com/enyst/smolpaws/pull/4)
+- **Merged compatibility PRs so far**: [enyst/smolpaws#4](https://github.com/enyst/smolpaws/pull/4), [#5](https://github.com/enyst/smolpaws/pull/5), [#6](https://github.com/enyst/smolpaws/pull/6)
+- **Current compatibility PR**: [enyst/smolpaws#7](https://github.com/enyst/smolpaws/pull/7)
 
 ## Validation used so far
 

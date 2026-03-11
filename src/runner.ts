@@ -215,8 +215,8 @@ const GitChangeSchema = Type.Object({
 const GitChangesSchema = Type.Array(GitChangeSchema);
 
 const GitDiffSchema = Type.Object({
-  modified: Type.Union([Type.String(), Type.Null()]),
-  original: Type.Union([Type.String(), Type.Null()]),
+  modified: Type.String(),
+  original: Type.String(),
 });
 
 const GitPathQuerySchema = Type.Object({
@@ -677,12 +677,12 @@ async function getGitChanges(targetPath: string): Promise<GitChange[]> {
 
   const changes: GitChange[] = [];
   for (const line of diffResult.stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) {
+    const normalizedLine = line.replace(/\r$/, "");
+    if (!normalizedLine.trim()) {
       continue;
     }
-    const parts = trimmed.split(/\s+/);
-    const status = parts[0] ?? "";
+    const parts = normalizedLine.split("\t");
+    const status = parts[0]?.trim() ?? "";
     if ((status.startsWith("R") || status.startsWith("C")) && parts.length >= 3) {
       const oldPath = parts[1] ?? "";
       const newPath = parts[2] ?? "";
