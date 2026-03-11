@@ -377,6 +377,16 @@ function resolvePersistenceRoot(
   return path.join(baseDir, persistenceDir);
 }
 
+function resolveAbsolutePersistenceRoot(
+  persistenceDir: string,
+  env: RunnerEnv,
+): string {
+  if (path.isAbsolute(persistenceDir)) {
+    return persistenceDir;
+  }
+  return path.join(getConfiguredWorkspaceRoot(env), persistenceDir);
+}
+
 function buildEventsFilePath(
   conversationId: string,
   persistenceDir: string,
@@ -1003,7 +1013,16 @@ async function createConversationRecord(
     updatedAt: persistedInfo?.updated_at ?? new Date().toISOString(),
     conversation,
     events: requestedId
-      ? await readPersistedEventsOrThrow(id, persistenceRoot).catch(() => [])
+      ? await readPersistedEventsOrThrow(id, persistenceRoot).catch((error) => {
+          if (
+            !wasPersisted &&
+            error instanceof Error &&
+            error.message === "conversation_not_found"
+          ) {
+            return [];
+          }
+          throw error;
+        })
       : [],
     settings,
     secrets: registry,
@@ -1141,6 +1160,7 @@ function generateTitleFromEvents(
 async function start(): Promise<void> {
   const env = getEnv();
   const persistenceDir = resolvePersistenceDir(env);
+  const persistenceRoot = resolveAbsolutePersistenceRoot(persistenceDir, env);
   const app = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>();
   await app.register(websocket);
   await app.register(multipart);
@@ -1415,7 +1435,7 @@ async function start(): Promise<void> {
           settings,
           prompt,
           env.SMOLPAWS_WORKSPACE_ROOT,
-          persistenceDir,
+          persistenceRoot,
         );
         return { reply: response || fallbackReply };
       } catch (error) {
@@ -1442,7 +1462,7 @@ async function start(): Promise<void> {
         reply.status(401);
         return { error: auth.reason ?? "Unauthorized" };
       }
-      const items = await listConversationInfos(persistenceDir);
+      const items = await listConversationInfos(persistenceRoot);
       return { items };
     },
   );
@@ -1462,7 +1482,7 @@ async function start(): Promise<void> {
       const { record, isNew } = await createConversationRecord(
         request.body,
         env,
-        persistenceDir,
+        persistenceRoot,
       );
       if (request.body.initial_message) {
         const messageText = extractTextFromRequest(request.body.initial_message);
@@ -1482,7 +1502,7 @@ async function start(): Promise<void> {
   app.get<{ Params: { conversationId: string }; Reply: ConversationInfo | ErrorResponse }>(
     "/api/conversations/:conversationId",
     {
-      schema: { response: { 200: ConversationInfoSchema, 400: ErrorSchema, 401: ErrorSchema } },
+      schema: { response: { 200: ConversationInfoSchema, 400: ErrorSchema, 401: ErrorSchema, 404: ErrorSchema } },
     },
     async (request, reply): Promise<ConversationInfo | ErrorResponse> => {
       const auth = isAuthorized(request, env);
@@ -1492,7 +1512,7 @@ async function start(): Promise<void> {
       }
       return getConversationInfoOrThrow(
         request.params.conversationId,
-        persistenceDir,
+        persistenceRoot,
       );
     },
   );
@@ -1580,7 +1600,7 @@ async function start(): Promise<void> {
         record.settings,
         request.body.question,
         record.workspaceRoot,
-        persistenceDir,
+        persistenceRoot,
       );
       return { response };
     },
@@ -1657,7 +1677,7 @@ async function start(): Promise<void> {
   app.get<{ Params: { conversationId: string }; Querystring: { page_id?: string; limit?: number }; Reply: EventPage | ErrorResponse }>(
     "/api/conversations/:conversationId/events/search",
     {
-      schema: { response: { 200: EventPageSchema, 400: ErrorSchema, 401: ErrorSchema } },
+      schema: { response: { 200: EventPageSchema, 400: ErrorSchema, 401: ErrorSchema, 404: ErrorSchema } },
     },
     async (request, reply): Promise<EventPage | ErrorResponse> => {
       const auth = isAuthorized(request, env);
@@ -1678,7 +1698,7 @@ async function start(): Promise<void> {
       }
       const events = await readPersistedEventsOrThrow(
         request.params.conversationId,
-        persistenceDir,
+        persistenceRoot,
       );
       return paginateEvents(events, params);
     },
@@ -1700,7 +1720,7 @@ async function start(): Promise<void> {
       const record = conversations.get(conversationId);
       const eventsPath = buildEventsFilePath(
         conversationId,
-        persistenceDir,
+        persistenceRoot,
         record,
       );
       try {
