@@ -200,6 +200,29 @@ const BashEventPageSchema = Type.Object({
   next_page_id: Type.Optional(Type.String()),
 });
 
+const GitChangeStatusSchema = Type.Union([
+  Type.Literal("MOVED"),
+  Type.Literal("ADDED"),
+  Type.Literal("DELETED"),
+  Type.Literal("UPDATED"),
+]);
+
+const GitChangeSchema = Type.Object({
+  status: GitChangeStatusSchema,
+  path: Type.String(),
+});
+
+const GitChangesSchema = Type.Array(GitChangeSchema);
+
+const GitDiffSchema = Type.Object({
+  modified: Type.Union([Type.String(), Type.Null()]),
+  original: Type.Union([Type.String(), Type.Null()]),
+});
+
+const GitPathQuerySchema = Type.Object({
+  path: Type.String(),
+});
+
 const ConversationIdParamsSchema = Type.Object({
   conversationId: Type.String(),
 });
@@ -264,6 +287,9 @@ type StartBashCommandRequest = Static<typeof StartBashCommandRequestSchema>;
 type StartBashCommandResponse = Static<typeof StartBashCommandResponseSchema>;
 type BashOutputEvent = Static<typeof BashOutputEventSchema>;
 type BashEventPage = Static<typeof BashEventPageSchema>;
+type GitChange = Static<typeof GitChangeSchema>;
+type GitDiff = Static<typeof GitDiffSchema>;
+type GitPathQuery = Static<typeof GitPathQuerySchema>;
 type ConversationIdParams = Static<typeof ConversationIdParamsSchema>;
 type SocketsEventsQuery = Static<typeof SocketsEventsQuerySchema>;
 type ErrorResponse = Static<typeof ErrorSchema>;
@@ -580,6 +606,130 @@ function startBashCommand(
   }, Math.max(1, timeoutSeconds) * 1000);
 
   return record;
+}
+
+async function runCapturedCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd, env: process.env });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({
+        stdout,
+        stderr,
+        exitCode: typeof code === "number" ? code : 1,
+      });
+    });
+  });
+}
+
+async function resolveGitRepositoryRoot(targetPath: string): Promise<string> {
+  const stats = await fs.stat(targetPath);
+  const cwd = stats.isDirectory() ? targetPath : path.dirname(targetPath);
+  const result = await runCapturedCommand(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    cwd,
+  );
+  if (result.exitCode !== 0) {
+    throw new Error("git_repository_not_found");
+  }
+  return result.stdout.trim();
+}
+
+function mapGitStatus(status: string): GitChange["status"] {
+  switch (status) {
+    case "M":
+    case "U":
+      return "UPDATED";
+    case "A":
+    case "??":
+      return "ADDED";
+    case "D":
+      return "DELETED";
+    default:
+      throw new Error(`unsupported_git_status:${status}`);
+  }
+}
+
+async function getGitChanges(targetPath: string): Promise<GitChange[]> {
+  const repoRoot = await resolveGitRepositoryRoot(targetPath);
+  const diffResult = await runCapturedCommand(
+    "git",
+    ["--no-pager", "diff", "--name-status", "HEAD"],
+    repoRoot,
+  );
+  if (diffResult.exitCode !== 0) {
+    throw new Error(diffResult.stderr.trim() || "git_changes_failed");
+  }
+
+  const changes: GitChange[] = [];
+  for (const line of diffResult.stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const parts = trimmed.split(/\s+/);
+    const status = parts[0] ?? "";
+    if ((status.startsWith("R") || status.startsWith("C")) && parts.length >= 3) {
+      const oldPath = parts[1] ?? "";
+      const newPath = parts[2] ?? "";
+      if (status.startsWith("R")) {
+        changes.push({ status: "DELETED", path: oldPath });
+      }
+      changes.push({ status: "ADDED", path: newPath });
+      continue;
+    }
+    const filePath = parts[1] ?? "";
+    changes.push({ status: mapGitStatus(status), path: filePath });
+  }
+
+  const untrackedResult = await runCapturedCommand(
+    "git",
+    ["--no-pager", "ls-files", "--others", "--exclude-standard"],
+    repoRoot,
+  );
+  if (untrackedResult.exitCode === 0) {
+    for (const line of untrackedResult.stdout.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      changes.push({ status: "ADDED", path: trimmed });
+    }
+  }
+
+  return changes;
+}
+
+async function getGitDiff(targetPath: string): Promise<GitDiff> {
+  const absolutePath = path.resolve(targetPath);
+  const repoRoot = await resolveGitRepositoryRoot(absolutePath);
+  const relativePath = path.relative(repoRoot, absolutePath);
+  const originalResult = await runCapturedCommand(
+    "git",
+    ["show", `HEAD:${relativePath}`],
+    repoRoot,
+  );
+  const modified = await fs.readFile(absolutePath, "utf8").catch(() => "");
+  return {
+    modified: modified ? modified.split(/\r?\n/).join("\n") : "",
+    original: originalResult.exitCode === 0
+      ? originalResult.stdout.split(/\r?\n/).join("\n")
+      : "",
+  };
 }
 
 function addEventSubscriber(
@@ -1285,6 +1435,88 @@ async function start(): Promise<void> {
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       await fs.writeFile(absolutePath, bytes);
       reply.send({ success: true });
+    },
+  );
+  app.get<{ Querystring: GitPathQuery; Reply: GitChange[] | ErrorResponse }>(
+    "/api/git/changes",
+    {
+      schema: {
+        querystring: GitPathQuerySchema,
+        response: {
+          200: GitChangesSchema,
+          400: ErrorSchema,
+          401: ErrorSchema,
+          403: ErrorSchema,
+        },
+      },
+    },
+    async (request, reply): Promise<GitChange[] | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+
+      let absolutePath: string;
+      try {
+        absolutePath = resolveRequestedAbsolutePath(request.query.path);
+      } catch (error) {
+        reply.status(400);
+        return { error: error instanceof Error ? error.message : String(error) };
+      }
+
+      try {
+        if (!(await isAllowedWorkspacePath(absolutePath, env, "read"))) {
+          reply.status(403);
+          return { error: "Path is outside allowed workspace roots" };
+        }
+        return await getGitChanges(absolutePath);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        reply.status(400);
+        return { error: message };
+      }
+    },
+  );
+  app.get<{ Querystring: GitPathQuery; Reply: GitDiff | ErrorResponse }>(
+    "/api/git/diff",
+    {
+      schema: {
+        querystring: GitPathQuerySchema,
+        response: {
+          200: GitDiffSchema,
+          400: ErrorSchema,
+          401: ErrorSchema,
+          403: ErrorSchema,
+        },
+      },
+    },
+    async (request, reply): Promise<GitDiff | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+
+      let absolutePath: string;
+      try {
+        absolutePath = resolveRequestedAbsolutePath(request.query.path);
+      } catch (error) {
+        reply.status(400);
+        return { error: error instanceof Error ? error.message : String(error) };
+      }
+
+      try {
+        if (!(await isAllowedWorkspacePath(absolutePath, env, "read"))) {
+          reply.status(403);
+          return { error: "Path is outside allowed workspace roots" };
+        }
+        return await getGitDiff(absolutePath);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        reply.status(400);
+        return { error: message };
+      }
     },
   );
   app.post<{ Body: StartBashCommandRequest; Reply: StartBashCommandResponse | ErrorResponse }>(

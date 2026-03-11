@@ -34,6 +34,7 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
   - `GET /api/bash/bash_events/search`
   - `GET /sockets/events/:conversationId`
   - persistence-backed `GET /api/conversations`, `GET /api/conversations/:conversationId`, `GET /api/conversations/:conversationId/events/search`, and `GET /api/conversations/:conversationId/events/download`
+  - initial `GET /api/git/changes` and `GET /api/git/diff` query endpoints
 - **Initial auth compatibility added**
   - compatibility routes accept `X-Session-API-Key` as well as Bearer auth.
 - **Workspace boundary hardening added**
@@ -82,7 +83,7 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
 - [x] `/api/file/upload/*`
 - [x] `/api/bash/start_bash_command`
 - [x] `/api/bash/bash_events/search`
-- [ ] `/api/git/*` parity if the TypeScript clients need it
+- [~] initial `/api/git/changes` + `/api/git/diff` query parity
 - [~] auth semantics aligned enough for initial `X-Session-API-Key` / Bearer compatibility
 
 ### 6. Ingress convergence
