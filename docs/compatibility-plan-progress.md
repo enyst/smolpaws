@@ -34,6 +34,7 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
   - `GET /api/bash/bash_events/search`
   - `GET /sockets/events/:conversationId`
   - persistence-backed `GET /api/conversations`, `GET /api/conversations/:conversationId`, `GET /api/conversations/:conversationId/events/search`, and `GET /api/conversations/:conversationId/events/download`
+  - initial `GET /api/git/changes` and `GET /api/git/diff` query endpoints
 - **Initial auth compatibility added**
   - compatibility routes accept `X-Session-API-Key` as well as Bearer auth.
 - **Workspace boundary hardening added**
@@ -44,7 +45,7 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
 ### In progress
 
 - **Remote agent-server contract parity in `enyst-smolpaws`**
-  - The open work is being tracked in the next PR after `enyst/smolpaws#4`.
+  - The open work is currently split across a series of small compatibility PRs.
   - The runner now covers a meaningful subset of the TypeScript `RemoteWorkspace` contract and now has an initial websocket event stream for `RemoteConversation`, but it is still incomplete.
 - **Canonical ownership / boundary documentation**
   - We are working with the assumption that OpenHands-Tab owns the SDK source, but this still needs to be made explicit enough that future changes do not drift again.
@@ -82,7 +83,7 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
 - [x] `/api/file/upload/*`
 - [x] `/api/bash/start_bash_command`
 - [x] `/api/bash/bash_events/search`
-- [ ] `/api/git/*` parity if the TypeScript clients need it
+- [~] initial `/api/git/changes` + `/api/git/diff` query parity
 - [~] auth semantics aligned enough for initial `X-Session-API-Key` / Bearer compatibility
 
 ### 6. Ingress convergence
@@ -98,7 +99,8 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
 
 - **Plan issue**: [enyst/OpenHands-Tab#996](https://github.com/enyst/OpenHands-Tab/issues/996)
 - **Merged SDK alignment PR**: [smolpaws/smolpaws#2](https://github.com/smolpaws/smolpaws/pull/2)
-- **Current compatibility PR**: [enyst/smolpaws#4](https://github.com/enyst/smolpaws/pull/4)
+- **Merged compatibility PRs so far**: [enyst/smolpaws#4](https://github.com/enyst/smolpaws/pull/4), [#5](https://github.com/enyst/smolpaws/pull/5), [#6](https://github.com/enyst/smolpaws/pull/6)
+- **Current compatibility PR**: [enyst/smolpaws#7](https://github.com/enyst/smolpaws/pull/7)
 
 ## Validation used so far
 
