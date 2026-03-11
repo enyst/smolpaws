@@ -377,6 +377,16 @@ function resolvePersistenceRoot(
   return path.join(baseDir, persistenceDir);
 }
 
+function resolveAbsolutePersistenceRoot(
+  persistenceDir: string,
+  env: RunnerEnv,
+): string {
+  if (path.isAbsolute(persistenceDir)) {
+    return persistenceDir;
+  }
+  return path.join(getConfiguredWorkspaceRoot(env), persistenceDir);
+}
+
 function buildEventsFilePath(
   conversationId: string,
   persistenceDir: string,
@@ -866,6 +876,66 @@ async function listConversationInfos(
   return items;
 }
 
+function hasPersistedConversation(
+  conversationId: string,
+  persistenceDir: string,
+): boolean {
+  if (!isSafeConversationId(conversationId)) {
+    return false;
+  }
+  const rootDir = resolvePersistenceRoot(persistenceDir);
+  return FileStore.listConversations(rootDir).includes(conversationId);
+}
+
+async function getConversationInfoOrThrow(
+  conversationId: string,
+  persistenceDir: string,
+): Promise<ConversationInfo> {
+  if (!isSafeConversationId(conversationId)) {
+    throw new Error("invalid_conversation_id");
+  }
+  if (!hasPersistedConversation(conversationId, persistenceDir) && !conversations.has(conversationId)) {
+    throw new Error("conversation_not_found");
+  }
+  return buildConversationInfoFromPersistence(
+    conversationId,
+    persistenceDir,
+    conversations.get(conversationId),
+  );
+}
+
+async function readPersistedEventsOrThrow(
+  conversationId: string,
+  persistenceDir: string,
+): Promise<Event[]> {
+  if (!isSafeConversationId(conversationId)) {
+    throw new Error("invalid_conversation_id");
+  }
+  const eventsPath = buildEventsFilePath(conversationId, persistenceDir);
+  try {
+    const content = await fs.readFile(eventsPath, "utf8");
+    const events: Event[] = [];
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      try {
+        events.push(JSON.parse(trimmed) as Event);
+      } catch (error) {
+        console.error(`Skipping corrupted persisted event: ${String(error)}`);
+      }
+    }
+    return events;
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === "ENOENT") {
+      throw new Error("conversation_not_found");
+    }
+    throw error;
+  }
+}
+
 async function runStandaloneQuestion(
   settings: OpenHandsSettings,
   prompt: string,
@@ -892,12 +962,22 @@ async function runStandaloneQuestion(
   return responses[responses.length - 1] ?? "";
 }
 
-function createConversationRecord(
+async function createConversationRecord(
   request: StartConversationRequest,
   env: RunnerEnv,
   persistenceDir?: string,
-): ConversationRecord {
-  const id = randomUUID();
+): Promise<{ record: ConversationRecord; isNew: boolean }> {
+  const requestedId = request.conversation_id?.trim();
+  if (requestedId && !isSafeConversationId(requestedId)) {
+    throw new Error("invalid_conversation_id");
+  }
+  if (requestedId) {
+    const existing = conversations.get(requestedId);
+    if (existing) {
+      return { record: existing, isNew: false };
+    }
+  }
+
   const registry = new SecretRegistry();
   const settings = buildSettingsFromRequest(request, registry);
   const workspaceRoot = resolveWorkspaceRoot(request, env);
@@ -910,16 +990,55 @@ function createConversationRecord(
     persistenceDir,
   });
 
+  const id = requestedId || (await conversation.startNewConversation());
+  if (!id) {
+    throw new Error("conversation_id_unavailable");
+  }
+
+  const persistenceRoot = persistenceDir ?? DEFAULT_PERSISTENCE_DIR;
+  const wasPersisted = requestedId
+    ? hasPersistedConversation(requestedId, persistenceRoot)
+    : false;
+
+  if (requestedId) {
+    conversation.restoreConversation(id);
+  }
+
+  const persistedInfo = requestedId && wasPersisted
+    ? await buildConversationInfoFromPersistence(id, persistenceRoot)
+    : undefined;
   const record: ConversationRecord = {
     id,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: persistedInfo?.created_at ?? new Date().toISOString(),
+    updatedAt: persistedInfo?.updated_at ?? new Date().toISOString(),
     conversation,
-    events: [],
+    events: requestedId
+      ? await readPersistedEventsOrThrow(id, persistenceRoot).catch((error) => {
+          if (
+            !wasPersisted &&
+            error instanceof Error &&
+            error.message === "conversation_not_found"
+          ) {
+            return [];
+          }
+          throw error;
+        })
+      : [],
     settings,
     secrets: registry,
     workspaceRoot,
   };
+
+  if (record.events.length) {
+    const firstEvent = record.events[0];
+    const lastEvent = record.events[record.events.length - 1];
+    if (firstEvent?.timestamp) {
+      record.createdAt = firstEvent.timestamp;
+    }
+    if (lastEvent?.timestamp) {
+      record.updatedAt = lastEvent.timestamp;
+    }
+  }
 
   conversation.on("event", (event: Event) => {
     record.events.push(event);
@@ -929,7 +1048,7 @@ function createConversationRecord(
   });
 
   conversations.set(id, record);
-  return record;
+  return { record, isNew: !requestedId || !wasPersisted };
 }
 
 function getConversationOrThrow(id: string): ConversationRecord {
@@ -986,8 +1105,8 @@ async function applySecurityAnalyzer(
   await record.conversation.setSecurityAnalyzer(null);
 }
 
-function listEvents(
-  record: ConversationRecord,
+function paginateEvents(
+  events: Event[],
   params: { pageId?: string; limit?: number },
 ): EventPage {
   const limit =
@@ -996,12 +1115,19 @@ function listEvents(
       : 100;
   const offset = params.pageId ? Number(params.pageId) : 0;
   const safeOffset = Number.isFinite(offset) && offset >= 0 ? offset : 0;
-  const items = record.events.slice(safeOffset, safeOffset + limit);
+  const items = events.slice(safeOffset, safeOffset + limit);
   const nextOffset = safeOffset + items.length;
   return {
     items,
-    next_page_id: nextOffset < record.events.length ? String(nextOffset) : undefined,
+    next_page_id: nextOffset < events.length ? String(nextOffset) : undefined,
   };
+}
+
+function listEvents(
+  record: ConversationRecord,
+  params: { pageId?: string; limit?: number },
+): EventPage {
+  return paginateEvents(record.events, params);
 }
 
 function extractPromptFromComment(comment?: string | null): string {
@@ -1034,6 +1160,7 @@ function generateTitleFromEvents(
 async function start(): Promise<void> {
   const env = getEnv();
   const persistenceDir = resolvePersistenceDir(env);
+  const persistenceRoot = resolveAbsolutePersistenceRoot(persistenceDir, env);
   const app = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>();
   await app.register(websocket);
   await app.register(multipart);
@@ -1308,7 +1435,7 @@ async function start(): Promise<void> {
           settings,
           prompt,
           env.SMOLPAWS_WORKSPACE_ROOT,
-          persistenceDir,
+          persistenceRoot,
         );
         return { reply: response || fallbackReply };
       } catch (error) {
@@ -1326,7 +1453,6 @@ async function start(): Promise<void> {
         response: {
           200: ConversationListSchema,
           401: ErrorSchema,
-          404: ErrorSchema,
         },
       },
     },
@@ -1336,11 +1462,7 @@ async function start(): Promise<void> {
         reply.status(401);
         return { error: auth.reason ?? "Unauthorized" };
       }
-      if (!env.DAYTONA_API_KEY) {
-        reply.status(404);
-        return { error: "Daytona not configured" };
-      }
-      const items = await listConversationInfos(persistenceDir);
+      const items = await listConversationInfos(persistenceRoot);
       return { items };
     },
   );
@@ -1357,7 +1479,11 @@ async function start(): Promise<void> {
       },
     },
     async (request, reply): Promise<ConversationInfo> => {
-      const record = createConversationRecord(request.body, env, persistenceDir);
+      const { record, isNew } = await createConversationRecord(
+        request.body,
+        env,
+        persistenceRoot,
+      );
       if (request.body.initial_message) {
         const messageText = extractTextFromRequest(request.body.initial_message);
         if (messageText) {
@@ -1368,19 +1494,26 @@ async function start(): Promise<void> {
           });
         }
       }
-      reply.status(201);
+      reply.status(isNew ? 201 : 200);
       return buildConversationInfo(record);
     },
   );
 
-  app.get<{ Params: { conversationId: string }; Reply: ConversationInfo }>(
+  app.get<{ Params: { conversationId: string }; Reply: ConversationInfo | ErrorResponse }>(
     "/api/conversations/:conversationId",
     {
-      schema: { response: { 200: ConversationInfoSchema } },
+      schema: { response: { 200: ConversationInfoSchema, 400: ErrorSchema, 401: ErrorSchema, 404: ErrorSchema } },
     },
-    async (request): Promise<ConversationInfo> => {
-      const record = getConversationOrThrow(request.params.conversationId);
-      return buildConversationInfo(record);
+    async (request, reply): Promise<ConversationInfo | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+      return getConversationInfoOrThrow(
+        request.params.conversationId,
+        persistenceRoot,
+      );
     },
   );
 
@@ -1467,7 +1600,7 @@ async function start(): Promise<void> {
         record.settings,
         request.body.question,
         record.workspaceRoot,
-        persistenceDir,
+        persistenceRoot,
       );
       return { response };
     },
@@ -1541,20 +1674,33 @@ async function start(): Promise<void> {
     },
   );
 
-  app.get<{ Params: { conversationId: string }; Querystring: { page_id?: string; limit?: number }; Reply: EventPage }>(
+  app.get<{ Params: { conversationId: string }; Querystring: { page_id?: string; limit?: number }; Reply: EventPage | ErrorResponse }>(
     "/api/conversations/:conversationId/events/search",
     {
-      schema: { response: { 200: EventPageSchema } },
+      schema: { response: { 200: EventPageSchema, 400: ErrorSchema, 401: ErrorSchema, 404: ErrorSchema } },
     },
-    async (request): Promise<EventPage> => {
-      const record = getConversationOrThrow(request.params.conversationId);
-      return listEvents(record, {
+    async (request, reply): Promise<EventPage | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+      const params = {
         pageId: request.query.page_id,
         limit:
           typeof request.query.limit === "string"
             ? Number(request.query.limit)
             : request.query.limit,
-      });
+      };
+      const record = conversations.get(request.params.conversationId);
+      if (record) {
+        return listEvents(record, params);
+      }
+      const events = await readPersistedEventsOrThrow(
+        request.params.conversationId,
+        persistenceRoot,
+      );
+      return paginateEvents(events, params);
     },
   );
 
@@ -1566,10 +1712,6 @@ async function start(): Promise<void> {
         reply.status(401).send({ error: auth.reason ?? "Unauthorized" });
         return;
       }
-      if (!env.DAYTONA_API_KEY) {
-        reply.status(404).send({ error: "Daytona not configured" });
-        return;
-      }
       const conversationId = request.params.conversationId;
       if (!isSafeConversationId(conversationId)) {
         reply.status(400).send({ error: "Invalid conversation id" });
@@ -1578,7 +1720,7 @@ async function start(): Promise<void> {
       const record = conversations.get(conversationId);
       const eventsPath = buildEventsFilePath(
         conversationId,
-        persistenceDir,
+        persistenceRoot,
         record,
       );
       try {
@@ -1626,6 +1768,10 @@ async function start(): Promise<void> {
     }
     if (error instanceof Error && error.message === "workspace_root_not_allowed") {
       reply.status(403).send({ error: "Workspace root is outside allowed roots" });
+      return;
+    }
+    if (error instanceof Error && error.message === "invalid_conversation_id") {
+      reply.status(400).send({ error: "Conversation id is invalid" });
       return;
     }
     const message = error instanceof Error ? error.message : String(error);

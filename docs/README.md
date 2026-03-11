@@ -125,20 +125,23 @@ When `DAYTONA_API_KEY` is set, the runner dispatches `/run` jobs into Daytona sa
 - The runner now exposes an initial websocket event stream at `/sockets/events/:conversationId`; Daytona process sessions may still be useful later if we want richer log streaming.
 - Persistence lives on the runner host (`SMOLPAWS_PERSISTENCE_DIR`) while sandbox runs are ephemeral.
 
-**Download events (Daytona only)**
+**Download events**
 - `GET /api/conversations/:id/events/download`
 - Requires `SMOLPAWS_RUNNER_TOKEN` if configured.
 - Returns `application/x-ndjson` with the persisted `events.jsonl`.
+- Available for persisted conversations as well as live in-memory runs.
 - Use `?format=gz` or `Accept-Encoding: gzip` for a gzipped response.
 
-**List conversations (Daytona only)**
+**List conversations**
 - `GET /api/conversations`
 - Requires `SMOLPAWS_RUNNER_TOKEN` if configured.
 - Returns `{ items: [{ id, created_at, updated_at, execution_status }] }`.
+- Includes persisted conversations even when Daytona is not configured.
 
 
 ## Remaining work
 
 - Implement repo checkout for non-Daytona runs (clone + working dir setup) - can we in Workers?
-- Validate websocket behavior directly against the TypeScript `RemoteConversation` client and close any parity gaps.
-- Implement the remaining `/api/git` and conversation-surface parity needed for full remote workspace compatibility.
+- Validate websocket behavior directly against the TypeScript `RemoteConversation` client and close any remaining parity gaps.
+- Finish the conversation-surface cleanup (for example, decide how persisted-but-not-live conversations should behave under resume / control operations).
+- Implement the remaining `/api/git` compatibility needed for the remote workspace surface.

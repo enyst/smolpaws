@@ -33,6 +33,7 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
   - `POST /api/bash/start_bash_command`
   - `GET /api/bash/bash_events/search`
   - `GET /sockets/events/:conversationId`
+  - persistence-backed `GET /api/conversations`, `GET /api/conversations/:conversationId`, `GET /api/conversations/:conversationId/events/search`, and `GET /api/conversations/:conversationId/events/download`
 - **Initial auth compatibility added**
   - compatibility routes accept `X-Session-API-Key` as well as Bearer auth.
 - **Workspace boundary hardening added**
@@ -75,7 +76,7 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
 - [ ] Decide whether `agent-browser` is the shared implementation.
 
 ### 5. Remote agent-server contract
-- [ ] `/api/conversations` lifecycle parity review
+- [~] `/api/conversations` lifecycle parity review
 - [x] `/sockets/events/:conversationId`
 - [x] `/api/file/download/*`
 - [x] `/api/file/upload/*`
