@@ -666,9 +666,15 @@ function mapGitStatus(status: string): GitChange["status"] {
 
 async function getGitChanges(targetPath: string): Promise<GitChange[]> {
   const repoRoot = await resolveGitRepositoryRoot(targetPath);
+  const absoluteTargetPath = path.resolve(targetPath);
+  const relativePath = path.relative(repoRoot, absoluteTargetPath);
+  const pathArgs =
+    relativePath && relativePath !== "."
+      ? ["--", relativePath]
+      : [];
   const diffResult = await runCapturedCommand(
     "git",
-    ["--no-pager", "diff", "--name-status", "HEAD"],
+    ["--no-pager", "diff", "--name-status", "HEAD", ...pathArgs],
     repoRoot,
   );
   if (diffResult.exitCode !== 0) {
@@ -698,7 +704,7 @@ async function getGitChanges(targetPath: string): Promise<GitChange[]> {
 
   const untrackedResult = await runCapturedCommand(
     "git",
-    ["--no-pager", "ls-files", "--others", "--exclude-standard"],
+    ["--no-pager", "ls-files", "--others", "--exclude-standard", ...pathArgs],
     repoRoot,
   );
   if (untrackedResult.exitCode === 0) {
