@@ -224,6 +224,10 @@ const GitPathQuerySchema = Type.Object({
   path: Type.String(),
 });
 
+const PersistedConversationStateSchema = Type.Object({
+  status: Type.Optional(Type.String()),
+});
+
 const ConversationIdParamsSchema = Type.Object({
   conversationId: Type.String(),
 });
@@ -1080,8 +1084,8 @@ async function buildConversationInfoFromPersistence(
   }
   try {
     const rawState = await fs.readFile(statePath, "utf8");
-    const parsed = JSON.parse(rawState) as { status?: unknown };
-    if (typeof parsed.status === "string" && parsed.status.trim()) {
+    const parsed = JSON.parse(rawState) as unknown;
+    if (Value.Check(PersistedConversationStateSchema, parsed) && parsed.status?.trim()) {
       executionStatus = parsed.status.trim().toLowerCase();
     }
   } catch (error) {
