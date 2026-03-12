@@ -2,6 +2,7 @@ import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { Type, type Static } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import {
   FileStore,
@@ -1436,22 +1437,20 @@ async function start(): Promise<void> {
                 : data instanceof ArrayBuffer
                   ? Buffer.from(data).toString()
                   : String(data);
-            const payload = JSON.parse(raw) as Message & {
-              extended_content?: unknown;
-            };
-            if (payload.role !== "user") {
+            const payload = JSON.parse(raw) as unknown;
+            if (!Value.Check(MessageSchema, payload) || payload.role !== "user") {
               return;
             }
-            const content = Array.isArray(payload.content)
-              ? payload.content.filter(isTextContentLike)
-              : [];
-            const messageText = extractMessageText(content);
-            await record.conversation.sendUserMessage(messageText, {
-              run: true,
-              extendedContent: Array.isArray(payload.extended_content)
-                ? payload.extended_content.filter(isTextContentLike)
-                : undefined,
-            });
+            const content = payload.content.filter(isTextContentLike);
+            await record.conversation.sendUserMessage(
+              extractMessageText(content),
+              {
+                run: true,
+                extendedContent: Array.isArray(payload.extended_content)
+                  ? payload.extended_content.filter(isTextContentLike)
+                  : undefined,
+              },
+            );
           } catch (error) {
             console.error("websocket_message_error", error);
           }
