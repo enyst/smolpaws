@@ -37,6 +37,7 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
   - `GET /api/git/changes`, `GET /api/git/diff`, plus the legacy path-based `/api/git/changes/*` and `/api/git/diff/*` forms
 - **Initial auth compatibility added**
   - compatibility routes accept `X-Session-API-Key` as well as Bearer auth.
+  - websocket events now accept both header-based auth and the Python-compatible `session_api_key` query parameter for browser-style clients.
 - **Workspace boundary hardening added**
   - compatibility routes are restricted to the configured workspace root.
   - file and bash checks resolve real filesystem paths so symlink escapes are blocked.
@@ -114,7 +115,8 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
   - symlink escape blocking
   - rejecting out-of-root `workspace.working_dir`
 - websocket route validation via live runner logs while creating a conversation, opening `/sockets/events/:conversationId`, and sending follow-up conversation events
+- websocket ingress validation by sending messages through `/sockets/events/:conversationId` directly and through the real TypeScript `RemoteConversation` client, then verifying the resulting history replay
 
 ## Next recommended slice
 
-The next meaningful slice is **conversation parity cleanup**: validate the websocket stream directly against `RemoteConversation`, decide whether more of the Python conversation semantics need to be mirrored, and then fill the next contract gaps instead of adding more ad-hoc runner behavior.
+The next meaningful slice is **conversation lifecycle cleanup**: now that websocket ingress and replay work against the real `RemoteConversation` client, decide how persisted-but-not-live conversations should behave for pause/resume/control routes and whether any remaining Python conversation semantics still need to be mirrored.

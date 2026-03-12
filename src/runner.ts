@@ -229,6 +229,7 @@ const ConversationIdParamsSchema = Type.Object({
 
 const SocketsEventsQuerySchema = Type.Object({
   resend_all: Type.Optional(Type.String()),
+  session_api_key: Type.Optional(Type.String()),
 });
 
 const GenerateTitleRequestSchema = Type.Object({
@@ -1401,7 +1402,9 @@ async function start(): Promise<void> {
         querystring: SocketsEventsQuerySchema,
       },
       preValidation: async (request, reply) => {
-        const auth = isAuthorized(request, env);
+        const auth = isAuthorized(request, env, {
+          sessionApiKey: request.query.session_api_key,
+        });
         if (!auth.allowed) {
           reply.status(401).send({ error: auth.reason ?? "Unauthorized" });
           return;
@@ -1423,6 +1426,37 @@ async function start(): Promise<void> {
       for (const event of replayEvents) {
         sendEvent(event);
       }
+      socket.on("message", (data: unknown) => {
+        void (async () => {
+          try {
+            const raw = Buffer.isBuffer(data)
+              ? data.toString()
+              : Array.isArray(data)
+                ? Buffer.concat(data).toString()
+                : data instanceof ArrayBuffer
+                  ? Buffer.from(data).toString()
+                  : String(data);
+            const payload = JSON.parse(raw) as Message & {
+              extended_content?: unknown;
+            };
+            if (payload.role !== "user") {
+              return;
+            }
+            const content = Array.isArray(payload.content)
+              ? payload.content.filter(isTextContentLike)
+              : [];
+            const messageText = extractMessageText(content);
+            await record.conversation.sendUserMessage(messageText, {
+              run: true,
+              extendedContent: Array.isArray(payload.extended_content)
+                ? payload.extended_content.filter(isTextContentLike)
+                : undefined,
+            });
+          } catch (error) {
+            console.error("websocket_message_error", error);
+          }
+        })();
+      });
       socket.on("close", unsubscribe);
       socket.on("error", unsubscribe);
     },
