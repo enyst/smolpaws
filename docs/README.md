@@ -122,7 +122,8 @@ When `DAYTONA_API_KEY` is set, the runner dispatches `/run` jobs into Daytona sa
 
 **Notes**
 - Use `SMOLPAWS_DAYTONA_AUTO_STOP_MINUTES` to control auto-stop. (default 30)
-- The runner now exposes an initial websocket event stream at `/sockets/events/:conversationId`; Daytona process sessions may still be useful later if we want richer log streaming.
+- The runner now exposes a websocket conversation stream at `/sockets/events/:conversationId`, including Python-compatible `session_api_key` query auth for browser-style clients and incoming user-message handling for the TypeScript `RemoteConversation` websocket path.
+- Daytona process sessions may still be useful later if we want richer log streaming.
 - Persistence lives on the runner host (`SMOLPAWS_PERSISTENCE_DIR`) while sandbox runs are ephemeral.
 
 **Download events**
@@ -142,6 +143,5 @@ When `DAYTONA_API_KEY` is set, the runner dispatches `/run` jobs into Daytona sa
 ## Remaining work
 
 - Implement repo checkout for non-Daytona runs (clone + working dir setup) - can we in Workers?
-- Validate websocket behavior directly against the TypeScript `RemoteConversation` client and close any remaining parity gaps.
 - Finish the conversation-surface cleanup (for example, decide how persisted-but-not-live conversations should behave under resume / control operations).
 - Validate whether any remaining git parity beyond the query + legacy path-based `/api/git/*` forms is actually needed by the shared remote workspace surface.
