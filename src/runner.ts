@@ -738,6 +738,17 @@ async function getGitDiff(targetPath: string): Promise<GitDiff> {
   };
 }
 
+async function resolveReadableGitPath(
+  rawPath: string,
+  env: RunnerEnv,
+): Promise<string> {
+  const absolutePath = resolveRequestedAbsolutePath(rawPath);
+  if (!(await isAllowedWorkspacePath(absolutePath, env, "read"))) {
+    throw new Error("git_path_not_allowed");
+  }
+  return absolutePath;
+}
+
 function addEventSubscriber(
   conversationId: string,
   subscriber: EventSubscriber,
@@ -1463,24 +1474,20 @@ async function start(): Promise<void> {
         return { error: auth.reason ?? "Unauthorized" };
       }
 
-      let absolutePath: string;
       try {
-        absolutePath = resolveRequestedAbsolutePath(request.query.path);
-      } catch (error) {
-        reply.status(400);
-        return { error: error instanceof Error ? error.message : String(error) };
-      }
-
-      try {
-        if (!(await isAllowedWorkspacePath(absolutePath, env, "read"))) {
-          reply.status(403);
-          return { error: "Path is outside allowed workspace roots" };
-        }
+        const absolutePath = await resolveReadableGitPath(request.query.path, env);
         return await getGitChanges(absolutePath);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        reply.status(400);
-        return { error: message };
+        reply.status(
+          message === "git_path_not_allowed" ? 403 : 400,
+        );
+        return {
+          error:
+            message === "git_path_not_allowed"
+              ? "Path is outside allowed workspace roots"
+              : message,
+        };
       }
     },
   );
@@ -1504,24 +1511,92 @@ async function start(): Promise<void> {
         return { error: auth.reason ?? "Unauthorized" };
       }
 
-      let absolutePath: string;
       try {
-        absolutePath = resolveRequestedAbsolutePath(request.query.path);
-      } catch (error) {
-        reply.status(400);
-        return { error: error instanceof Error ? error.message : String(error) };
-      }
-
-      try {
-        if (!(await isAllowedWorkspacePath(absolutePath, env, "read"))) {
-          reply.status(403);
-          return { error: "Path is outside allowed workspace roots" };
-        }
+        const absolutePath = await resolveReadableGitPath(request.query.path, env);
         return await getGitDiff(absolutePath);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        reply.status(400);
-        return { error: message };
+        reply.status(
+          message === "git_path_not_allowed" ? 403 : 400,
+        );
+        return {
+          error:
+            message === "git_path_not_allowed"
+              ? "Path is outside allowed workspace roots"
+              : message,
+        };
+      }
+    },
+  );
+  app.get<{ Params: { "*": string }; Reply: GitChange[] | ErrorResponse }>(
+    "/api/git/changes/*",
+    {
+      schema: {
+        response: {
+          200: GitChangesSchema,
+          400: ErrorSchema,
+          401: ErrorSchema,
+          403: ErrorSchema,
+        },
+      },
+    },
+    async (request, reply): Promise<GitChange[] | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+
+      try {
+        const absolutePath = await resolveReadableGitPath(request.params["*"], env);
+        return await getGitChanges(absolutePath);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        reply.status(
+          message === "git_path_not_allowed" ? 403 : 400,
+        );
+        return {
+          error:
+            message === "git_path_not_allowed"
+              ? "Path is outside allowed workspace roots"
+              : message,
+        };
+      }
+    },
+  );
+  app.get<{ Params: { "*": string }; Reply: GitDiff | ErrorResponse }>(
+    "/api/git/diff/*",
+    {
+      schema: {
+        response: {
+          200: GitDiffSchema,
+          400: ErrorSchema,
+          401: ErrorSchema,
+          403: ErrorSchema,
+        },
+      },
+    },
+    async (request, reply): Promise<GitDiff | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+
+      try {
+        const absolutePath = await resolveReadableGitPath(request.params["*"], env);
+        return await getGitDiff(absolutePath);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        reply.status(
+          message === "git_path_not_allowed" ? 403 : 400,
+        );
+        return {
+          error:
+            message === "git_path_not_allowed"
+              ? "Path is outside allowed workspace roots"
+              : message,
+        };
       }
     },
   );

@@ -144,4 +144,4 @@ When `DAYTONA_API_KEY` is set, the runner dispatches `/run` jobs into Daytona sa
 - Implement repo checkout for non-Daytona runs (clone + working dir setup) - can we in Workers?
 - Validate websocket behavior directly against the TypeScript `RemoteConversation` client and close any remaining parity gaps.
 - Finish the conversation-surface cleanup (for example, decide how persisted-but-not-live conversations should behave under resume / control operations).
-- Decide whether we also need the legacy path-based `/api/git/*` forms or additional git parity beyond the new query endpoints.
+- Validate whether any remaining git parity beyond the query + legacy path-based `/api/git/*` forms is actually needed by the shared remote workspace surface.
