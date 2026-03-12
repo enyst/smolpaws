@@ -743,8 +743,23 @@ async function resolveReadableGitPath(
   env: RunnerEnv,
 ): Promise<string> {
   const absolutePath = resolveRequestedAbsolutePath(rawPath);
-  if (!(await isAllowedWorkspacePath(absolutePath, env, "read"))) {
+  const exists = await fs.stat(absolutePath).then(
+    () => true,
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") {
+        return false;
+      }
+      throw error;
+    },
+  );
+  const authorizationPath = exists
+    ? absolutePath
+    : await findNearestExistingPath(absolutePath);
+  if (!(await isAllowedWorkspacePath(authorizationPath, env, "read"))) {
     throw new Error("git_path_not_allowed");
+  }
+  if (!exists) {
+    throw new Error("git_path_not_found");
   }
   return absolutePath;
 }
@@ -756,6 +771,10 @@ function buildGitRouteErrorResponse(
   if (message === "git_path_not_allowed") {
     reply.status(403);
     return { error: "Path is outside allowed workspace roots" };
+  }
+  if (message === "git_path_not_found") {
+    reply.status(400);
+    return { error: "Path does not exist" };
   }
   reply.status(400);
   return { error: message };
