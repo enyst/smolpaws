@@ -143,5 +143,5 @@ When `DAYTONA_API_KEY` is set, the runner dispatches `/run` jobs into Daytona sa
 ## Remaining work
 
 - Implement repo checkout for non-Daytona runs (clone + working dir setup) - can we in Workers?
-- Finish the conversation-surface cleanup (for example, decide how persisted-but-not-live conversations should behave under resume / control operations).
+- Decide whether any deeper persisted-conversation resume/rehydration behavior is worth supporting beyond the current explicit conflict responses for non-live control routes.
 - Validate whether any remaining git parity beyond the query + legacy path-based `/api/git/*` forms is actually needed by the shared remote workspace surface.

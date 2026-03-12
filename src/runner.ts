@@ -224,6 +224,10 @@ const GitPathQuerySchema = Type.Object({
   path: Type.String(),
 });
 
+const PersistedConversationStateSchema = Type.Object({
+  status: Type.Optional(Type.String()),
+});
+
 const ConversationIdParamsSchema = Type.Object({
   conversationId: Type.String(),
 });
@@ -424,6 +428,14 @@ function buildEventsFilePath(
   return path.join(rootDir, conversationId, "events.jsonl");
 }
 
+function buildStateFilePath(
+  conversationId: string,
+  persistenceDir: string,
+  record?: ConversationRecord,
+): string {
+  const rootDir = resolvePersistenceRoot(persistenceDir, record);
+  return path.join(rootDir, conversationId, "state.json");
+}
 
 function normalizeHeader(
   value: string | string[] | undefined,
@@ -1055,8 +1067,10 @@ async function buildConversationInfoFromPersistence(
     return buildConversationInfo(record);
   }
   const eventsPath = buildEventsFilePath(conversationId, persistenceDir, record);
+  const statePath = buildStateFilePath(conversationId, persistenceDir, record);
   let createdAt = new Date().toISOString();
   let updatedAt = createdAt;
+  let executionStatus = "idle";
   try {
     const stats = await fs.stat(eventsPath);
     const created = stats.birthtime ?? stats.ctime;
@@ -1068,11 +1082,23 @@ async function buildConversationInfoFromPersistence(
       throw error;
     }
   }
+  try {
+    const rawState = await fs.readFile(statePath, "utf8");
+    const parsed = JSON.parse(rawState) as unknown;
+    if (Value.Check(PersistedConversationStateSchema, parsed) && parsed.status?.trim()) {
+      executionStatus = parsed.status.trim().toLowerCase();
+    }
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== "ENOENT") {
+      throw error;
+    }
+  }
   return {
     id: conversationId,
     created_at: createdAt,
     updated_at: updatedAt,
-    execution_status: "offline",
+    execution_status: executionStatus,
   };
 }
 
@@ -1107,6 +1133,20 @@ function hasPersistedConversation(
   }
   const rootDir = resolvePersistenceRoot(persistenceDir);
   return FileStore.listConversations(rootDir).includes(conversationId);
+}
+
+function getLiveConversationOrThrow(
+  conversationId: string,
+  persistenceDir: string,
+): ConversationRecord {
+  const record = conversations.get(conversationId);
+  if (record) {
+    return record;
+  }
+  if (hasPersistedConversation(conversationId, persistenceDir)) {
+    throw new Error("conversation_not_live");
+  }
+  throw new Error("conversation_not_found");
 }
 
 async function getConversationInfoOrThrow(
@@ -1860,85 +1900,133 @@ async function start(): Promise<void> {
     },
   );
 
-  app.post<{ Params: { conversationId: string }; Reply: Static<typeof SuccessSchema> }>(
+  app.post<{ Params: { conversationId: string }; Reply: Static<typeof SuccessSchema> | ErrorResponse }>(
     "/api/conversations/:conversationId/pause",
     {
-      schema: { response: { 200: SuccessSchema } },
+      schema: { response: { 200: SuccessSchema, 401: ErrorSchema, 409: ErrorSchema } },
     },
-    async (request): Promise<Static<typeof SuccessSchema>> => {
-      const record = getConversationOrThrow(request.params.conversationId);
+    async (request, reply): Promise<Static<typeof SuccessSchema> | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+      const record = getLiveConversationOrThrow(
+        request.params.conversationId,
+        persistenceRoot,
+      );
       await record.conversation.pause();
       return { success: true };
     },
   );
 
-  app.post<{ Params: { conversationId: string }; Reply: Static<typeof SuccessSchema> }>(
+  app.post<{ Params: { conversationId: string }; Reply: Static<typeof SuccessSchema> | ErrorResponse }>(
     "/api/conversations/:conversationId/run",
     {
-      schema: { response: { 200: SuccessSchema } },
+      schema: { response: { 200: SuccessSchema, 401: ErrorSchema, 409: ErrorSchema } },
     },
-    async (request): Promise<Static<typeof SuccessSchema>> => {
-      const record = getConversationOrThrow(request.params.conversationId);
+    async (request, reply): Promise<Static<typeof SuccessSchema> | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+      const record = getLiveConversationOrThrow(
+        request.params.conversationId,
+        persistenceRoot,
+      );
       await record.conversation.resume();
       return { success: true };
     },
   );
 
-  app.post<{ Params: { conversationId: string }; Body: SetConfirmationPolicyRequest; Reply: Static<typeof SuccessSchema> }>(
+  app.post<{ Params: { conversationId: string }; Body: SetConfirmationPolicyRequest; Reply: Static<typeof SuccessSchema> | ErrorResponse }>(
     "/api/conversations/:conversationId/confirmation_policy",
     {
       schema: {
         body: SetConfirmationPolicyRequestSchema,
-        response: { 200: SuccessSchema },
+        response: { 200: SuccessSchema, 401: ErrorSchema, 409: ErrorSchema },
       },
     },
-    async (request): Promise<Static<typeof SuccessSchema>> => {
-      const record = getConversationOrThrow(request.params.conversationId);
+    async (request, reply): Promise<Static<typeof SuccessSchema> | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+      const record = getLiveConversationOrThrow(
+        request.params.conversationId,
+        persistenceRoot,
+      );
       await applyConfirmationPolicy(record, request.body);
       return { success: true };
     },
   );
 
-  app.post<{ Params: { conversationId: string }; Body: SetSecurityAnalyzerRequest; Reply: Static<typeof SuccessSchema> }>(
+  app.post<{ Params: { conversationId: string }; Body: SetSecurityAnalyzerRequest; Reply: Static<typeof SuccessSchema> | ErrorResponse }>(
     "/api/conversations/:conversationId/security_analyzer",
     {
       schema: {
         body: SetSecurityAnalyzerRequestSchema,
-        response: { 200: SuccessSchema },
+        response: { 200: SuccessSchema, 401: ErrorSchema, 409: ErrorSchema },
       },
     },
-    async (request): Promise<Static<typeof SuccessSchema>> => {
-      const record = getConversationOrThrow(request.params.conversationId);
+    async (request, reply): Promise<Static<typeof SuccessSchema> | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+      const record = getLiveConversationOrThrow(
+        request.params.conversationId,
+        persistenceRoot,
+      );
       await applySecurityAnalyzer(record, request.body);
       return { success: true };
     },
   );
 
-  app.post<{ Params: { conversationId: string }; Body: SetSecretsRequest; Reply: Static<typeof SuccessSchema> }>(
+  app.post<{ Params: { conversationId: string }; Body: SetSecretsRequest; Reply: Static<typeof SuccessSchema> | ErrorResponse }>(
     "/api/conversations/:conversationId/secrets",
     {
       schema: {
         body: SetSecretsRequestSchema,
-        response: { 200: SuccessSchema },
+        response: { 200: SuccessSchema, 401: ErrorSchema, 409: ErrorSchema },
       },
     },
-    async (request): Promise<Static<typeof SuccessSchema>> => {
-      const record = getConversationOrThrow(request.params.conversationId);
+    async (request, reply): Promise<Static<typeof SuccessSchema> | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+      const record = getLiveConversationOrThrow(
+        request.params.conversationId,
+        persistenceRoot,
+      );
       registerSecrets(request.body.secrets, record.secrets, record.settings);
       return { success: true };
     },
   );
 
-  app.post<{ Params: { conversationId: string }; Body: AskAgentRequest; Reply: AskAgentResponse }>(
+  app.post<{ Params: { conversationId: string }; Body: AskAgentRequest; Reply: AskAgentResponse | ErrorResponse }>(
     "/api/conversations/:conversationId/ask_agent",
     {
       schema: {
         body: AskAgentRequestSchema,
-        response: { 200: AskAgentResponseSchema },
+        response: { 200: AskAgentResponseSchema, 401: ErrorSchema, 409: ErrorSchema },
       },
     },
-    async (request): Promise<AskAgentResponse> => {
-      const record = getConversationOrThrow(request.params.conversationId);
+    async (request, reply): Promise<AskAgentResponse | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+      const record = getLiveConversationOrThrow(
+        request.params.conversationId,
+        persistenceRoot,
+      );
       const response = await runStandaloneQuestion(
         record.settings,
         request.body.question,
@@ -1949,42 +2037,69 @@ async function start(): Promise<void> {
     },
   );
 
-  app.post<{ Params: { conversationId: string }; Body: GenerateTitleRequest; Reply: GenerateTitleResponse }>(
+  app.post<{ Params: { conversationId: string }; Body: GenerateTitleRequest; Reply: GenerateTitleResponse | ErrorResponse }>(
     "/api/conversations/:conversationId/generate_title",
     {
       schema: {
         body: GenerateTitleRequestSchema,
-        response: { 200: GenerateTitleResponseSchema },
+        response: { 200: GenerateTitleResponseSchema, 401: ErrorSchema },
       },
     },
-    async (request): Promise<GenerateTitleResponse> => {
-      const record = getConversationOrThrow(request.params.conversationId);
+    async (request, reply): Promise<GenerateTitleResponse | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
       const maxLength =
         typeof request.body.max_length === "number"
           ? Math.max(1, Math.trunc(request.body.max_length))
           : 50;
-      return { title: generateTitleFromEvents(record.events, maxLength) };
+      const record = conversations.get(request.params.conversationId);
+      const events = record
+        ? record.events
+        : await readPersistedEventsOrThrow(
+            request.params.conversationId,
+            persistenceRoot,
+          );
+      return { title: generateTitleFromEvents(events, maxLength) };
     },
   );
 
-  app.post<{ Params: { conversationId: string }; Reply: Static<typeof SuccessSchema> }>(
+  app.post<{ Params: { conversationId: string }; Reply: Static<typeof SuccessSchema> | ErrorResponse }>(
     "/api/conversations/:conversationId/condense",
     {
-      schema: { response: { 200: SuccessSchema } },
+      schema: { response: { 200: SuccessSchema, 401: ErrorSchema, 409: ErrorSchema } },
     },
-    async (): Promise<Static<typeof SuccessSchema>> => ({ success: true }),
+    async (request, reply): Promise<Static<typeof SuccessSchema> | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+      getLiveConversationOrThrow(request.params.conversationId, persistenceRoot);
+      return { success: true };
+    },
   );
 
-  app.post<{ Params: { conversationId: string }; Body: ConfirmationResponseRequest; Reply: Static<typeof SuccessSchema> }>(
+  app.post<{ Params: { conversationId: string }; Body: ConfirmationResponseRequest; Reply: Static<typeof SuccessSchema> | ErrorResponse }>(
     "/api/conversations/:conversationId/events/respond_to_confirmation",
     {
       schema: {
         body: ConfirmationResponseSchema,
-        response: { 200: SuccessSchema },
+        response: { 200: SuccessSchema, 401: ErrorSchema, 409: ErrorSchema },
       },
     },
-    async (request): Promise<Static<typeof SuccessSchema>> => {
-      const record = getConversationOrThrow(request.params.conversationId);
+    async (request, reply): Promise<Static<typeof SuccessSchema> | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+      const record = getLiveConversationOrThrow(
+        request.params.conversationId,
+        persistenceRoot,
+      );
       if (request.body.accept) {
         await record.conversation.approveAction();
       } else {
@@ -1994,16 +2109,24 @@ async function start(): Promise<void> {
     },
   );
 
-  app.post<{ Params: { conversationId: string }; Body: Static<typeof MessageSchema>; Reply: Static<typeof SuccessSchema> }>(
+  app.post<{ Params: { conversationId: string }; Body: Static<typeof MessageSchema>; Reply: Static<typeof SuccessSchema> | ErrorResponse }>(
     "/api/conversations/:conversationId/events",
     {
       schema: {
         body: MessageSchema,
-        response: { 200: SuccessSchema },
+        response: { 200: SuccessSchema, 401: ErrorSchema, 409: ErrorSchema },
       },
     },
-    async (request): Promise<Static<typeof SuccessSchema>> => {
-      const record = getConversationOrThrow(request.params.conversationId);
+    async (request, reply): Promise<Static<typeof SuccessSchema> | ErrorResponse> => {
+      const auth = isAuthorized(request, env);
+      if (!auth.allowed) {
+        reply.status(401);
+        return { error: auth.reason ?? "Unauthorized" };
+      }
+      const record = getLiveConversationOrThrow(
+        request.params.conversationId,
+        persistenceRoot,
+      );
       if (request.body.role !== "user") {
         throw new Error("only_user_messages_supported");
       }
@@ -2103,6 +2226,10 @@ async function start(): Promise<void> {
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof Error && error.message === "conversation_not_found") {
       reply.status(404).send({ error: "Conversation not found" });
+      return;
+    }
+    if (error instanceof Error && error.message === "conversation_not_live") {
+      reply.status(409).send({ error: "Conversation exists in persistence but is not active in memory" });
       return;
     }
     if (error instanceof Error && error.message === "only_user_messages_supported") {
