@@ -33,7 +33,8 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
   - `POST /api/bash/start_bash_command`
   - `GET /api/bash/bash_events/search`
   - `GET /sockets/events/:conversationId`
-  - persistence-backed `GET /api/conversations`, `GET /api/conversations/:conversationId`, `GET /api/conversations/:conversationId/events/search`, and `GET /api/conversations/:conversationId/events/download`
+  - persistence-backed `GET /api/conversations`, `GET /api/conversations/:conversationId`, `GET /api/conversations/:conversationId/events/search`, `GET /api/conversations/:conversationId/events/download`, and `POST /api/conversations/:conversationId/generate_title`
+  - persisted-but-not-live control routes now fail explicitly with a conflict instead of pretending the conversation is missing
   - `GET /api/git/changes`, `GET /api/git/diff`, plus the legacy path-based `/api/git/changes/*` and `/api/git/diff/*` forms
 - **Initial auth compatibility added**
   - compatibility routes accept `X-Session-API-Key` as well as Bearer auth.
@@ -119,4 +120,4 @@ Converge the TypeScript agent stack so these three codepaths can share one coher
 
 ## Next recommended slice
 
-The next meaningful slice is **conversation lifecycle cleanup**: now that websocket ingress and replay work against the real `RemoteConversation` client, decide how persisted-but-not-live conversations should behave for pause/resume/control routes and whether any remaining Python conversation semantics still need to be mirrored.
+The next meaningful slice is **cross-repo convergence documentation and browser strategy cleanup**: the remote conversation and workspace contract is now much closer to the Python baseline, so the remaining high-value work shifts toward making ownership/boundary decisions explicit and replacing the stubbed browser path in the canonical TypeScript SDK source.
