@@ -1,4 +1,7 @@
+import os from "node:os";
+import path from "node:path";
 import {
+  AgentContext,
   BrowserTool,
   LLMSecurityAnalyzer,
   LocalConversation,
@@ -25,6 +28,8 @@ import {
 } from "../runner/conversationState.js";
 import { readPersistedEventsOrThrow } from "../runner/eventService.js";
 import {
+  getConfiguredWorkspaceRoot,
+  getDefaultWorkingDir,
   resolveAbsolutePersistenceRoot,
   resolvePersistenceDir,
   resolveWorkspaceRoot,
@@ -41,6 +46,7 @@ import {
 import { appendOutboundMessage, appendTaskCommand } from "../runner/outbox.js";
 import { createTaskTools } from "../runner/taskCommands.js";
 import type {
+  SmolpawsGithubContext,
   SmolpawsConversationConfigValue,
   SmolpawsTaskCommand,
 } from "../shared/runner.js";
@@ -152,7 +158,85 @@ function mergeSmolpawsConfig(
     enable_send_message: next.enable_send_message ?? current.enable_send_message,
     enable_task_tools: next.enable_task_tools ?? current.enable_task_tools,
     visible_tasks: next.visible_tasks ?? current.visible_tasks,
+    github: next.github ?? current.github,
   };
+}
+
+function toOptionalTrimmedString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function formatGithubThread(github?: SmolpawsGithubContext): string | undefined {
+  if (!github) {
+    return undefined;
+  }
+  const issueNumber = github.issue_number;
+  const prNumber = github.pull_request_number;
+  if (typeof prNumber === "number" && Number.isFinite(prNumber)) {
+    return `pull request #${prNumber}`;
+  }
+  if (typeof issueNumber === "number" && Number.isFinite(issueNumber)) {
+    return `issue #${issueNumber}`;
+  }
+  return undefined;
+}
+
+function buildEnvironmentInformationBlock(params: {
+  workspaceRoot: string;
+  env: RunnerEnv;
+  smolpawsConfig?: SmolpawsConversationConfigValue;
+}): string {
+  const configuredWorkspaceRoot = getConfiguredWorkspaceRoot(params.env);
+  const defaultWorkingDirSetting =
+    params.env.SMOLPAWS_DEFAULT_WORKING_DIR?.trim() || '.';
+  const defaultWorkingDir = getDefaultWorkingDir(params.env);
+  const lines = [
+    "<environment information>",
+    `- Repositories on this machine are typically cloned under: ${configuredWorkspaceRoot}`,
+    `- The canonical SmolPaws repository on this machine is: ${path.join(os.homedir(), "repos", "smolpaws")}`,
+    `- Default conversation working_dir within that root: ${defaultWorkingDirSetting}`,
+    `- Resolved default startup working directory for local SmolPaws runs: ${defaultWorkingDir}`,
+    `- Current resolved working directory for this conversation: ${params.workspaceRoot}`,
+  ];
+
+  const github = params.smolpawsConfig?.github;
+  const repoFullName = toOptionalTrimmedString(github?.repository_full_name);
+  const actorLogin = toOptionalTrimmedString(github?.actor_login);
+  const eventName = toOptionalTrimmedString(github?.event);
+  const thread = formatGithubThread(github);
+
+  if (repoFullName || actorLogin || eventName || thread) {
+    lines.push("- This run was triggered from GitHub.");
+    if (repoFullName) {
+      lines.push(`- GitHub repository: ${repoFullName}`);
+    }
+    if (thread) {
+      lines.push(`- GitHub thread: ${thread}`);
+    }
+    if (eventName) {
+      lines.push(`- GitHub event type: ${eventName}`);
+    }
+    if (actorLogin) {
+      lines.push(`- GitHub actor: ${actorLogin}`);
+    }
+  }
+
+  lines.push("</environment information>");
+  return lines.join("\n");
+}
+
+function buildAgentContext(
+  workspaceRoot: string,
+  env: RunnerEnv,
+  smolpawsConfig?: SmolpawsConversationConfigValue,
+): AgentContext {
+  return new AgentContext({
+    systemMessageSuffix: buildEnvironmentInformationBlock({
+      workspaceRoot,
+      env,
+      smolpawsConfig,
+    }),
+  });
 }
 
 function registerSecrets(
@@ -469,6 +553,7 @@ export function createConversationRuntime({
     const settings = buildSettingsFromRequest(request, registry, env);
     const workspaceRoot = resolveWorkspaceRoot(request.workspace?.working_dir, env);
     const workspace = Workspace({ kind: "local", root: workspaceRoot });
+    const agentContext = buildAgentContext(workspaceRoot, env, smolpawsConfig);
     let activeConversationId = requestedId;
     const toolProfile = resolveConversationToolProfile(
       request,
@@ -482,6 +567,7 @@ export function createConversationRuntime({
       tools: toolProfile.tools,
       includeDefaultTools: toolProfile.includeDefaultTools,
       persistenceDir,
+      agentContext,
     });
 
     const id = requestedId || (await conversation.startNewConversation());
