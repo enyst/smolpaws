@@ -36,7 +36,7 @@ git branch -a --sort=-committerdate | head -10
 gh pr list --state open --json number,title,headRefName,author,reviewDecision,statusCheckRollup,mergeable,updatedAt
 
 # In-progress issues
-gh issue list --state open --assignee @me --json number,title,labels,updatedAt
+gh issue list --state open --json number,title,labels,updatedAt
 ```
 
 ### 2. CI/CD & Check Status
@@ -59,16 +59,14 @@ gh api repos/{owner}/{repo}/pulls/comments --jq '.[0:10] | .[] | {pr: .pull_requ
 
 ### 4. Merge Queue
 ```bash
-# PRs that are approved and CI-passing
-gh pr list --state open --json number,title,reviewDecision,statusCheckRollup,mergeable | jq '[.[] | select(.reviewDecision == "APPROVED")]'
+# PRs that are approved, mergeable, and have successful status checks
+gh pr list --state open --json number,title,reviewDecision,statusCheckRollup,mergeable | jq '[.[] | select(.reviewDecision == "APPROVED" and .mergeable == "MERGEABLE" and ([.statusCheckRollup[]? | .state // .conclusion] | all(. == "SUCCESS")))]'
 ```
 
 ### 5. Documentation & Staleness
 ```bash
-# Files not touched in 30+ days that may be stale
-git log --all --diff-filter=M --since="30 days ago" --name-only --pretty=format: -- '*.md' | sort -u > /tmp/recently_modified_docs.txt
-find . -name '*.md' -not -path './.git/*' | sort > /tmp/all_docs.txt
-comm -23 /tmp/all_docs.txt /tmp/recently_modified_docs.txt
+# Markdown files untouched in 30+ days that may be stale
+comm -23 <(find . -name '*.md' -not -path './.git/*' | sort) <(git log --all --diff-filter=AM --since="30 days ago" --name-only --pretty=format: -- '*.md' | sort -u)
 ```
 
 ### 6. Git Worktree / Session Health
@@ -76,8 +74,8 @@ comm -23 /tmp/all_docs.txt /tmp/recently_modified_docs.txt
 # Active worktrees
 git worktree list
 
-# Stale branches (no commits in 7+ days)
-git for-each-ref --sort=committerdate --format='%(committerdate:relative) %(refname:short)' refs/heads/ | head -20
+# Branches with no commits in 7+ days
+git for-each-ref --sort=committerdate --format='%(committerdate:unix) %(committerdate:relative) %(refname:short)' refs/heads/ | awk -v cutoff="$(($(date +%s) - 7*24*60*60))" '$1 <= cutoff { sub($1" ", ""); print }' | head -20
 ```
 
 ## Output Format
