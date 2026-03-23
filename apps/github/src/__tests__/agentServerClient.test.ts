@@ -183,3 +183,21 @@ test('dispatchToAgentServer returns a fallback reply without calling the runner 
   });
   assert.equal(called, false);
 });
+
+test('dispatchToAgentServer rejects a legacy /run runner URL', async () => {
+  let called = false;
+  const fetchStub: typeof fetch = async () => {
+    called = true;
+    throw new Error('should not be called');
+  };
+
+  await assert.rejects(
+    dispatchToAgentServer(
+      buildMessage('@smolpaws say meow'),
+      { SMOLPAWS_RUNNER_URL: 'https://runner.example.com/run/' },
+      fetchStub,
+    ),
+    /must not end with \/run/,
+  );
+  assert.equal(called, false);
+});

@@ -26,7 +26,13 @@ function normalizeValue(value?: string): string | null {
 function normalizeAgentServerBaseUrl(value?: string): string | null {
   const normalized = normalizeValue(value);
   if (!normalized) return null;
-  return normalized.replace(/\/+$/, '');
+  const withoutTrailingSlashes = normalized.replace(/\/+$/, '');
+  if (withoutTrailingSlashes.endsWith('/run')) {
+    throw new Error(
+      'SMOLPAWS_RUNNER_URL must be the agent-server base URL and must not end with /run',
+    );
+  }
+  return withoutTrailingSlashes;
 }
 
 function getMentionBody(payload: GithubEventPayload): string {
