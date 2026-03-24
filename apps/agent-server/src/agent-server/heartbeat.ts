@@ -5,6 +5,7 @@ import type { StartConversationRequest } from './models.js';
 export const DEFAULT_HEARTBEAT_RUNNER_HOST = '127.0.0.1';
 export const DEFAULT_HEARTBEAT_RUNNER_PORT = '8788';
 export const DEFAULT_HEARTBEAT_CRON = '0 * * * *';
+export const DEFAULT_HEARTBEAT_MAX_ITERATIONS = 500;
 
 type HeartbeatPaths = {
   docsDir: string;
@@ -20,6 +21,13 @@ function formatLocalDate(now: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function formatLocalTime(now: Date): string {
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+  return `${hours}-${minutes}-${seconds}`;
+}
+
 export function buildHeartbeatPaths(homeDir = os.homedir()): HeartbeatPaths {
   const docsDir = path.join(homeDir, 'repos', 'smolpaws', 'docs', 'smolpaws');
   return {
@@ -31,7 +39,7 @@ export function buildHeartbeatPaths(homeDir = os.homedir()): HeartbeatPaths {
 }
 
 export function buildHeartbeatConversationId(now: Date): string {
-  return `heartbeat-smolpaws-${formatLocalDate(now)}`;
+  return `heartbeat-smolpaws-${formatLocalDate(now)}-${formatLocalTime(now)}`;
 }
 
 export function buildHeartbeatPrompt(paths: HeartbeatPaths, now: Date): string {
@@ -59,7 +67,7 @@ export function buildHeartbeatRequest(now: Date): StartConversationRequest {
       kind: 'local',
       working_dir: process.env.SMOLPAWS_DEFAULT_WORKING_DIR?.trim() || 'smolpaws',
     },
-    max_iterations: 8,
+    max_iterations: DEFAULT_HEARTBEAT_MAX_ITERATIONS,
     initial_message: {
       role: 'user',
       content: [
