@@ -70,8 +70,8 @@ Main has access to the entire project:
 | `/workspace/project` | Project root | read-write |
 | `/workspace/group` | `groups/main/` | read-write |
 
-Key paths inside the container:
-- `/workspace/project/store/messages.db` - SQLite database
+Key paths:
+- Host-only WhatsApp DB: `~/.smolpaws/whatsapp/messages.db` (not mounted into containers)
 - `/workspace/project/data/registered_groups.json` - Group config
 - `/workspace/project/groups/` - All group folders
 
@@ -81,10 +81,10 @@ Key paths inside the container:
 
 ### Finding Available Groups
 
-Query the SQLite database directly:
+On the host (outside the agent container), query the SQLite database directly:
 
 ```bash
-sqlite3 /workspace/project/store/messages.db "
+sqlite3 ~/.smolpaws/whatsapp/messages.db "
   SELECT jid, name, last_message_time
   FROM chats
   WHERE jid LIKE '%@g.us' AND jid != '__group_sync__'
@@ -117,7 +117,8 @@ Fields:
 
 ### Adding a Group
 
-1. Query the database to find the group's JID
+1. Query the database to find the group's JID (**host-only**; the agent container cannot access `~/.smolpaws/whatsapp/messages.db`)
+   - Ask the user/admin to run the sqlite3 command on their machine and paste the JID, or add a host-side command in SmolPaws later.
 2. Read `/workspace/project/data/registered_groups.json`
 3. Add the new group entry with `containerConfig` if needed
 4. Write the updated JSON back
