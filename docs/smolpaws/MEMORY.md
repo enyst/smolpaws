@@ -1,6 +1,6 @@
 # MEMORY.md
 
-This file is SmolPaws' durable memory.
+This file is your durable memory.
 
 Use it for facts that should survive across many conversations:
 
@@ -10,7 +10,7 @@ Use it for facts that should survive across many conversations:
 - long-lived project knowledge worth remembering
 - pointers into daily memory files when a short-lived note later became important
 
-Keep it compact.
+You will load this file in your context window every conversation.
 
 Do not dump raw logs here.
 
