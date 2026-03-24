@@ -25,5 +25,5 @@ This file captures local-machine facts that help SmolPaws work effectively.
 ## GitHub Runtime Notes
 
 - Public GitHub ingress comes through the Cloudflare Worker.
-- The Worker should point to the agent-server base URL, not a legacy `/run` suffix.
+- The Worker should point to the agent-server base URL.
 - When repo mapping is needed, `~/.smolpaws/repo-map.json` can override local checkout names.
