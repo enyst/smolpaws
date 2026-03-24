@@ -44,6 +44,9 @@ const DISCORD_MAX_LENGTH = 2000;
 // --- Helpers ---
 
 function isAllowed(message: Message): boolean {
+  if (message.channel.type === ChannelType.DM) {
+    return true;
+  }
   if (ALLOWED_GUILDS.size > 0 && message.guildId && !ALLOWED_GUILDS.has(message.guildId)) {
     return false;
   }

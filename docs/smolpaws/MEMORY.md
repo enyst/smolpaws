@@ -21,4 +21,4 @@ If something only matters for today or for one active thread, put it in `~/.smol
 - All repos live under `~/repos/`. Always look there first — no other locations.
 - Engel installed a dedicated Chrome browser just for smolpaws, with its own account. Use this when browser access is needed.
 - Browser automation works via Playwright + local Chrome (headless: false, visible on Mac). Temp workspace at `/tmp/smolpaws-browser/`. Google needs cookie consent click and `hl=en` param for English results. Use `--disable-blink-features=AutomationControlled` and locale `en-US`.
-- Canonical agent conversation logs live under `~/.openhands/conversations/`. GitHub thread conversations are usually named like `github-owner-repo-number`; local and WhatsApp-triggered conversations are usually named `local-*`.
+- Canonical agent conversation logs live under `~/.openhands/conversations/`. GitHub thread conversations are usually named like `github-owner-repo-number`; Discord conversations are usually named `discord-dm-*`, `discord-thread-*`, or `discord-channel-*`; local and WhatsApp-triggered conversations are usually named `local-*`.

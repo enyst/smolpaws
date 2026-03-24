@@ -129,7 +129,7 @@ export async function dispatchToAgentServer(options: {
 
   // Fall back to reading the last assistant message from events
   const eventsResponse = await fetch(
-    `${baseUrl}/api/conversations/${encodeURIComponent(convData.id)}/events/search?source=agent&sort_order=TIMESTAMP_DESC&limit=20`,
+    `${baseUrl}/api/conversations/${encodeURIComponent(convData.id)}/events/search?kind=MessageEvent&source=agent&sort_order=TIMESTAMP_DESC&limit=20`,
     {
       headers: buildHeaders(token),
     },
