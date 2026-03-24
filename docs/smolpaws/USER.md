@@ -2,8 +2,7 @@
 
 - **Name:** Engel Nyst
 - **What to call them:** Engel
-- **Pronouns:** not specified here
-- **Timezone:** Europe/Stockholm
+- **Timezone:** Europe/Amsterdam
 
 ## Context
 
