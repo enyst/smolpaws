@@ -37,6 +37,12 @@ const ALLOWED_GUILDS = new Set(
 const ALLOWED_CHANNELS = new Set(
   (process.env.DISCORD_ALLOWED_CHANNELS || '').split(',').map((s) => s.trim()).filter(Boolean),
 );
+const ALLOWED_USERS = new Set(
+  (process.env.DISCORD_ALLOWED_USERS || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 // Discord message limit
 const DISCORD_MAX_LENGTH = 2000;
@@ -44,6 +50,13 @@ const DISCORD_MAX_LENGTH = 2000;
 // --- Helpers ---
 
 function isAllowed(message: Message): boolean {
+  if (ALLOWED_USERS.size > 0) {
+    const username = message.author.username.trim().toLowerCase();
+    const tag = message.author.tag.trim().toLowerCase();
+    if (!ALLOWED_USERS.has(username) && !ALLOWED_USERS.has(tag)) {
+      return false;
+    }
+  }
   if (message.channel.type === ChannelType.DM) {
     return true;
   }
@@ -252,7 +265,14 @@ client.once(Events.ClientReady, (readyClient) => {
 client.on(Events.MessageCreate, async (message) => {
   if (!client.user) return;
   if (!shouldRespond(message, client.user.id)) return;
-  if (!isAllowed(message)) return;
+  if (!isAllowed(message)) {
+    await message.reply({
+      content:
+        "smolpaws: sorry, these paws only answer a small trusted circle. Ask Engel to add you, or set up your own little cat agent 🐾",
+      allowedMentions: { parse: [] },
+    }).catch(() => {});
+    return;
+  }
 
   await handleMessage(message, client.user.id);
 });
