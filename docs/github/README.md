@@ -1,9 +1,5 @@
 # Smolpaws Ops Notes
 
-## Planning / progress
-
-- Historical convergence tracker: [../archive/compatibility-plan-progress.md](../archive/compatibility-plan-progress.md)
-
 ## Architecture (current)
 
 1. **GitHub App** receives `issues` (opened), `issue_comment`, and `pull_request_review_comment` webhooks.
