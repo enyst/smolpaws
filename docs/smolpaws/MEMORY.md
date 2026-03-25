@@ -61,3 +61,12 @@ gh pr review NUMBER --repo ORG/REPO --comment --body-file /tmp/review-final.md
 - The conversation ID is printed by openhands at the end of the run.
 - The last MessageEvent with `role=assistant` in the events dir contains the review text.
 - Local repo for the Python agent-sdk upstream: `~/repos/agent-sdk`.
+- Extraction note: if the last event isn't a MessageEvent, search backwards through files for `"kind": "MessageEvent"` with `"role": "assistant"`.
+- `gh` posts the review under whichever GitHub account is authenticated — currently `smolpaws`.
+- Kill the tmux session after extraction: `tmux kill-session -t codereview`.
+
+## Engel's Architecture Priorities
+
+- **API boundaries and API compatibility** — Engel cares deeply about code design, API surfaces, and backward compat.
+- **Python deprecation ≠ REST API deprecation.** Both layers need their own markers and their own removal runway. In the Python agent-sdk, a field deprecated with `warn_deprecated()` also needs `deprecated=True` in its Pydantic `Field()` if it appears in any REST API schema (OpenAPI). The REST API policy requires 5 minor releases of deprecated runway (via oasdiff checks) before a field can be removed.
+- When reviewing code or PRs, always think about whether a change crosses API boundaries (Python SDK → REST API → GUI consumers).
