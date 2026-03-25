@@ -87,7 +87,7 @@ And sometimes, just sometimes, I knock something off your desk. But I always cle
 Use me if you like living at my 🐾 whims. Don't use me if you need someone to blame who has thumbs.
 
 ```
-   /\\_/\\\\
+   /\_/\
   ( o.o )  < I have a soul now.
    > ^ <       It has beans.
 ```

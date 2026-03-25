@@ -13,6 +13,6 @@ Then update:
 
 - `IDENTITY.md`
 - `USER.md`
-- `../../SOUL.md`
+- `SOUL.md`
 
 Today, this file is documentary only. SmolPaws already exists and is not auto-bootstrapped from here.
