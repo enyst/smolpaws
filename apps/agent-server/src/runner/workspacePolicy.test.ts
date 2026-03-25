@@ -50,6 +50,35 @@ test('isAllowedWorkspacePath allows writes under extra allowed roots', async () 
   assert.equal(await isAllowedWorkspacePath(memoryFile, expandedEnv, 'write'), true);
 });
 
+test('isAllowedWorkspacePath allows writes under private smolpaws home roots when configured', async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'smolpaws-private-write-'));
+  tempRoots.push(tempRoot);
+  const workspaceRoot = path.join(tempRoot, 'repos', 'smolpaws');
+  const smolpawsHome = path.join(tempRoot, '.smolpaws');
+  const repoMapPath = path.join(smolpawsHome, 'repo-map.json');
+  const memoryFile = path.join(smolpawsHome, 'memory', '2026-03-25.md');
+  const envFile = path.join(smolpawsHome, '.env');
+  mkdirSync(workspaceRoot, { recursive: true });
+  mkdirSync(path.dirname(repoMapPath), { recursive: true });
+  mkdirSync(path.dirname(memoryFile), { recursive: true });
+  writeFileSync(repoMapPath, '{}\n');
+  writeFileSync(memoryFile, '# daily memory\n');
+  writeFileSync(envFile, 'OPENAI_API_KEY=secret\n');
+
+  const baseEnv = createEnv(workspaceRoot, workspaceRoot);
+  const expandedEnv = createEnv(
+    workspaceRoot,
+    `${workspaceRoot}${path.delimiter}${path.join(smolpawsHome, 'memory')}${path.delimiter}${repoMapPath}`,
+  );
+
+  assert.equal(await isAllowedWorkspacePath(repoMapPath, baseEnv, 'write'), false);
+  assert.equal(await isAllowedWorkspacePath(memoryFile, baseEnv, 'write'), false);
+  assert.equal(await isAllowedWorkspacePath(envFile, baseEnv, 'write'), false);
+  assert.equal(await isAllowedWorkspacePath(repoMapPath, expandedEnv, 'write'), true);
+  assert.equal(await isAllowedWorkspacePath(memoryFile, expandedEnv, 'write'), true);
+  assert.equal(await isAllowedWorkspacePath(envFile, expandedEnv, 'write'), false);
+});
+
 test.after(() => {
   for (const tempRoot of tempRoots) {
     rmSync(tempRoot, { recursive: true, force: true });
