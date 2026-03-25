@@ -12,6 +12,8 @@ logs/
 # Secrets
 *.keys.json
 .env
+.env.local
+config/
 
 # OS
 .DS_Store
