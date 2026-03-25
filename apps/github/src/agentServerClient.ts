@@ -16,6 +16,7 @@ const DEFAULT_AGENT_TOOLS = [
   { name: 'file_editor' },
   { name: 'task_tracker' },
 ] as const;
+const GITHUB_MAX_ITERATIONS = 1000;
 
 function normalizeValue(value?: string): string | null {
   if (!value) return null;
@@ -158,6 +159,7 @@ export async function dispatchToAgentServer(
         content: [{ type: 'text', text: prompt }],
         run: true,
       },
+      max_iterations: GITHUB_MAX_ITERATIONS,
       smolpaws: {
         ingress: message.meta?.ingress ?? 'github_webhook',
         enable_send_message: true,

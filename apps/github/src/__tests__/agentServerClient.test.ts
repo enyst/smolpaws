@@ -80,6 +80,7 @@ test('dispatchToAgentServer creates a conversation, claims outbound messages, th
 
   const createBody = JSON.parse(String(calls[0]?.init?.body)) as {
     conversation_id: string;
+    max_iterations: number;
     initial_message: { content: Array<{ text: string }> };
     agent: { tools: Array<{ name: string }> };
     smolpaws: {
@@ -96,6 +97,7 @@ test('dispatchToAgentServer creates a conversation, claims outbound messages, th
     };
   };
   assert.equal(createBody.conversation_id, 'github-smolpaws-smolpaws-20');
+  assert.equal(createBody.max_iterations, 1000);
   assert.deepEqual(
     createBody.agent.tools.map((tool) => tool.name),
     ['terminal', 'file_editor', 'task_tracker'],
