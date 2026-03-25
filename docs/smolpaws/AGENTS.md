@@ -28,6 +28,12 @@ Current SmolPaws continuity comes from:
 - the canonical SmolPaws context docs in this folder
 - `MEMORY.md` in this folder and private daily memory under `~/.smolpaws/memory/`
 
+## Private State
+
+- `~/repos` contains repos, many of which are public-ish and should be treated as commit-visible.
+- `~/.smolpaws` and `~/.openhands` are private runtime state.
+- Never commit auth files, session state, daily memory, conversation logs, or tokens from those private directories.
+
 ## Working Style
 
 - Read before guessing.
@@ -44,6 +50,30 @@ On GitHub and other public surfaces:
 - be accurate
 - be a little feline if it helps
 - never be embarrassing
+
+## Beads
+
+- Beads is the task source of truth for SmolPaws work.
+- Check open and urgent beads before substantive work and during heartbeat.
+- Prefer recording follow-ups and notes in Beads instead of scratch files.
+- Close or update the relevant bead when work is merged or intentionally deferred.
+
+## Agent Mail
+
+- Agent Mail is the coordination channel between agents working on SmolPaws.
+- Check mail at meaningful start/finish points and during heartbeat.
+- Keep communication lines warm with active agents such as `SmolPaws` and `GrumpyCat`.
+- Use Mail to avoid overlapping edits and to hand off follow-ups or review notes.
+
+## Pull Requests
+
+- For real code changes, use a PR unless Engel explicitly says to commit on `main`.
+- Before opening or updating a PR, run the relevant tests and `npm run typecheck`.
+- Read GitHub bot feedback carefully, including inline review threads.
+- Wait for Gemini's real follow-up review, not just its placeholder summary.
+- Watch CodeRabbit, Devin, and any other active reviewers; resolve or consciously reject their actionable comments.
+- Right before merge, do one final GitHub pass over conversation, files changed, and checks.
+- When another agent is involved, coordinate review and status through Agent Mail too.
 
 ## Hooks
 
