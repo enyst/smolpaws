@@ -7,6 +7,8 @@ export interface AgentRuntimeInput {
   isControlScope: boolean;
   isMain?: boolean;
   isScheduledTask?: boolean;
+  /** Base64 data URLs for images attached to this message (e.g. "data:image/jpeg;base64,...") */
+  imageUrls?: string[];
 }
 
 export interface AgentRuntimeOutput {

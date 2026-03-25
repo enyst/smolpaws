@@ -56,6 +56,18 @@ function buildPrompt(input: AgentRuntimeInput): string {
   return `[SCHEDULED TASK - You are running automatically, not in response to a user message. Use send_message if needed to communicate with the user.]\n\n${input.prompt}`;
 }
 
+type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; image_urls: string[] };
+
+function buildMessageContent(input: AgentRuntimeInput): ContentPart[] {
+  const parts: ContentPart[] = [{ type: 'text', text: buildPrompt(input) }];
+  if (input.imageUrls?.length) {
+    parts.push({ type: 'image', image_urls: input.imageUrls });
+  }
+  return parts;
+}
+
 function buildConversationWorkingDir(scope: ExecutionScope): string {
   return path.join(GROUPS_DIR, scope.workspaceFolder);
 }
@@ -178,7 +190,7 @@ async function createOrContinueConversation(
       conversation_id: input.conversationId,
       initial_message: {
         role: 'user',
-        content: [{ type: 'text', text: buildPrompt(input) }],
+        content: buildMessageContent(input),
         run: true,
       },
       smolpaws: buildSmolpawsConfig(scope),

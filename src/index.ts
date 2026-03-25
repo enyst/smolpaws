@@ -3,9 +3,12 @@ import makeWASocket, {
   DisconnectReason,
   makeCacheableSignalKeyStore,
   fetchLatestWaWebVersion,
-  WASocket
+  downloadMediaMessage,
+  WASocket,
+  type WAMessage,
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
+import crypto from 'crypto';
 import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -31,6 +34,8 @@ import { collapseMessagesToLatestPerChat } from './message-loop.js';
 import { ConnectionGuards } from './connection-guards.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MEDIA_DIR = path.join(WHATSAPP_DIR, 'media');
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB cap for inline images
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -106,6 +111,73 @@ async function syncGroupMetadata(force = false): Promise<void> {
   }
 }
 
+/** Resolve MIME type from a WhatsApp message, falling back to common defaults. */
+function resolveMediaMime(message: WAMessage['message']): string | undefined {
+  return (
+    message?.imageMessage?.mimetype ??
+    message?.videoMessage?.mimetype ??
+    message?.stickerMessage?.mimetype ??
+    message?.documentMessage?.mimetype ??
+    message?.audioMessage?.mimetype ??
+    (message?.imageMessage ? 'image/jpeg' : undefined) ??
+    (message?.stickerMessage ? 'image/webp' : undefined) ??
+    undefined
+  );
+}
+
+/** Returns true when the message carries a media type we can send to the LLM as an image. */
+function isImageMedia(mime: string | undefined): boolean {
+  return !!mime && mime.startsWith('image/');
+}
+
+/** Download media from a WhatsApp message and save to disk. */
+async function downloadAndSaveMedia(
+  msg: WAMessage,
+): Promise<{ path: string; type: string } | undefined> {
+  const mime = resolveMediaMime(msg.message);
+  if (!mime) return undefined;
+
+  // Only download if the message actually carries media
+  const m = msg.message;
+  if (!m?.imageMessage && !m?.videoMessage && !m?.stickerMessage && !m?.documentMessage && !m?.audioMessage) {
+    return undefined;
+  }
+
+  try {
+    const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+      reuploadRequest: sock.updateMediaMessage,
+      logger,
+    });
+
+    fs.mkdirSync(MEDIA_DIR, { recursive: true });
+    const ext = mime.split('/')[1]?.split(';')[0] || 'bin';
+    const filename = `${crypto.randomUUID()}.${ext}`;
+    const filePath = path.join(MEDIA_DIR, filename);
+    fs.writeFileSync(filePath, buffer);
+
+    logger.debug({ filePath, mime, size: buffer.length }, 'Saved inbound media');
+    return { path: filePath, type: mime };
+  } catch (err) {
+    logger.warn({ err }, 'Failed to download media from WhatsApp');
+    return undefined;
+  }
+}
+
+/** Read a saved image file and return a base64 data URL suitable for the LLM. */
+function readImageAsDataUrl(mediaPath: string, mediaType: string): string | undefined {
+  try {
+    const buffer = fs.readFileSync(mediaPath);
+    if (buffer.length > MAX_IMAGE_BYTES) {
+      logger.debug({ mediaPath, size: buffer.length }, 'Image too large to inline');
+      return undefined;
+    }
+    return `data:${mediaType};base64,${buffer.toString('base64')}`;
+  } catch (err) {
+    logger.warn({ err, mediaPath }, 'Failed to read saved image');
+    return undefined;
+  }
+}
+
 async function processMessage(msg: NewMessage): Promise<void> {
   const group = registeredGroups[msg.chat_jid];
   if (!group) return;
@@ -113,29 +185,40 @@ async function processMessage(msg: NewMessage): Promise<void> {
   const content = msg.content.trim();
 
   // The control scope responds to ambient messages; all others require the trigger prefix.
+  // Images with @trigger in the caption match normally; control scope sees everything.
   if (!shouldRespondWithoutTrigger(group.folder) && !TRIGGER_PATTERN.test(content)) return;
 
   // Get all messages since last agent interaction so the session has full context
   const sinceTimestamp = lastAgentTimestamp[msg.chat_jid] || '';
   const missedMessages = getMessagesSince(msg.chat_jid, sinceTimestamp, ASSISTANT_NAME);
 
+  const escapeXml = (s: string) => s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
   const lines = missedMessages.map(m => {
-    // Escape XML special characters in content
-    const escapeXml = (s: string) => s
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-    return `<message sender="${escapeXml(m.sender_name)}" time="${m.timestamp}">${escapeXml(m.content)}</message>`;
+    const mediaAttr = m.media_path && isImageMedia(m.media_type) ? ' has_image="true"' : '';
+    return `<message sender="${escapeXml(m.sender_name)}" time="${m.timestamp}"${mediaAttr}>${escapeXml(m.content)}</message>`;
   });
   const prompt = `<messages>\n${lines.join('\n')}\n</messages>`;
 
   if (!prompt) return;
 
-  logger.info({ group: group.name, messageCount: missedMessages.length }, 'Processing message');
+  // Collect image data URLs from recent messages to send to the LLM
+  const imageUrls: string[] = [];
+  for (const m of missedMessages) {
+    if (m.media_path && m.media_type && isImageMedia(m.media_type)) {
+      const dataUrl = readImageAsDataUrl(m.media_path, m.media_type);
+      if (dataUrl) imageUrls.push(dataUrl);
+    }
+  }
+
+  logger.info({ group: group.name, messageCount: missedMessages.length, imageCount: imageUrls.length }, 'Processing message');
 
   await setTyping(msg.chat_jid, true);
-  const output = await runAgent(group, prompt, msg.chat_jid);
+  const output = await runAgent(group, prompt, msg.chat_jid, imageUrls.length > 0 ? imageUrls : undefined);
   await setTyping(msg.chat_jid, false);
 
   if (output.status === 'success') {
@@ -146,7 +229,7 @@ async function processMessage(msg: NewMessage): Promise<void> {
   }
 }
 
-async function runAgent(group: RegisteredGroup, prompt: string, chatJid: string) {
+async function runAgent(group: RegisteredGroup, prompt: string, chatJid: string, imageUrls?: string[]) {
   const scope = scopeFromRegisteredGroup(chatJid, group);
   const conversationId = sessions[scope.scopeId];
 
@@ -158,7 +241,8 @@ async function runAgent(group: RegisteredGroup, prompt: string, chatJid: string)
       groupFolder: scope.scopeId,
       chatJid,
       isControlScope: scope.isControlScope,
-      isMain: scope.isControlScope
+      isMain: scope.isControlScope,
+      imageUrls,
     }, {
       registeredGroups,
     });
@@ -265,7 +349,7 @@ async function connectWhatsApp(): Promise<void> {
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('messages.upsert', ({ messages }) => {
+  sock.ev.on('messages.upsert', async ({ messages }) => {
     for (const msg of messages) {
       if (!msg.message) continue;
       const chatJid = msg.key.remoteJid;
@@ -278,7 +362,14 @@ async function connectWhatsApp(): Promise<void> {
 
       // Only store full message content for registered groups
       if (registeredGroups[chatJid]) {
-        storeMessage(msg, chatJid, msg.key.fromMe || false, msg.pushName || undefined);
+        // Download media if present (async, best-effort)
+        let media: { path: string; type: string } | undefined;
+        try {
+          media = await downloadAndSaveMedia(msg);
+        } catch (err) {
+          logger.debug({ err }, 'Media download skipped');
+        }
+        storeMessage(msg, chatJid, msg.key.fromMe || false, msg.pushName || undefined, media);
       }
     }
   });
