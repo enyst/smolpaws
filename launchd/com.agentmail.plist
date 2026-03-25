@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.agentmail</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{UV_PATH}}</string>
+        <string>run</string>
+        <string>python</string>
+        <string>-m</string>
+        <string>mcp_agent_mail.cli</string>
+        <string>serve-http</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>8765</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{{AGENT_MAIL_ROOT}}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{{PATH}}</string>
+        <key>HOME</key>
+        <string>{{HOME}}</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>{{LOG_DIR}}/agentmail.launchagent.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{LOG_DIR}}/agentmail.launchagent.error.log</string>
+</dict>
+</plist>
