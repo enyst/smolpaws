@@ -257,7 +257,7 @@ interface SubmitConversationMessageResult {
   status: 'running' | 'completed' | 'waiting_for_confirmation' | 'paused' | 'error' | 'stuck';
 }
 
-interface PumpTurnOptions {
+interface MonitorTurnOptions {
   baseUrl: string;
   authToken?: string;
   conversationId: string;
@@ -267,7 +267,7 @@ interface PumpTurnOptions {
   onOutboundMessage?: (msg: SmolpawsOutboundMessage) => Promise<void> | void;
 }
 
-interface PumpTurnResult {
+interface MonitorTurnResult {
   conversationId: string;
   turnId: string;
   status: 'completed' | 'waiting_for_confirmation' | 'paused' | 'error' | 'stuck';
