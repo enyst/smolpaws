@@ -65,6 +65,13 @@ gh pr review NUMBER --repo ORG/REPO --comment --body-file /tmp/review-final.md
 - `gh` posts the review under whichever GitHub account is authenticated — currently `smolpaws`.
 - Kill the tmux session after extraction: `tmux kill-session -t codereview`.
 
+## WhatsApp Image Support (2026-03-25)
+
+- SmolPaws can now see images sent via WhatsApp. Media is downloaded via baileys, saved to `~/.smolpaws/whatsapp/media/`, and passed as `ImageContent` (base64 data URLs) through the agent-server to the LLM.
+- The agent-server's `conversationRouter` needed a fix to preserve non-text content parts — `buildUserMessageFromRequest()` constructs a full `Message` instead of extracting only text.
+- OpenClaw repo cloned to `~/repos/openclaw` as reference for the implementation.
+- First image seen: a wet kitten in the shower saying "Nooo problem."
+
 ## Engel's Architecture Priorities
 
 - **API boundaries and API compatibility** — Engel cares deeply about code design, API surfaces, and backward compat.
