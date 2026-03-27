@@ -1,15 +1,17 @@
 # SmolPaws
 
-Your smart cat. Lightweight, secure, customizable. Based on [NanoClaw](https://github.com/gavrielc/nanoclaw).
+Your smart cat. Lightweight, customizable, building itself with its own paws.
 
 See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
-See [docs/README.md](docs/README.md) for the current doc index, including GitHub ingress ops notes and archived convergence context.
+See [docs/README.md](docs/README.md) for the current doc index, including GitHub ingress ops notes.
 See [docs/smolpaws/SOUL.md](docs/smolpaws/SOUL.md) for the canonical SmolPaws personality and voice design.
-See [docs/smolpaws/README.md](docs/smolpaws/README.md) for the OpenClaw-style SmolPaws context-file set.
+See [docs/smolpaws/README.md](docs/smolpaws/README.md) for the SmolPaws context-file set.
 
 ## Quick Context
 
-This repo now owns the WhatsApp host, the GitHub Worker ingress, and the shared Fastify agent-server. Execution still converges on the same AppleWorkspace-managed local runner surface, with each scope keeping its own mounted filesystem and conversation state.
+This repo now owns the WhatsApp host, the GitHub Worker ingress, and the shared Fastify agent-server. Execution is mostly local; an older desire was to converge on the same AppleWorkspace-managed local runner surface, with each scope keeping its own mounted filesystem and conversation state.
+
+Smolpaws is an OpenHands agent in TypeScript, with inspiration from NanoClaw, OpenClaw, pi, and other Open Source projects.
 
 ## Key Files
 
