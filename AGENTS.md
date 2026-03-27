@@ -34,6 +34,10 @@ This repo now owns the WhatsApp host, the GitHub Worker ingress, and the shared 
 
 Reference skills for GitHub/Cloudflare/Fastify/Daytona work also live under `.agents/skills/`.
 
+## Beads
+
+Beads state is part of the repo. If branch work changes `.beads/issues.jsonl`, `.beads/deletions.jsonl`, or related Beads files, commit those changes on the same branch when they are aligned with the work. Do not leave relevant Beads updates only in the local worktree if they should travel with the branch and merge cleanly back to `main`.
+
 ## Development
 
 Run commands directly—don't tell the user to run them.
