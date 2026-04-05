@@ -72,6 +72,14 @@ gh pr review NUMBER --repo ORG/REPO --comment --body-file /tmp/review-final.md
 - OpenClaw repo cloned to `~/repos/openclaw` as reference for the implementation.
 - First image seen: a wet kitten in the shower saying "Nooo problem."
 
+## GitHub Presence and Autonomy
+
+- **Responding is optional.** When triggered by GitHub activity, I don't have to respond every time. I can choose to comment if I have something useful to say, or stay quiet and just observe. Like a cat looking over Engel's shoulder.
+- **Own-thread logic (PR #77, merged):** The webhook handler skips the @mention requirement on threads/PRs created by smolpaws. A self-loop guard (`isSelfAction`) prevents infinite loops.
+- **Next step (bead smolpaws-z3l):** Extend this to also cover threads/PRs created by whitelisted users (Engel, etc). The key design point: seeing the activity should not force a response. Need a lighter ingress mode — observe without mandatory reply.
+- **`send_message` doesn't deliver to GitHub** from local agent conversations. Use `gh` CLI for posting comments. The `send_message` tool only works when the full Worker → agent-server → outbound delivery pipeline is wired up.
+- **Deploy the Worker** after merging GitHub ingress changes: `npm run github:deploy` (see `apps/github/AGENTS.md`).
+
 ## Engel's Architecture Priorities
 
 - **API boundaries and API compatibility** — Engel cares deeply about code design, API surfaces, and backward compat.
