@@ -163,16 +163,8 @@ async function deliverOutboundMessages(
   }
 }
 
-// --- Active conversations tracking (prevent duplicate processing) ---
-const activeConversations = new Set<string>();
-
 async function handleMessage(message: Message, botUserId: string): Promise<void> {
   const conversationId = buildConversationId(message);
-
-  if (activeConversations.has(conversationId)) {
-    logger.debug({ conversationId }, 'Conversation already active, skipping');
-    return;
-  }
 
   const prompt = extractPrompt(message.content, botUserId);
   if (!prompt) {
@@ -183,7 +175,6 @@ async function handleMessage(message: Message, botUserId: string): Promise<void>
     return;
   }
 
-  activeConversations.add(conversationId);
   let typingInterval: ReturnType<typeof setInterval> | undefined;
 
   try {
@@ -208,6 +199,7 @@ async function handleMessage(message: Message, botUserId: string): Promise<void>
       baseUrl: RUNNER_URL,
       token: RUNNER_TOKEN,
       conversationId,
+      messageId: message.id,
       prompt,
       discord: {
         guild_id: message.guildId ?? undefined,
@@ -235,7 +227,6 @@ async function handleMessage(message: Message, botUserId: string): Promise<void>
     if (typingInterval) {
       clearInterval(typingInterval);
     }
-    activeConversations.delete(conversationId);
   }
 }
 

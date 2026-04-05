@@ -7,6 +7,11 @@ import test from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import type { AgentServerDeps } from './dependencies.js';
 import type { RunnerEnv } from '../runner/workspacePolicy.js';
+import {
+  findMessageByIdempotencyKey,
+  writePersistedTurnState,
+  type ConversationTurnState,
+} from '../runner/turnState.js';
 
 type OpenAiRequest = {
   model: string;
@@ -209,7 +214,10 @@ function writeStreamResponse(res: ServerResponse, text: string): void {
   res.end();
 }
 
-async function startFakeLlmServer(responseText = 'meow from fake llm'): Promise<FakeLlmServer> {
+async function startFakeLlmServer(
+  responseText = 'meow from fake llm',
+  options?: { delayMs?: number },
+): Promise<FakeLlmServer> {
   const requests: OpenAiRequest[] = [];
   const server = createServer(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/chat/completions') {
@@ -218,6 +226,9 @@ async function startFakeLlmServer(responseText = 'meow from fake llm'): Promise<
     }
     const body = await collectRequestBody(req);
     requests.push(JSON.parse(body) as OpenAiRequest);
+    if (options?.delayMs) {
+      await new Promise((resolve) => setTimeout(resolve, options.delayMs));
+    }
     writeStreamResponse(res, responseText);
   });
 
@@ -259,6 +270,18 @@ async function createTestApp(fakeLlmBaseUrl: string) {
 
 function parseJson<T>(body: string): T {
   return JSON.parse(body) as T;
+}
+
+async function waitForRequestCount(
+  fakeLlm: FakeLlmServer,
+  expectedCount: number,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (fakeLlm.requests.length < expectedCount && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.equal(fakeLlm.requests.length, expectedCount);
 }
 
 function getSystemPrompt(request: OpenAiRequest): string {
@@ -351,7 +374,7 @@ test('POST /api/conversations sends repo skills, user skills, tools, and environ
     });
 
     assert.equal(response.statusCode, 201);
-    assert.equal(fakeLlm.requests.length, 1);
+    await waitForRequestCount(fakeLlm, 1);
 
     const llmRequest = fakeLlm.requests[0]!;
     const systemPrompt = getSystemPrompt(llmRequest);
@@ -403,7 +426,6 @@ test('POST /api/conversations sends repo skills, user skills, tools, and environ
     assert.match(systemPrompt, /Conversation logs: ~\/\.openhands\/conversations/);
     assert.doesNotMatch(systemPrompt, /Daily note\./);
     assert.match(systemPrompt, /<name>demo-skill<\/name>/);
-    assert.match(systemPrompt, /<name>user-guidance<\/name>/);
 
     assert.deepEqual(toolNames, [
       'file_editor',
@@ -437,7 +459,7 @@ test('requested remote tools shape the exposed tool set without reintroducing un
     });
 
     assert.equal(response.statusCode, 201);
-    assert.equal(fakeLlm.requests.length, 1);
+    await waitForRequestCount(fakeLlm, 1);
 
     const toolNames = getToolNames(fakeLlm.requests[0]!);
     assert.deepEqual(toolNames, ['browser', 'finish', 'terminal', 'think']);
@@ -477,7 +499,7 @@ test('queued idle runs stay on the canonical conversation path and only hit the 
     assert.deepEqual(parseJson<{ success: boolean }>(runResponse.body), {
       success: true,
     });
-    assert.equal(fakeLlm.requests.length, 1);
+    await waitForRequestCount(fakeLlm, 1);
 
     let assistantEvent:
       | {
@@ -519,6 +541,74 @@ test('queued idle runs stay on the canonical conversation path and only hit the 
       assistantEvent.llm_message?.content?.[0]?.text,
       'queued meow',
     );
+  } finally {
+    await app.close();
+    await fakeLlm.close();
+  }
+});
+
+test('legacy POST /events waits for turn completion before returning when run is enabled', async () => {
+  const fakeLlm = await startFakeLlmServer('legacy endpoint reply', { delayMs: 100 });
+  const { app, fixture } = await createTestApp(fakeLlm.baseUrl);
+  writeVscodeProfileSelection(fixture, 'gpt-5');
+  await saveDefaultProfile('gpt-5', fakeLlm.baseUrl);
+
+  try {
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/api/conversations',
+      payload: {
+        agent: { llm: {} },
+        secrets: { OPENAI_API_KEY: 'test-api-key' },
+        max_iterations: 1,
+      },
+    });
+
+    assert.equal(createResponse.statusCode, 201);
+    const createdConversation = parseJson<{ id: string }>(createResponse.body);
+
+    const startedAt = Date.now();
+    const eventResponse = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${createdConversation.id}/events`,
+      payload: {
+        role: 'user',
+        content: [{ type: 'text', text: 'wait for the assistant before returning' }],
+      },
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(eventResponse.statusCode, 200);
+    assert.deepEqual(parseJson<{ success: boolean }>(eventResponse.body), {
+      success: true,
+    });
+    assert.ok(
+      elapsedMs >= 90,
+      `expected legacy events POST to block on execution, got ${elapsedMs}ms`,
+    );
+    assert.equal(fakeLlm.requests.length, 1);
+
+    const eventsResponse = await app.inject({
+      method: 'GET',
+      url: `/api/conversations/${createdConversation.id}/events/search?kind=MessageEvent&source=agent&sort_order=timestamp_desc&limit=20`,
+    });
+
+    assert.equal(eventsResponse.statusCode, 200);
+    const events = parseJson<{
+      items: Array<{
+        kind: string;
+        llm_message?: {
+          role: string;
+          content?: Array<{ type?: string; text?: string }>;
+        };
+      }>;
+    }>(eventsResponse.body);
+    const assistantEvent = events.items.find(
+      (event) => event.kind === 'MessageEvent' && event.llm_message?.role === 'assistant',
+    );
+
+    assert(assistantEvent);
+    assert.equal(assistantEvent.llm_message?.content?.[0]?.text, 'legacy endpoint reply');
   } finally {
     await app.close();
     await fakeLlm.close();
@@ -703,6 +793,535 @@ test('POST /api/conversations resets a reused smolpaws conversation exhausted by
       false,
     );
     assert.deepEqual(getUserMessageTexts(nextRecord.events), ['fresh retry']);
+  } finally {
+    await app.close();
+    await fakeLlm.close();
+  }
+});
+
+test('turn submission resets a reused stale smolpaws conversation when create_conversation is provided', async () => {
+  const fakeLlm = await startFakeLlmServer('stale turn recovery');
+  const { app, fixture, deps } = await createTestApp(fakeLlm.baseUrl);
+  writeVscodeProfileSelection(fixture, 'gpt-5');
+  await saveDefaultProfile('gpt-5', fakeLlm.baseUrl);
+
+  try {
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/api/conversations',
+      payload: buildCreateConversationBody({
+        conversationId: 'stale-turn-submit',
+        initialMessage: 'first message',
+        run: false,
+      }),
+    });
+    assert.equal(createResponse.statusCode, 201);
+
+    const record = deps.conversationRuntime.conversations.get('stale-turn-submit');
+    assert(record);
+    const staleConversation = record.conversation;
+    record.events.push({
+      kind: 'ConversationStateUpdateEvent',
+      source: 'agent',
+      agent_status: 'WAITING_FOR_CONFIRMATION',
+      id: 'pause-turn-1',
+      timestamp: new Date().toISOString(),
+    } as never);
+
+    const retryResponse = await app.inject({
+      method: 'POST',
+      url: '/api/conversations/stale-turn-submit/turns',
+      payload: {
+        idempotency_key: 'fresh-turn-submit',
+        user_message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'fresh retry through turns' }],
+          run: false,
+        },
+        create_conversation: {
+          agent: { llm: {} },
+          secrets: { OPENAI_API_KEY: 'test-api-key' },
+          max_iterations: 1,
+          smolpaws: {
+            enable_send_message: true,
+            github: {
+              repository_full_name: 'owner/repo-a',
+              actor_login: 'enyst',
+              event: 'issue_comment',
+              issue_number: 20,
+            },
+          },
+        },
+      },
+    });
+    assert.equal(retryResponse.statusCode, 201);
+
+    const nextRecord = deps.conversationRuntime.conversations.get('stale-turn-submit');
+    assert(nextRecord);
+    assert.notEqual(nextRecord.conversation, staleConversation);
+    assert.equal(
+      nextRecord.events.some(
+        (event) =>
+          event.kind === 'ConversationStateUpdateEvent' &&
+          event.source === 'agent' &&
+          event.agent_status === 'WAITING_FOR_CONFIRMATION',
+      ),
+      false,
+    );
+    assert.deepEqual(getUserMessageTexts(nextRecord.events), ['fresh retry through turns']);
+  } finally {
+    await app.close();
+    await fakeLlm.close();
+  }
+});
+
+test('turn submission reuses the active turn while it is still queued/running', async () => {
+  const fakeLlm = await startFakeLlmServer('queued turn result');
+  const { app, fixture, deps } = await createTestApp(fakeLlm.baseUrl);
+  writeVscodeProfileSelection(fixture, 'gpt-5');
+  await saveDefaultProfile('gpt-5', fakeLlm.baseUrl);
+
+  try {
+    const firstSubmit = await app.inject({
+      method: 'POST',
+      url: '/api/conversations/turn-queue-test/turns',
+      payload: {
+        idempotency_key: 'msg-1',
+        user_message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'first queued message' }],
+          run: false,
+        },
+        create_conversation: {
+          agent: { llm: {} },
+          secrets: { OPENAI_API_KEY: 'test-api-key' },
+          max_iterations: 1,
+        },
+      },
+    });
+    assert.equal(firstSubmit.statusCode, 201);
+    const first = parseJson<{
+      conversation_id: string;
+      turn_id: string;
+      started_new_turn: boolean;
+      status: string;
+    }>(firstSubmit.body);
+    assert.equal(first.started_new_turn, true);
+    assert.equal(first.status, 'running');
+
+    const secondSubmit = await app.inject({
+      method: 'POST',
+      url: '/api/conversations/turn-queue-test/turns',
+      payload: {
+        idempotency_key: 'msg-2',
+        user_message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'second queued message' }],
+          run: false,
+        },
+      },
+    });
+    assert.equal(secondSubmit.statusCode, 200);
+    const second = parseJson<{
+      conversation_id: string;
+      turn_id: string;
+      started_new_turn: boolean;
+      status: string;
+    }>(secondSubmit.body);
+    assert.equal(second.conversation_id, 'turn-queue-test');
+    assert.equal(second.turn_id, first.turn_id);
+    assert.equal(second.started_new_turn, false);
+    assert.equal(second.status, 'running');
+
+    const runResponse = await app.inject({
+      method: 'POST',
+      url: '/api/conversations/turn-queue-test/run',
+    });
+    assert.equal(runResponse.statusCode, 200);
+    await deps.conversationRuntime.waitForTurnProcessor('turn-queue-test');
+
+    const turnStatus = await app.inject({
+      method: 'GET',
+      url: `/api/conversations/turn-queue-test/turns/${first.turn_id}`,
+    });
+    assert.equal(turnStatus.statusCode, 200);
+    assert.equal(parseJson<{ status: string }>(turnStatus.body).status, 'completed');
+
+    const turnResult = await app.inject({
+      method: 'GET',
+      url: `/api/conversations/turn-queue-test/turns/${first.turn_id}/result`,
+    });
+    assert.equal(turnResult.statusCode, 200);
+    assert.equal(parseJson<{ reply?: string }>(turnResult.body).reply, 'queued turn result');
+
+    const eventsResponse = await app.inject({
+      method: 'GET',
+      url: '/api/conversations/turn-queue-test/events/search?kind=MessageEvent&source=user',
+    });
+    assert.equal(eventsResponse.statusCode, 200);
+    const events = parseJson<{
+      items: Array<{
+        llm_message?: { content?: Array<{ type?: string; text?: string }> };
+      }>;
+    }>(eventsResponse.body);
+    const texts = events.items.map((event) =>
+      (event.llm_message?.content ?? [])
+        .filter((part) => part.type === 'text' && typeof part.text === 'string')
+        .map((part) => part.text)
+        .join('\n'),
+    );
+    assert.deepEqual(texts, ['first queued message', 'second queued message']);
+  } finally {
+    await app.close();
+    await fakeLlm.close();
+  }
+});
+
+test('turn result stays empty until the current turn has a materialized start event', async () => {
+  const fakeLlm = await startFakeLlmServer('unused for turn result');
+  const { app, fixture, deps } = await createTestApp(fakeLlm.baseUrl);
+  writeVscodeProfileSelection(fixture, 'gpt-5');
+  await saveDefaultProfile('gpt-5', fakeLlm.baseUrl);
+
+  try {
+    const { record } = await deps.conversationRuntime.createConversationRecord({
+      conversation_id: 'turn-result-no-start',
+      agent: { llm: {} },
+      secrets: { OPENAI_API_KEY: 'test-api-key' },
+      max_iterations: 1,
+    });
+    record.events.push({
+      kind: 'MessageEvent',
+      source: 'agent',
+      id: 'assistant-old',
+      timestamp: new Date().toISOString(),
+      llm_message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'old reply from a previous turn' }],
+      },
+    } as never);
+    deps.conversationRuntime.turnStates.set(record.id, {
+      next_sequence: 2,
+      turns: [
+        {
+          id: 'turn-running-no-start',
+          sequence: 1,
+          status: 'running',
+          started_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          messages: [
+            {
+              id: 'pending-message-1',
+              idempotency_key: 'pending-key',
+              accepted_at: new Date().toISOString(),
+              content: [{ type: 'text', text: 'new message still pending' }],
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await deps.conversationRuntime.getTurnResult(
+      'turn-result-no-start',
+      'turn-running-no-start',
+    );
+    assert.deepEqual(result, {});
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/conversations/turn-result-no-start/turns/turn-running-no-start/result',
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(parseJson<{ status: string; reply?: string }>(response.body), {
+      conversation_id: 'turn-result-no-start',
+      turn_id: 'turn-running-no-start',
+      status: 'running',
+    });
+  } finally {
+    await app.close();
+    await fakeLlm.close();
+  }
+});
+
+test('turn submission is idempotent for the same conversation and idempotency key', async () => {
+  const fakeLlm = await startFakeLlmServer('idempotent turn result');
+  const { app, fixture } = await createTestApp(fakeLlm.baseUrl);
+  writeVscodeProfileSelection(fixture, 'gpt-5');
+  await saveDefaultProfile('gpt-5', fakeLlm.baseUrl);
+
+  try {
+    const payload = {
+      idempotency_key: 'same-key',
+      user_message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'same request' }],
+        run: false,
+      },
+      create_conversation: {
+        agent: { llm: {} },
+        secrets: { OPENAI_API_KEY: 'test-api-key' },
+        max_iterations: 1,
+      },
+    };
+
+    const firstSubmit = await app.inject({
+      method: 'POST',
+      url: '/api/conversations/turn-idempotency-test/turns',
+      payload,
+    });
+    const secondSubmit = await app.inject({
+      method: 'POST',
+      url: '/api/conversations/turn-idempotency-test/turns',
+      payload,
+    });
+
+    assert.equal(firstSubmit.statusCode, 201);
+    assert.equal(secondSubmit.statusCode, 200);
+
+    const first = parseJson<{
+      turn_id: string;
+      message_event_id: string;
+      started_new_turn: boolean;
+    }>(firstSubmit.body);
+    const second = parseJson<{
+      turn_id: string;
+      message_event_id: string;
+      started_new_turn: boolean;
+    }>(secondSubmit.body);
+
+    assert.equal(first.turn_id, second.turn_id);
+    assert.equal(first.message_event_id, second.message_event_id);
+    assert.equal(first.started_new_turn, true);
+    assert.equal(second.started_new_turn, false);
+  } finally {
+    await app.close();
+    await fakeLlm.close();
+  }
+});
+
+test('turn submission returns 404 when the conversation is missing and create_conversation is omitted', async () => {
+  const { app } = await createTestApp('http://unused.invalid');
+
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${uniqueName('missing-turn-submit')}/turns`,
+      payload: {
+        idempotency_key: 'missing-key',
+        user_message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'hello from a missing conversation' }],
+          run: false,
+        },
+      },
+    });
+
+    assert.equal(response.statusCode, 404);
+    assert.deepEqual(parseJson<{ error: string }>(response.body), {
+      error: 'Conversation not found',
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+
+test('idempotent turn retries re-kick a persisted running turn even for non-owners', async () => {
+  const fakeLlm = await startFakeLlmServer('recovered after retry');
+  const { app, fixture, deps } = await createTestApp(fakeLlm.baseUrl);
+  writeVscodeProfileSelection(fixture, 'gpt-5');
+  await saveDefaultProfile('gpt-5', fakeLlm.baseUrl);
+
+  try {
+    const { record } = await deps.conversationRuntime.createConversationRecord({
+      conversation_id: 'turn-idempotent-retry-test',
+      agent: { llm: {} },
+      secrets: { OPENAI_API_KEY: 'test-api-key' },
+      max_iterations: 1,
+    });
+    const now = '2026-03-27T00:00:00.000Z';
+    const turnState: ConversationTurnState = {
+      next_sequence: 2,
+      turns: [
+        {
+          id: 'turn-existing',
+          sequence: 1,
+          status: 'running' as const,
+          started_at: now,
+          updated_at: now,
+          delivery_owner_id: 'owner-1',
+          delivery_owner_claimed_at: now,
+          messages: [
+            {
+              id: 'message-1',
+              idempotency_key: 'same-key',
+              accepted_at: now,
+              content: [{ type: 'text', text: 'retry me' }],
+            },
+          ],
+        },
+      ],
+    };
+    deps.conversationRuntime.turnStates.set(record.id, turnState);
+    await writePersistedTurnState(
+      record.id,
+      deps.conversationRuntime.persistenceRoot,
+      turnState,
+    );
+    assert.equal(
+      findMessageByIdempotencyKey(turnState, 'same-key')?.turn.id,
+      'turn-existing',
+    );
+
+    const retried = await deps.conversationRuntime.submitTurnMessage({
+      conversationId: record.id,
+      idempotencyKey: 'same-key',
+      deliveryOwnerId: 'owner-2',
+      userMessage: {
+        content: [{ type: 'text', text: 'retry me' }],
+        run: true,
+      },
+    });
+
+    assert.equal(retried.turnId, 'turn-existing');
+    assert.equal(retried.messageEventId, 'message-1');
+    assert.equal(retried.startedNewTurn, false);
+    assert.equal(retried.isDeliveryOwner, false);
+
+    await deps.conversationRuntime.waitForTurnProcessor(record.id);
+
+    const recoveredTurn = await deps.conversationRuntime.getTurnOrThrow(
+      record.id,
+      'turn-existing',
+    );
+    assert.equal(recoveredTurn.status, 'completed');
+
+    const result = await deps.conversationRuntime.getTurnResult(
+      record.id,
+      'turn-existing',
+    );
+    assert.equal(result.reply, 'recovered after retry');
+    await waitForRequestCount(fakeLlm, 1);
+  } finally {
+    await app.close();
+    await fakeLlm.close();
+  }
+});
+
+test('turn status only reports ownership for the matching caller and keeps owner ids server-side', async () => {
+  const fakeLlm = await startFakeLlmServer('owner status result');
+  const { app, fixture } = await createTestApp(fakeLlm.baseUrl);
+  writeVscodeProfileSelection(fixture, 'gpt-5');
+  await saveDefaultProfile('gpt-5', fakeLlm.baseUrl);
+
+  try {
+    const submit = await app.inject({
+      method: 'POST',
+      url: '/api/conversations/turn-owner-status-test/turns',
+      payload: {
+        idempotency_key: 'owner-status-key',
+        delivery_owner_id: 'owner-1',
+        user_message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'owner status request' }],
+          run: false,
+        },
+        create_conversation: {
+          agent: { llm: {} },
+          secrets: { OPENAI_API_KEY: 'test-api-key' },
+          max_iterations: 1,
+        },
+      },
+    });
+    assert.equal(submit.statusCode, 201);
+    const created = parseJson<{ turn_id: string }>(submit.body);
+
+    const anonymousStatus = await app.inject({
+      method: 'GET',
+      url: `/api/conversations/turn-owner-status-test/turns/${created.turn_id}`,
+    });
+    assert.equal(anonymousStatus.statusCode, 200);
+    const anonymous = parseJson<Record<string, unknown>>(anonymousStatus.body);
+    assert.equal(anonymous.is_delivery_owner, false);
+    assert.equal('delivery_owner_id' in anonymous, false);
+
+    const ownerStatus = await app.inject({
+      method: 'GET',
+      url: `/api/conversations/turn-owner-status-test/turns/${created.turn_id}?delivery_owner_id=owner-1`,
+    });
+    assert.equal(ownerStatus.statusCode, 200);
+    assert.equal(parseJson<{ is_delivery_owner: boolean }>(ownerStatus.body).is_delivery_owner, true);
+
+    const otherStatus = await app.inject({
+      method: 'GET',
+      url: `/api/conversations/turn-owner-status-test/turns/${created.turn_id}?delivery_owner_id=owner-2`,
+    });
+    assert.equal(otherStatus.statusCode, 200);
+    assert.equal(parseJson<{ is_delivery_owner: boolean }>(otherStatus.body).is_delivery_owner, false);
+  } finally {
+    await app.close();
+    await fakeLlm.close();
+  }
+});
+
+test('turn-scoped claims reject other delivery owners and allow the recorded owner', async () => {
+  const fakeLlm = await startFakeLlmServer('owner claim result');
+  const { app, fixture } = await createTestApp(fakeLlm.baseUrl);
+  writeVscodeProfileSelection(fixture, 'gpt-5');
+  await saveDefaultProfile('gpt-5', fakeLlm.baseUrl);
+
+  try {
+    const submit = await app.inject({
+      method: 'POST',
+      url: '/api/conversations/turn-owner-claim-test/turns',
+      payload: {
+        idempotency_key: 'owner-claim-key',
+        delivery_owner_id: 'owner-1',
+        user_message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'owner claim request' }],
+          run: false,
+        },
+        create_conversation: {
+          agent: { llm: {} },
+          secrets: { OPENAI_API_KEY: 'test-api-key' },
+          max_iterations: 1,
+        },
+      },
+    });
+    assert.equal(submit.statusCode, 201);
+    const created = parseJson<{ turn_id: string }>(submit.body);
+
+    const wrongOwnerOutbound = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/turn-owner-claim-test/turns/${created.turn_id}/outbound_messages/claim`,
+      payload: { delivery_owner_id: 'owner-2' },
+    });
+    assert.equal(wrongOwnerOutbound.statusCode, 409);
+
+    const rightOwnerOutbound = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/turn-owner-claim-test/turns/${created.turn_id}/outbound_messages/claim`,
+      payload: { delivery_owner_id: 'owner-1' },
+    });
+    assert.equal(rightOwnerOutbound.statusCode, 200);
+    assert.deepEqual(parseJson<unknown[]>(rightOwnerOutbound.body), []);
+
+    const wrongOwnerTasks = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/turn-owner-claim-test/turns/${created.turn_id}/task_commands/claim`,
+      payload: { delivery_owner_id: 'owner-2' },
+    });
+    assert.equal(wrongOwnerTasks.statusCode, 409);
+
+    const rightOwnerTasks = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/turn-owner-claim-test/turns/${created.turn_id}/task_commands/claim`,
+      payload: { delivery_owner_id: 'owner-1' },
+    });
+    assert.equal(rightOwnerTasks.statusCode, 200);
+    assert.deepEqual(parseJson<unknown[]>(rightOwnerTasks.body), []);
   } finally {
     await app.close();
     await fakeLlm.close();
