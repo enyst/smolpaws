@@ -11,8 +11,8 @@ export type GithubEventPayload = {
     full_name?: string;
     owner?: { login?: string };
   };
-  issue?: { number?: number; body?: string; title?: string };
-  pull_request?: { number?: number };
+  issue?: { number?: number; body?: string; title?: string; user?: { login?: string } };
+  pull_request?: { number?: number; user?: { login?: string } };
   installation?: { id?: number };
 };
 
