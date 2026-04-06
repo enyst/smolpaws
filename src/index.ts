@@ -32,6 +32,7 @@ import { scopeFromRegisteredGroup } from './scope.js';
 import { loadJson, saveJson } from './utils.js';
 import { collapseMessagesToLatestPerChat } from './message-loop.js';
 import { ConnectionGuards } from './connection-guards.js';
+import { resolveOutboundChatJid } from './whatsapp-jid.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MEDIA_DIR = path.join(WHATSAPP_DIR, 'media');
@@ -293,11 +294,24 @@ async function runAgent(
 }
 
 async function sendMessage(jid: string, text: string): Promise<void> {
+  const targetJid = resolveOutboundChatJid(jid, sock.user);
+  const rewritten = targetJid !== jid;
+
   try {
-    await sock.sendMessage(jid, { text });
-    logger.info({ jid, length: text.length }, 'Message sent');
+    const sent = await sock.sendMessage(targetJid, { text });
+    logger.info(
+      {
+        requestedJid: jid,
+        targetJid,
+        rewritten,
+        remoteJid: sent?.key?.remoteJid,
+        messageId: sent?.key?.id,
+        length: text.length,
+      },
+      'Message sent',
+    );
   } catch (err) {
-    logger.error({ jid, err }, 'Failed to send message');
+    logger.error({ requestedJid: jid, targetJid, rewritten, err }, 'Failed to send message');
   }
 }
 
