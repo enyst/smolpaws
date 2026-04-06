@@ -163,5 +163,24 @@ For GitHub-triggered runs, the agent-server resolves the local working directory
 
 ## 5) Operational notes
 
+### Recommended real webhook test flow on this machine
+
+Follow the detailed tunnel workflow in [README.md](README.md#recommended-local-test-flow).
+
+Operationally, the verified setup is:
+
+- keep GitHub pointed at the **deployed** Worker webhook URL
+- run the local agent-server on `127.0.0.1:8788`
+- expose that runner with `cloudflared tunnel --url http://127.0.0.1:8788`
+- point the deployed Worker secret `SMOLPAWS_RUNNER_URL` at the tunnel URL
+
+This keeps GitHub talking to the real Cloudflare ingress, while Cloudflare talks back to your local runner through the tunnel.
+
+Important:
+
+- the deployed Worker already holds the GitHub App secrets in Cloudflare
+- the tunnel only needs to expose the local runner
+- if the tunnel dies, the deployed Worker will stop reaching your local runner until `SMOLPAWS_RUNNER_URL` is updated again
+
 - The notifications path marks threads as read after enqueueing. If a queue job fails and retries, it will not be re-enqueued by polling (but the queued message will still retry).
 - For private repos, the `smolpaws` user must have repo access or notifications will not be delivered.

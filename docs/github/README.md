@@ -128,6 +128,41 @@ npm run github:test
 
 This includes the Worker -> agent-server contract test and notifications-path coverage for issue-body mentions in repos where the GitHub App is not installed.
 
+## Recommended local test flow
+
+The real end-to-end GitHub test path we have actually used on this machine is:
+
+1. Keep the GitHub App webhook pointed at the deployed Worker domain.
+2. Start the local runner:
+
+```bash
+npm run runner:local
+```
+
+3. Expose the local runner:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8788
+```
+
+4. Update the deployed Worker secret `SMOLPAWS_RUNNER_URL` to the public tunnel URL.
+
+In this mode:
+
+- GitHub still talks to Cloudflare
+- Cloudflare then talks back to your laptop through the tunnel
+- the tunnel only works while the `cloudflared` process stays running
+- Cloudflare continues using the secrets already configured on the deployed Worker
+
+Quick checks:
+
+```bash
+curl http://127.0.0.1:8788/health
+curl https://<your-worker-domain>/health
+```
+
+This mode is preferred when Cloudflare already has the GitHub App secrets and you do not want to duplicate them into a local Worker dev setup.
+
 ### Required env vars
 
 - `LLM_PROFILE_ID` (optional if VS Code user settings already define `openhands.llm.profileId`)
