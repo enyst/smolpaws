@@ -14,3 +14,5 @@ Current docs:
 - [`github/README.md`](github/README.md) - GitHub ingress and runner ops notes
 - [`github/instructions.md`](github/instructions.md) - GitHub mention intake details
 - [`github/deployment-alternatives.md`](github/deployment-alternatives.md) - GitHub/runner deployment options
+- [`slack/README.md`](slack/README.md) - Slack app architecture and implementation plan
+- [`slack/instructions.md`](slack/instructions.md) - Slack app setup and local run notes
