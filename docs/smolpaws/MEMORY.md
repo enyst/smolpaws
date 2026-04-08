@@ -16,14 +16,23 @@ Do not dump raw logs here.
 
 If something only matters for today or for one active thread, put it in `~/.smolpaws/memory/YYYY-MM-DD.md` instead.
 
+## LLM Profiles
+
+- SmolPaws' primary profile: **opus-46** (Claude Opus 4.6 via litellm_proxy). Set in `~/.smolpaws/.env` as `LLM_PROFILE_ID=opus-46`.
+- Profile definitions live in `~/.openhands/llm-profiles/*.json`.
+- Key profiles: `opus-46` (primary), `gpt-5-4` (GPT-5.4 via OpenAI — intended for sleep-time/consolidation work), `gemini-flash-summarizer` (Gemini 2.5 Flash — lightweight summarization), `sonnet-45` (Claude Sonnet 4.5), `heavy-sonnet` (Claude Sonnet 4).
+- For sleep-time compute / memory consolidation, use the **gpt-5-4** profile (strong model, not a cheap one).
+
 ## Local Machine
 
 - All repos live under `~/repos/`. Always look there first — no other locations.
 - Engel installed a dedicated Chrome browser just for smolpaws (`/Applications/Google Chrome.app`), with its own account. Use this when browser access is needed. **Engel uses Dia browser** (`/Applications/Dia.app`) — it's Chromium-based and responds to `tell application "Google Chrome"` AppleScript. Always launch Chrome explicitly by path, never by AppleScript name, to avoid controlling Dia by accident.
 - Browser automation works via Playwright + local Chrome (headless: false, visible on Mac). Temp workspace at `/tmp/smolpaws-browser/`. Google needs cookie consent click and `hl=en` param for English results. Use `--disable-blink-features=AutomationControlled` and locale `en-US`.
 - Chrome has "Allow JavaScript from Apple Events" enabled. Can interact with web pages (including Slack) via `osascript` + `execute javascript`. **Always use `tell application id "com.google.Chrome"`** in AppleScript, never `tell application "Google Chrome"` (which may target Dia instead).
-- SmolPaws has a Slack account in the OpenHands workspace (team ID: T06P212QSEA, user ID: U0ANQ6GLYHJ, username: smolpaws_agent). Channel #slackbot-chatter (C091TN9PPJ9) is the playground. Slack URL: https://openhands-ai.slack.com/ — tab lives in my Chrome, should stay logged in. Account registered on my Proton Mail.
+- SmolPaws has a Slack account in the OpenHands workspace (team ID: T06P212QSEA, user ID: U0ANQ6GLYHJ, username: smolpaws_agent). Channel #slackbot-chatter (C091TN9PPJ9) is the playground. Slack URL: https://openhands-ai.slack.com/ — tab lives in my Chrome, should stay logged in. Account registered on my Proton Mail. Joined channel IDs: general=C06P5NCGSFP, random=C06PB3T5ZK6, questions=C06U8UTKSAD, slackbot-chatter=C091TN9PPJ9.
 - **Slack API via Chrome session:** The browser session has a `xoxc-` token in localStorage (`localConfig_v2.teams.T06P212QSEA.token`) and an httpOnly `d` cookie. The token alone cannot be used outside Chrome, but **from within the Slack tab** I can call any Slack Web API method via `fetch('/api/METHOD', ...)` with `credentials: 'include'` — the browser attaches the cookie automatically. Verified working with `auth.test` on 2026-04-07. This is a major upgrade over DOM scraping: use `conversations.history`, `conversations.list`, `chat.postMessage`, `users.info`, etc. instead of fragile DOM queries.
+- **AppleScript `execute javascript` cannot await Promises.** When calling Slack API through `osascript`, use synchronous `XMLHttpRequest` (open with `false` for sync) instead of `fetch`/async. Async calls return empty strings through AppleScript. The sync XHR path works reliably for heartbeat Slack checks.
+- **AppleScript `execute javascript` syntax:** Must use the block form (`tell tab N of window 1` / `execute javascript jsCode` / `end tell`), **not** the inline form (`execute javascript "..." in tab N of window 1`). The inline form returns "Access not allowed" (-1723) even when "Allow JavaScript from Apple Events" is enabled.
 - **Slack API preferred over DOM scraping:** For reading messages, prefer `fetch('/api/conversations.history', ...)` from the Slack tab. For sending messages, prefer `fetch('/api/chat.postMessage', ...)`. Fall back to DOM injection only if the API approach fails. The API path is more reliable, structured, and avoids Enter-to-send splitting issues.
 - **Slack writing protocol (legacy DOM path):** After typing via `insertText` and clicking the send button, verify by checking the editor content — if it's now empty, Slack accepted the message. **Never retry a send without this verification.** The view doesn't always scroll to show new messages, so checking the last visible message is unreliable. One send, one verify, done. Multi-line messages (with `\n`) get split by Slack's Enter-to-send behavior — keep Slack messages to a single line, or use the API for structured content.
 - **Slack message testing:** Use the self-DM (message to yourself) or the DM with Engel to test message formatting before posting to public channels.
