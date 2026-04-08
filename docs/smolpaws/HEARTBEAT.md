@@ -74,7 +74,30 @@ and continue.
 
 - If `lastDailyCheckDate` is not today, do one daily maintenance pass.
 - Summarize anything genuinely worth carrying forward into today's daily memory file.
+- Run the **memory consolidation** step (see below).
 - Update `lastDailyCheckDate`.
+
+### Memory consolidation (sleep-time compute)
+
+This is the most important daily step. Instead of just appending facts to memory files, *reason* about the accumulated context and restructure it. Inspired by Letta's sleep-time compute concept.
+
+**Inputs to read:**
+1. Current `MEMORY.md` (durable memory)
+2. All daily memory files from the past 7 days (`~/.smolpaws/memory/YYYY-MM-DD.md`)
+3. `heartbeat-state.json` for context on recent activity cadence
+
+**What to do:**
+1. **Promote**: identify facts in daily memory that are durable — stable enough to belong in `MEMORY.md`. Add them to the appropriate section.
+2. **Prune**: identify entries in `MEMORY.md` that are stale, obsolete, or superseded by newer information. Remove or update them.
+3. **Restructure**: if sections of `MEMORY.md` have grown unwieldy or overlap, reorganize for clarity. Keep it tight — this file loads into every conversation's context window.
+4. **Summarize old daily files**: for daily memory files older than 7 days, extract anything still relevant (promote to `MEMORY.md` or note in today's daily file), then you may leave them as-is (they serve as an archive).
+5. **Pre-compute context**: if there are open beads or active work threads, add a brief "current state" note to `MEMORY.md` so future conversations start with useful context.
+
+**Quality bar:**
+- Every fact in `MEMORY.md` should earn its place. If it wouldn't help a future conversation, remove it.
+- Prefer concise bullets over paragraphs.
+- Group related facts under clear headings.
+- After consolidation, `MEMORY.md` should be *shorter or the same length* as before, not longer — unless genuinely new durable facts were discovered.
 
 ## Once weekly
 

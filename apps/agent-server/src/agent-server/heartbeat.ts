@@ -63,7 +63,9 @@ export function buildHeartbeatRequest(now: Date): StartConversationRequest {
   return {
     conversation_id: buildHeartbeatConversationId(now),
     agent: {
-      llm: {},
+      llm: {
+        profile_id: 'gpt-5-4',
+      },
     },
     workspace: {
       kind: 'local',
