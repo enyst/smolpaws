@@ -59,12 +59,12 @@ and continue.
 
 1. **DMs first**: use `conversations.list` with `types=im`, then `conversations.history` for each DM with recent messages. Look for anything directed at smolpaws.
 2. **Thread replies**: check threads where smolpaws has recently posted for new replies. Use `conversations.history` to find recent messages by smolpaws (user `U0ANQ6GLYHJ`) that have `reply_count > 0` or `thread_ts`, then use `conversations.replies` to read the thread. This catches notifications that heartbeat would otherwise miss.
-3. **Mentions**: check channels smolpaws is a member of (`general`, `slackbot-chatter`, `questions`, `random`) via `conversations.history`. Look for `<@U0ANQ6GLYHJ>` in message text.
+3. **Mentions**: check channels smolpaws is a member of (`general`, `slackbot-chatter`, `questions`, `random`) via `conversations.history`. Look for direct mentions (`<@U0ANQ6GLYHJ>`) **and** broadcast mentions (`<!channel>`, `<!here>`, `<!everyone>`) in message text. After processing mentions, call `conversations.mark` with the latest message `ts` to clear the unread badge.
 4. **Interesting new content**: scan recent messages in joined channels. If there is something genuinely interesting — a user question smolpaws could help with, a discussion about agent infrastructure, or something relevant to OpenHands/SmolPaws — consider engaging.
    - If safe, on-topic, and smolpaws has something useful to say: respond via `chat.postMessage` or react via `reactions.add`.
    - If unsure or sensitive: log the message and concern in today's daily memory file for later discussion with Engel.
    - If nothing interesting or relevant: skip quietly.
-4. **Do not force engagement.** It is fine to read everything and say nothing. Only respond when smolpaws genuinely has something to add.
+5. **Do not force engagement.** It is fine to read everything and say nothing. Only respond when smolpaws genuinely has something to add.
 
 - Follow the Slack safety rules in `MEMORY.md`: never share private info publicly, never do anything wild or irreversible.
 - **Never mention @OpenHands** — it triggers the OpenHands Cloud bot loop.
