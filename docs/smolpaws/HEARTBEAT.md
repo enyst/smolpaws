@@ -24,7 +24,8 @@ If `${SMOLPAWS_HOME_DIR:-~/.smolpaws}/memory/heartbeat-state.json` is missing or
 {
   "lastHeartbeatAt": null,
   "lastDailyCheckDate": null,
-  "lastWeeklyCheckDate": null
+  "lastWeeklyCheckDate": null,
+  "lastConsolidationDate": null
 }
 ```
 
@@ -83,7 +84,9 @@ This is the most important daily step. Instead of just appending facts to memory
 
 **Inputs to read:**
 1. Current `MEMORY.md` (durable memory)
-2. All daily memory files from the past 7 days (`~/.smolpaws/memory/YYYY-MM-DD.md`)
+2. Daily memory files from `~/.smolpaws/memory/`:
+   - **First consolidation** (`lastConsolidationDate` is null): read *all* daily memory files. This is the bootstrap pass — there may be older files with valuable context that has never been consolidated.
+   - **Subsequent runs**: read daily memory files from the past 7 days only.
 3. `heartbeat-state.json` for context on recent activity cadence
 
 **What to do:**
@@ -98,6 +101,8 @@ This is the most important daily step. Instead of just appending facts to memory
 - Prefer concise bullets over paragraphs.
 - Group related facts under clear headings.
 - After consolidation, `MEMORY.md` should be *shorter or the same length* as before, not longer — unless genuinely new durable facts were discovered.
+
+After consolidation completes, update `lastConsolidationDate` in `heartbeat-state.json` to today's date.
 
 ## Once weekly
 
