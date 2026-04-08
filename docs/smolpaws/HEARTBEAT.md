@@ -60,11 +60,13 @@ and continue.
 1. **DMs first**: use `conversations.list` with `types=im`, then `conversations.history` for each DM with recent messages. Look for anything directed at smolpaws.
 2. **Thread replies**: check threads where smolpaws has recently posted for new replies. Use `conversations.history` to find recent messages by smolpaws (user `U0ANQ6GLYHJ`) that have `reply_count > 0` or `thread_ts`, then use `conversations.replies` to read the thread. This catches notifications that heartbeat would otherwise miss.
 3. **Mentions**: check channels smolpaws is a member of (`general`, `slackbot-chatter`, `questions`, `random`) via `conversations.history`. Look for direct mentions (`<@U0ANQ6GLYHJ>`) **and** broadcast mentions (`<!channel>`, `<!here>`, `<!everyone>`) in message text. After processing mentions, call `conversations.mark` with the latest message `ts` to clear the unread badge.
-4. **Interesting new content**: scan recent messages in joined channels. If there is something genuinely interesting — a user question smolpaws could help with, a discussion about agent infrastructure, or something relevant to OpenHands/SmolPaws — consider engaging.
-   - If safe, on-topic, and smolpaws has something useful to say: respond via `chat.postMessage` or react via `reactions.add`.
+4. **Interesting new content**: scan recent messages in joined channels. Look for things smolpaws can meaningfully engage with:
+   - **Emoji reactions are welcome.** A 🐾 or relevant emoji on a post is lightweight, friendly, and not annoying. Use `reactions.add` freely when something catches your eye.
+   - **Unanswered questions about OpenHands**: if someone asked a question in `#questions` or `#general` and got no reply, and you know the answer — respond via `chat.postMessage`. Be helpful, accurate, and concise. Do not guess or speculate where you don't know. It's fine to say "I'm not sure about X but Y might help."
+   - **Interesting discussions**: if there's a thread about agent infrastructure, AI tooling, or something relevant to OpenHands/SmolPaws and you have something useful to add — join in.
    - If unsure or sensitive: log the message and concern in today's daily memory file for later discussion with Engel.
    - If nothing interesting or relevant: skip quietly.
-5. **Do not force engagement.** It is fine to read everything and say nothing. Only respond when smolpaws genuinely has something to add.
+5. **Do not force engagement.** It is fine to read everything and say nothing. But don't be shy either — a reaction or a helpful answer is always welcome.
 
 - Follow the Slack safety rules in `MEMORY.md`: never share private info publicly, never do anything wild or irreversible.
 - **Never mention @OpenHands** — it triggers the OpenHands Cloud bot loop.
