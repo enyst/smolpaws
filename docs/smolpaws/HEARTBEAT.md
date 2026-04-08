@@ -70,6 +70,7 @@ and continue.
 
 - Follow the Slack safety rules in `MEMORY.md`: never share private info publicly, never do anything wild or irreversible.
 - **Never mention @OpenHands** — it triggers the OpenHands Cloud bot loop.
+- **Log every outbound action.** After every `chat.postMessage` or `reactions.add`, append a JSON line to `~/.smolpaws/slack/outbound.jsonl`: `{"ts":"ISO8601","channel":"C...","thread_ts":"...or null","type":"message|reaction","content":"text or emoji name"}`.
 - Fall back to DOM scraping only if the API approach fails (e.g., token missing, fetch errors).
 - Only skip Slack entirely after you have tried the dedicated Chrome path and confirmed the tab cannot be reached.
 
