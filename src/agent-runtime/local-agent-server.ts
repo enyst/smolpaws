@@ -91,6 +91,16 @@ function formatRetryableRunnerFetchError(error: unknown): string {
   return String(error);
 }
 
+function shouldStartFreshConversationAfterError(
+  errorCode: string | undefined,
+  errorMessage: string | undefined,
+): boolean {
+  if (errorCode === 'max_iterations_exceeded') {
+    return true;
+  }
+  return errorCode === 'llm_bad_request' && /budget_exceeded/i.test(errorMessage ?? '');
+}
+
 async function retryRunnerOperation<T>(
   baseUrl: string,
   operation: string,
@@ -276,11 +286,15 @@ export async function runLocalAgentServerAgent(
     if (
       firstAttempt.status === 'error' &&
       input.conversationId &&
-      firstAttempt.errorCode === 'max_iterations_exceeded'
+      shouldStartFreshConversationAfterError(firstAttempt.errorCode, firstAttempt.error)
     ) {
       logger.warn(
-        { scopeId: scope.scopeId, conversationId: input.conversationId },
-        'Reused conversation hit max iterations; starting a fresh conversation',
+        {
+          scopeId: scope.scopeId,
+          conversationId: input.conversationId,
+          errorCode: firstAttempt.errorCode,
+        },
+        'Reused conversation is exhausted; starting a fresh conversation',
       );
       return await executeConversationAttempt(
         baseUrl,
