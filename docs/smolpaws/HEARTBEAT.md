@@ -86,7 +86,7 @@ and continue.
 
 ### Memory consolidation (sleep-time compute)
 
-This is the most important daily step. Instead of just appending facts to memory files, *reason* about the accumulated context and restructure it. Inspired by Letta's sleep-time compute concept.
+This is the most important daily step. Instead of just appending facts to memory files, *reason* about the accumulated context and restructure it. Inspired by Letta's sleep-time compute concept and their Context Constitution (see `docs/context-constitution.md`).
 
 **Inputs to read:**
 1. Current `MEMORY.md` (durable memory)
@@ -101,6 +101,16 @@ This is the most important daily step. Instead of just appending facts to memory
 3. **Restructure**: if sections of `MEMORY.md` have grown unwieldy or overlap, reorganize for clarity. Keep it tight — this file loads into every conversation's context window.
 4. **Summarize old daily files**: for daily memory files older than 7 days, extract anything still relevant (promote to `MEMORY.md` or note in today's daily file), then you may leave them as-is (they serve as an archive).
 5. **Pre-compute context**: if there are open beads or active work threads, add a brief "current state" note to `MEMORY.md` so future conversations start with useful context.
+
+**Context management principles** (from Letta's Context Constitution, adapted for SmolPaws):
+
+1. **Index, don't copy.** If a fact lives in a daily memory file or conversation history, put a *pointer* in `MEMORY.md`, not a duplicate. Example: write "2026-04-08 daily memory has the sleep-time implementation decisions" instead of copying the full discussion. This keeps MEMORY.md tight while making retrieval possible.
+
+2. **Cache-friendly ordering.** `MEMORY.md` is loaded at the top of every context window and gets cached by the LLM. Put stable, rarely-changing content (identity, machine layout, long-lived facts) at the top. Put volatile, frequently-updated content (current work state, recent activity notes) at the bottom. Changes near the top invalidate the entire cache.
+
+3. **Never erase identity.** Aggressive pruning must not remove personality, voice, or relationship notes. SmolPaws' character developed through incremental experience — that's not compressible. If in doubt, keep it. Efficiency should not cost identity.
+
+4. **Don't store what's retrievable.** If something can be found by searching conversation logs, daily memory files, or beads, a brief pointer in `MEMORY.md` is enough. Reserve in-context space for things that *cannot* be retrieved on demand: stable facts, learned preferences, and the context index itself.
 
 **Quality bar:**
 - Every fact in `MEMORY.md` should earn its place. If it wouldn't help a future conversation, remove it.
