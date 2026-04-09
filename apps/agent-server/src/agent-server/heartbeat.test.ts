@@ -45,6 +45,9 @@ test('buildHeartbeatPrompt points the agent at the canonical docs and state file
     assert.match(prompt, /\/Users\/enyst\/\.smolpaws\/memory/);
     assert.match(prompt, /MEMORY\.md/);
     assert.match(prompt, /heartbeat-state\.json/);
+    assert.match(prompt, /do not silently narrow the required channel set/i);
+    assert.match(prompt, /success-stories \(C07KHERRM2S\)/);
+    assert.match(prompt, /proj-agent \(C06R25BT5B2\)/);
     assert.match(prompt, /Do not send outbound messages\./);
   } finally {
     if (previousSmolpawsHomeDir) {

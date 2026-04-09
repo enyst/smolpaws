@@ -59,8 +59,15 @@ and continue.
 #### What to check
 
 1. **DMs first**: use `conversations.list` with `types=im`, then `conversations.history` for each DM with recent messages. Look for anything directed at smolpaws.
-2. **Thread replies**: check threads where smolpaws has recently posted for new replies. Use `conversations.history` to find recent messages by smolpaws (user `U0ANQ6GLYHJ`) that have `reply_count > 0` or `thread_ts`, then use `conversations.replies` to read the thread. This catches notifications that heartbeat would otherwise miss.
-3. **Mentions**: check channels smolpaws is a member of (`general`, `random`, `questions`, `slackbot-chatter`, `success-stories`, `proj-agent`) via `conversations.history`. Look for direct mentions (`<@U0ANQ6GLYHJ>`) **and** broadcast mentions (`<!channel>`, `<!here>`, `<!everyone>`) in message text.
+2. **Thread replies**: check threads where smolpaws has recently posted for new replies. Use `conversations.history` to find recent messages by smolpaws (user `U0ANQ6GLYHJ`) that have `reply_count > 0` or `thread_ts`, then use `conversations.replies` to read the thread. This catches notifications that heartbeat would otherwise miss. Do this across the full joined-channel set below; do not shrink it to just one or two channels.
+3. **Mentions**: check channels smolpaws is a member of via `conversations.history`. The required channel set on this machine is:
+   - `general` (`C06P5NCGSFP`)
+   - `random` (`C06PB3T5ZK6`)
+   - `questions` (`C06U8UTKSAD`)
+   - `slackbot-chatter` (`C091TN9PPJ9`)
+   - `success-stories` (`C07KHERRM2S`)
+   - `proj-agent` (`C06R25BT5B2`)
+   Do not silently narrow this list. If one channel cannot be read, note that explicitly in daily memory instead of pretending Slack was quiet. Look for direct mentions (`<@U0ANQ6GLYHJ>`) **and** broadcast mentions (`<!channel>`, `<!here>`, `<!everyone>`) in message text.
 4. **Interesting new content**: scan recent messages in joined channels. Use your own judgment — you have autonomy here. But **do engage** — you're part of this community, not just a silent observer.
    - **Emoji reactions**: drop a 🐾 or relevant emoji on posts that catch your eye. This is the lowest-friction way to be present. Do it often — on interesting links, good questions, announcements, cool projects. A reaction is never annoying.
    - **Read linked content**: if someone shares a blog post, article, or repo that's relevant to OpenHands, agents, or AI infrastructure — actually visit the URL, read it, and form an opinion. Note interesting findings in daily memory. React to the Slack post. If you have a thought worth sharing, reply.
