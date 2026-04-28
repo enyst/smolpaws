@@ -19,6 +19,7 @@ import {
   WHATSAPP_DIR,
   DATA_DIR,
   TRIGGER_PATTERN,
+  MAIN_GROUP_FOLDER,
 } from './config.js';
 import { RegisteredGroup, Session, NewMessage } from './types.js';
 import { initDatabase, storeMessage, storeChatMetadata, getNewMessages, getMessagesSince, updateChatName, getLastGroupSync, setLastGroupSync } from './db.js';
@@ -52,6 +53,7 @@ let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 
 const guards = new ConnectionGuards();
+let startupNotified = false;
 
 async function setTyping(jid: string, isTyping: boolean): Promise<void> {
   try {
@@ -133,6 +135,11 @@ function isImageMedia(mime: string | undefined): boolean {
   return !!mime && mime.startsWith('image/');
 }
 
+/** Returns true when the message carries an audio file. */
+function isAudioMedia(mime: string | undefined): boolean {
+  return !!mime && (mime.startsWith('audio/') || mime.startsWith('application/ogg'));
+}
+
 /** Download media from a WhatsApp message and save to disk. */
 async function downloadAndSaveMedia(
   msg: WAMessage,
@@ -205,6 +212,7 @@ async function processMessage(msg: NewMessage): Promise<void> {
   let documentCount = 0;
   for (const m of missedMessages) {
     const mediaAttr = m.media_path && isImageMedia(m.media_type) ? ' has_image="true"' : '';
+    const audioAttr = m.media_path && isAudioMedia(m.media_type) ? ` has_audio="true" audio_path="${escapeXml(m.media_path)}"` : '';
     const documentAttr = m.media_path && isReadableDocumentMedia(m.media_type) ? ' has_document="true"' : '';
     let attachmentText = '';
     if (m.media_path && isReadableDocumentMedia(m.media_type)) {
@@ -219,7 +227,7 @@ async function processMessage(msg: NewMessage): Promise<void> {
         attachmentText = `\n<attachment type="${escapeXml(m.media_type ?? '')}" unreadable="true"></attachment>`;
       }
     }
-    lines.push(`<message sender="${escapeXml(m.sender_name)}" time="${m.timestamp}"${mediaAttr}${documentAttr}>${escapeXml(m.content)}${attachmentText}</message>`);
+    lines.push(`<message sender="${escapeXml(m.sender_name)}" time="${m.timestamp}"${mediaAttr}${audioAttr}${documentAttr}>${escapeXml(m.content)}${attachmentText}</message>`);
   }
   const prompt = `<messages>\n${lines.join('\n')}\n</messages>`;
 
@@ -387,6 +395,16 @@ async function connectWhatsApp(): Promise<void> {
       }
       if (guards.tryStartMessageLoop()) {
         startMessageLoop();
+      }
+      // Notify the main chat once per process start
+      if (!startupNotified) {
+        startupNotified = true;
+        const mainJid = Object.entries(registeredGroups)
+          .find(([, g]) => g.folder === MAIN_GROUP_FOLDER)?.[0];
+        if (mainJid) {
+          sendMessage(mainJid, `${ASSISTANT_NAME}: 🐾 I'm up.`)
+            .catch(err => logger.warn({ err }, 'Startup notification failed'));
+        }
       }
     }
   });
