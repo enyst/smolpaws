@@ -24,4 +24,10 @@ config/
 .idea/
 .vscode/
 
+# Generated binaries
+apps/agent-server/bin/
+
+# Group working directories (private runtime state)
+groups/
+
 agents-sdk-docs
