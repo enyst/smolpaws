@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  DEFAULT_HEARTBEAT_CRON,
   buildHeartbeatConversationId,
   buildHeartbeatPaths,
   buildHeartbeatPrompt,
@@ -12,11 +13,12 @@ import {
   resolveHeartbeatRunnerBaseUrl,
 } from './heartbeat.js';
 
-test('buildHeartbeatConversationId creates a unique conversation per heartbeat run', () => {
+test('buildHeartbeatConversationId creates one conversation per local day', () => {
   assert.equal(
     buildHeartbeatConversationId(new Date('2026-03-24T15:16:00')),
-    'heartbeat-smolpaws-2026-03-24-15-16-00',
+    'heartbeat-smolpaws-2026-03-24',
   );
+  assert.equal(DEFAULT_HEARTBEAT_CRON, '0 * * * *');
 });
 
 test('buildHeartbeatRequest uses the canonical conversation path without outbound messaging', () => {
@@ -24,7 +26,7 @@ test('buildHeartbeatRequest uses the canonical conversation path without outboun
   const request = buildHeartbeatRequest(new Date('2026-03-24T15:16:00'));
   const initialText = request.initial_message?.content?.[0];
 
-  assert.equal(request.conversation_id, 'heartbeat-smolpaws-2026-03-24-15-16-00');
+  assert.equal(request.conversation_id, 'heartbeat-smolpaws-2026-03-24');
   assert.equal(request.workspace?.working_dir, 'smolpaws');
   assert.equal(request.max_iterations, 500);
   assert.equal(request.smolpaws?.ingress, 'heartbeat');
@@ -36,13 +38,17 @@ test('buildHeartbeatRequest uses the canonical conversation path without outboun
 
 test('buildHeartbeatPrompt points the agent at the canonical docs and state files', () => {
   const previousSmolpawsHomeDir = process.env.SMOLPAWS_HOME_DIR;
+  const previousConversationsDir = process.env.SMOLPAWS_CONVERSATIONS_DIR;
   try {
     delete process.env.SMOLPAWS_HOME_DIR;
+    delete process.env.SMOLPAWS_CONVERSATIONS_DIR;
     const paths = buildHeartbeatPaths('/Users/enyst');
     const prompt = buildHeartbeatPrompt(paths, new Date('2026-03-24T15:16:00'));
 
     assert.match(prompt, /\/Users\/enyst\/repos\/smolpaws\/docs\/smolpaws/);
     assert.match(prompt, /\/Users\/enyst\/\.smolpaws\/memory/);
+    assert.match(prompt, /\/Users\/enyst\/\.openhands\/conversations/);
+    assert.match(prompt, /Conversation archive directory:/);
     assert.match(prompt, /MEMORY\.md/);
     assert.match(prompt, /heartbeat-state\.json/);
     assert.match(prompt, /do not silently narrow the required channel set/i);
@@ -54,6 +60,26 @@ test('buildHeartbeatPrompt points the agent at the canonical docs and state file
       process.env.SMOLPAWS_HOME_DIR = previousSmolpawsHomeDir;
     } else {
       delete process.env.SMOLPAWS_HOME_DIR;
+    }
+    if (previousConversationsDir) {
+      process.env.SMOLPAWS_CONVERSATIONS_DIR = previousConversationsDir;
+    } else {
+      delete process.env.SMOLPAWS_CONVERSATIONS_DIR;
+    }
+  }
+});
+
+test('buildHeartbeatPaths honors an explicit conversation archive override', () => {
+  const previousConversationsDir = process.env.SMOLPAWS_CONVERSATIONS_DIR;
+  try {
+    process.env.SMOLPAWS_CONVERSATIONS_DIR = '/tmp/smolpaws-heartbeats';
+    const paths = buildHeartbeatPaths('/Users/enyst');
+    assert.equal(paths.conversationArchiveDir, '/tmp/smolpaws-heartbeats');
+  } finally {
+    if (previousConversationsDir) {
+      process.env.SMOLPAWS_CONVERSATIONS_DIR = previousConversationsDir;
+    } else {
+      delete process.env.SMOLPAWS_CONVERSATIONS_DIR;
     }
   }
 });
