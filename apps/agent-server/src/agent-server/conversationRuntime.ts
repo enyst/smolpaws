@@ -1044,6 +1044,11 @@ export function createConversationRuntime({
       const existing = conversations.get(requestedId);
       if (existing) {
         await refreshConversationSmolpawsConfig(existing, request.smolpaws);
+        if (request.confirmation_policy) {
+          await applyConfirmationPolicy(existing, {
+            policy: request.confirmation_policy,
+          });
+        }
         return { record: existing, isNew: false };
       }
     }
@@ -1316,6 +1321,14 @@ export function createConversationRuntime({
     const createRequest = buildTurnSubmissionCreateRequest(args);
     const existing = conversations.get(args.conversationId);
     if (existing) {
+      if (createRequest) {
+        await refreshConversationSmolpawsConfig(existing, createRequest.smolpaws);
+        if (createRequest.confirmation_policy) {
+          await applyConfirmationPolicy(existing, {
+            policy: createRequest.confirmation_policy,
+          });
+        }
+      }
       if (
         !createRequest ||
         !shouldRecoverStaleSmolpawsConversation(createRequest) ||

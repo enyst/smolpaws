@@ -1,12 +1,15 @@
 import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
+import { existsSync } from "node:fs";
 import Fastify, {
   type FastifyError,
   type FastifyInstance,
   type FastifyReply,
   type FastifyRequest,
 } from "fastify";
+import { createRequire } from "module";
+import path from "path";
 import { createAgentServerDeps, type AgentServerDeps } from "./dependencies.js";
 import { assertSafeRunnerBind, resolveRunnerHost } from "../runner/workspacePolicy.js";
 import { registerServerDetailsRoutes } from "./serverDetailsRouter.js";
@@ -19,6 +22,30 @@ import { registerEventRoutes } from "./eventRouter.js";
 import { registerActivityRoutes } from "./activityRouter.js";
 
 export const AGENT_SERVER_BODY_LIMIT_BYTES = 25 * 1024 * 1024;
+const require = createRequire(import.meta.url);
+
+function resolveInstalledPackageVersion(packageName: string): string {
+  let currentDir = path.dirname(require.resolve(packageName));
+  while (true) {
+    const manifestPath = path.join(currentDir, "package.json");
+    if (existsSync(manifestPath)) {
+      const manifest = require(manifestPath) as {
+        name?: string;
+        version?: string;
+      };
+      if (manifest.name === packageName && typeof manifest.version === "string") {
+        return manifest.version;
+      }
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      throw new Error(`package_manifest_not_found:${packageName}`);
+    }
+    currentDir = parentDir;
+  }
+}
+
+const AGENT_SDK_VERSION = resolveInstalledPackageVersion("@smolpaws/agent-sdk");
 
 function registerErrorHandler(
   app: FastifyInstance,
@@ -86,6 +113,7 @@ export async function createAgentServerApp(
     bodyLimit: AGENT_SERVER_BODY_LIMIT_BYTES,
     logger: true,
   }).withTypeProvider<TypeBoxTypeProvider>();
+  app.log.info({ agentSdkVersion: AGENT_SDK_VERSION }, "Loaded @smolpaws/agent-sdk");
   await app.register(websocket);
   await app.register(multipart);
 

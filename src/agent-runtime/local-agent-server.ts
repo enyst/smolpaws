@@ -181,6 +181,17 @@ async function monitorConversationTurn(options: {
     outboundMessages.push(...outbound);
 
     if (TERMINAL_STATUSES.has(status.status as TurnTerminalStatus)) {
+      if (status.status === 'waiting_for_confirmation') {
+        return {
+          status: 'error',
+          result: null,
+          conversationId: submitResult.conversation_id,
+          error:
+            'Runner requested confirmation, but SmolPaws clients cannot surface confirmation prompts.',
+          errorCode: 'waiting_for_confirmation',
+          ...(outboundMessages.length ? { outboundMessages } : {}),
+        };
+      }
       const result = await retryRunnerOperation(baseUrl, 'load turn result', () =>
         getTurnResult({
           baseUrl,

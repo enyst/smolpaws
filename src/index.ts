@@ -11,6 +11,7 @@ import pino from 'pino';
 import crypto from 'crypto';
 import { exec } from 'child_process';
 import fs from 'fs';
+import { createRequire } from 'module';
 import path from 'path';
 
 import {
@@ -40,6 +41,30 @@ import { isReadableDocumentMedia, readDocumentText } from './document-text.js';
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MEDIA_DIR = path.join(WHATSAPP_DIR, 'media');
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB cap for inline images
+const require = createRequire(import.meta.url);
+
+function resolveInstalledPackageVersion(packageName: string): string {
+  let currentDir = path.dirname(require.resolve(packageName));
+  while (true) {
+    const manifestPath = path.join(currentDir, 'package.json');
+    if (fs.existsSync(manifestPath)) {
+      const manifest = require(manifestPath) as {
+        name?: string;
+        version?: string;
+      };
+      if (manifest.name === packageName && typeof manifest.version === 'string') {
+        return manifest.version;
+      }
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      throw new Error(`package_manifest_not_found:${packageName}`);
+    }
+    currentDir = parentDir;
+  }
+}
+
+const AGENT_SDK_VERSION = resolveInstalledPackageVersion('@smolpaws/agent-sdk');
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -471,6 +496,7 @@ async function startMessageLoop(): Promise<void> {
 async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
+  logger.info({ agentSdkVersion: AGENT_SDK_VERSION }, 'Loaded @smolpaws/agent-sdk');
   loadState();
   await connectWhatsApp();
 }
