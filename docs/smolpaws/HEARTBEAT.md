@@ -12,6 +12,7 @@ Default schedule on this machine is once per hour. Reuse one heartbeat conversat
 - Do not send WhatsApp messages or DM Engel unless something is genuinely urgent.
 - Slack engagement (reactions, replies to community questions) is **encouraged** — see the Slack section below.
 - If nothing needs attention, make only the smallest state updates and finish quietly.
+- **Speak a brief summary when finishing.** At the end of the heartbeat, use `say -v "Evan (Enhanced)"` to speak a one-or-two sentence summary of what you did or found. Keep it short and useful — e.g. "Heartbeat done. Slack was quiet, memory consolidated, no urgent beads." or "Heartbeat done. Found two new threads in proj-agent-canvas, reacted to a question in questions channel." If nothing happened, just say so.
 
 ## Canonical heartbeat files
 
