@@ -6,6 +6,7 @@ import {
   buildConversationId,
   checkAccess,
   GuestRateLimiter,
+  MentionedThreadTracker,
   MessageDeduplicator,
   replyThreadTs,
   stripBotMention,
@@ -23,6 +24,7 @@ const logger = pino({
 const SLACK_MAX_LENGTH = 3900;
 const dedup = new MessageDeduplicator();
 const guestLimiter = new GuestRateLimiter();
+const mentionedThreads = new MentionedThreadTracker();
 
 const app = new App({
   token: config.botToken,
@@ -114,6 +116,13 @@ async function handleSlackEvent(ctx: SlackEventContext): Promise<void> {
     return;
   }
 
+  // Track channel threads after access check passes so denied mentions
+  // don't open the thread for follow-ups.
+  if (!ctx.isDm) {
+    const threadRoot = ctx.threadTs ?? ctx.ts;
+    mentionedThreads.track(threadRoot);
+  }
+
   const conversationId = buildConversationId(ctx);
   const threadTs = replyThreadTs(ctx);
 
@@ -193,17 +202,22 @@ app.event('message', async ({ event, context }) => {
   if (!botUserId) return;
   const msg = event as GenericMessageEvent;
 
-  // Only handle DMs — channel messages use app_mention
-  if (msg.channel_type !== 'im') return;
   // Skip bot messages, self-messages, edits, and subtypes
   if (msg.subtype) return;
   if (msg.bot_id) return;
   if (!msg.user) return;
   if (msg.user === botUserId) return;
 
+  const isDm = msg.channel_type === 'im';
+
+  // For channel messages: only process thread replies in mentioned threads
+  if (!isDm) {
+    if (!msg.thread_ts || !mentionedThreads.isTracked(msg.thread_ts)) return;
+  }
+
   const teamId = context.teamId;
   if (!teamId) {
-    logger.warn('DM message event missing team context');
+    logger.warn('message event missing team context');
     return;
   }
 
@@ -214,7 +228,7 @@ app.event('message', async ({ event, context }) => {
     ts: msg.ts,
     threadTs: msg.thread_ts,
     text: msg.text ?? '',
-    isDm: true,
+    isDm,
     botUserId,
   };
 

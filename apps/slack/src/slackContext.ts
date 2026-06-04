@@ -100,6 +100,29 @@ export class GuestRateLimiter {
   }
 }
 
+const MENTIONED_THREADS_MAX = 1000;
+
+export class MentionedThreadTracker {
+  private threads = new Set<string>();
+
+  track(threadTs: string): void {
+    // Delete first so re-tracking refreshes insertion order.
+    // Set.add on an existing value is a no-op for ordering.
+    this.threads.delete(threadTs);
+    this.threads.add(threadTs);
+    if (this.threads.size > MENTIONED_THREADS_MAX) {
+      const iter = this.threads.values();
+      for (let i = 0; i < MENTIONED_THREADS_MAX / 2; i++) {
+        this.threads.delete(iter.next().value as string);
+      }
+    }
+  }
+
+  isTracked(threadTs: string): boolean {
+    return this.threads.has(threadTs);
+  }
+}
+
 const DEDUP_TTL_MS = 60_000;
 
 export class MessageDeduplicator {
