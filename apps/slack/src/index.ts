@@ -6,7 +6,9 @@ import {
   GuestRateLimiter,
   MentionedThreadTracker,
   MessageDeduplicator,
+  isThreadContextMessageSubtype,
   type SlackEventContext,
+  type ThreadMessage,
 } from './slackContext.js';
 import { dispatchToAgentServer } from './agentServerClient.js';
 import { handleSlackEvent, splitMessage, type SlackDeps } from './slackHandler.js';
@@ -46,6 +48,22 @@ async function addReaction(channel: string, timestamp: string, name: string): Pr
   await app.client.reactions.add({ channel, timestamp, name });
 }
 
+async function fetchThreadMessages(channel: string, threadTs: string): Promise<ThreadMessage[]> {
+  const result = await app.client.conversations.replies({
+    channel,
+    ts: threadTs,
+    limit: 50,
+  });
+  if (!result.messages) return [];
+  return result.messages
+    .filter((m) =>
+      (m.user || m.bot_id || m.username) &&
+      m.text &&
+      m.ts &&
+      isThreadContextMessageSubtype(m.subtype))
+    .map((m) => ({ user: m.user ?? m.bot_id ?? m.username!, text: m.text!, ts: m.ts! }));
+}
+
 const deps: SlackDeps = {
   config,
   dedup,
@@ -54,6 +72,7 @@ const deps: SlackDeps = {
   logger,
   postMessage,
   addReaction,
+  fetchThreadMessages,
   dispatch: dispatchToAgentServer,
 };
 

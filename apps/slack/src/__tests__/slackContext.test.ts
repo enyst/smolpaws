@@ -3,7 +3,10 @@ import test from 'node:test';
 import {
   buildConversationId,
   checkAccess,
+  formatThreadContext,
   GuestRateLimiter,
+  isPriorSlackTs,
+  isThreadContextMessageSubtype,
   MentionedThreadTracker,
   MessageDeduplicator,
   replyThreadTs,
@@ -240,4 +243,99 @@ test('MentionedThreadTracker: re-tracking refreshes insertion order', () => {
   assert.equal(t.isTracked('thread-0'), true);
   // thread-1 was oldest after refresh — should be evicted
   assert.equal(t.isTracked('thread-1'), false);
+});
+
+// --- formatThreadContext ---
+
+test('formatThreadContext: returns empty string when no prior messages', () => {
+  const messages = [{ user: 'U1', text: 'hello', ts: '100.001' }];
+  assert.equal(formatThreadContext(messages, '100.001', 'U0BOT'), '');
+});
+
+test('formatThreadContext: formats prior messages with user mentions', () => {
+  const messages = [
+    { user: 'U1', text: 'What is OpenHands?', ts: '100.001' },
+    { user: 'U2', text: 'It is an AI agent platform', ts: '100.002' },
+    { user: 'U1', text: '@smolpaws can you help?', ts: '100.003' },
+  ];
+  const result = formatThreadContext(messages, '100.003', 'U0BOT');
+  assert.ok(result.startsWith('[Thread context]'));
+  assert.ok(result.includes('<@U1>: What is OpenHands?'));
+  assert.ok(result.includes('<@U2>: It is an AI agent platform'));
+  assert.ok(result.endsWith('[Current message]\n'));
+});
+
+test('formatThreadContext: labels bot messages as smolpaws', () => {
+  const messages = [
+    { user: 'U1', text: 'help me', ts: '100.001' },
+    { user: 'U0BOT', text: 'Sure, what do you need?', ts: '100.002' },
+    { user: 'U1', text: 'more help', ts: '100.003' },
+  ];
+  const result = formatThreadContext(messages, '100.003', 'U0BOT');
+  assert.ok(result.includes('smolpaws: Sure, what do you need?'));
+  assert.ok(!result.includes('<@U0BOT>'));
+});
+
+test('formatThreadContext: excludes current and future messages from context', () => {
+  const messages = [
+    { user: 'U1', text: 'first message', ts: '100.001' },
+    { user: 'U1', text: 'current message', ts: '100.002' },
+    { user: 'U1', text: 'future message', ts: '100.003' },
+  ];
+  const result = formatThreadContext(messages, '100.002', 'U0BOT');
+  assert.ok(result.includes('first message'));
+  assert.ok(!result.includes('current message'));
+  assert.ok(!result.includes('future message'));
+});
+
+test('formatThreadContext: preserves microsecond ordering without float parsing', () => {
+  const messages = [
+    { user: 'U1', text: 'earlier', ts: '1717200000.000199' },
+    { user: 'U1', text: 'current', ts: '1717200000.000200' },
+    { user: 'U1', text: 'later', ts: '1717200000.000201' },
+  ];
+  const result = formatThreadContext(messages, '1717200000.000200', 'U0BOT');
+  assert.ok(result.includes('earlier'));
+  assert.ok(!result.includes('current'));
+  assert.ok(!result.includes('later'));
+});
+
+test('isPriorSlackTs: compares same-second timestamps by full fractional precision', () => {
+  assert.equal(isPriorSlackTs('100.9', '100.10'), false);
+  assert.equal(isPriorSlackTs('100.000009', '100.000010'), true);
+  assert.equal(isPriorSlackTs('1717200000.12345678', '1717200000.1234568'), true);
+  assert.equal(isPriorSlackTs('1717200000.1234568', '1717200000.12345678'), false);
+});
+
+test('isThreadContextMessageSubtype: keeps conversational subtypes and drops system ones', () => {
+  assert.equal(isThreadContextMessageSubtype(undefined), true);
+  assert.equal(isThreadContextMessageSubtype('thread_broadcast'), true);
+  assert.equal(isThreadContextMessageSubtype('file_share'), true);
+  assert.equal(isThreadContextMessageSubtype('me_message'), true);
+  assert.equal(isThreadContextMessageSubtype('channel_join'), false);
+  assert.equal(isThreadContextMessageSubtype('pinned_item'), false);
+  assert.equal(isThreadContextMessageSubtype('tombstone'), false);
+});
+
+test('formatThreadContext: leaves non-user identifiers unwrapped', () => {
+  const messages = [
+    { user: 'github-actions', text: 'CI passed', ts: '100.001' },
+    { user: 'B123BOT', text: 'release automation', ts: '100.002' },
+    { user: 'U1', text: 'current', ts: '100.003' },
+  ];
+  const result = formatThreadContext(messages, '100.003', 'U0BOT');
+  assert.ok(result.includes('github-actions: CI passed'));
+  assert.ok(result.includes('B123BOT: release automation'));
+  assert.ok(!result.includes('<@github-actions>'));
+  assert.ok(!result.includes('<@B123BOT>'));
+});
+
+test('formatThreadContext: rewrites bot mentions in prior text', () => {
+  const messages = [
+    { user: 'U1', text: '<@U0BOT> can you help?', ts: '100.001' },
+    { user: 'U2', text: 'current', ts: '100.002' },
+  ];
+  const result = formatThreadContext(messages, '100.002', 'U0BOT');
+  assert.ok(result.includes('@smolpaws can you help?'));
+  assert.ok(!result.includes('<@U0BOT> can you help?'));
 });
