@@ -366,6 +366,96 @@ async function sendMessage(jid: string, text: string): Promise<void> {
   }
 }
 
+const VOICE_OUTBOX = path.join(WHATSAPP_DIR, 'voice-outbox.jsonl');
+
+/**
+ * Drain the voice outbox: atomically rename the JSONL file to a processing
+ * snapshot, then send each entry. Failed entries are requeued.
+ * Each line: {"jid":"...","oggPath":"/path/to/file.ogg"}
+ * The agent writes entries here from terminal; the router picks them up.
+ */
+async function drainVoiceOutbox(): Promise<void> {
+  if (!fs.existsSync(VOICE_OUTBOX)) return;
+
+  const processingPath = VOICE_OUTBOX + '.processing';
+
+  // Atomic rename — new writes go to the original path, we process the snapshot
+  try {
+    fs.renameSync(VOICE_OUTBOX, processingPath);
+  } catch { return; }
+
+  let raw: string;
+  try {
+    raw = (await fs.promises.readFile(processingPath, 'utf-8')).trim();
+  } catch {
+    return;
+  }
+  if (!raw) {
+    try { fs.unlinkSync(processingPath); } catch {}
+    return;
+  }
+
+  const failed: string[] = [];
+
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+
+    let entry: { jid: string; oggPath: string };
+    try {
+      entry = JSON.parse(line) as { jid: string; oggPath: string };
+    } catch (err) {
+      logger.warn({ err, line }, 'Discarding malformed voice outbox entry');
+      continue;
+    }
+
+    if (!entry.jid || !entry.oggPath || !fs.existsSync(entry.oggPath)) continue;
+
+    const ok = await sendVoiceNote(entry.jid, entry.oggPath);
+    if (ok) {
+      try { fs.unlinkSync(entry.oggPath); } catch {}
+    } else {
+      failed.push(line);
+    }
+  }
+
+  // Requeue failed entries
+  if (failed.length > 0) {
+    fs.appendFileSync(VOICE_OUTBOX, failed.join('\n') + '\n');
+    logger.warn({ count: failed.length }, 'Requeued failed voice outbox entries');
+  }
+
+  try { fs.unlinkSync(processingPath); } catch {}
+}
+
+async function sendVoiceNote(jid: string, oggPath: string): Promise<boolean> {
+  const targetJid = resolveOutboundChatJid(jid, sock.user);
+  const rewritten = targetJid !== jid;
+
+  try {
+    const audio = await fs.promises.readFile(oggPath);
+    const sent = await sock.sendMessage(targetJid, {
+      audio,
+      mimetype: 'audio/ogg; codecs=opus',
+      ptt: true,
+    });
+    logger.info(
+      {
+        requestedJid: jid,
+        targetJid,
+        rewritten,
+        remoteJid: sent?.key?.remoteJid,
+        messageId: sent?.key?.id,
+        size: audio.length,
+      },
+      'Voice note sent',
+    );
+    return true;
+  } catch (err) {
+    logger.error({ requestedJid: jid, targetJid, rewritten, err }, 'Failed to send voice note');
+    return false;
+  }
+}
+
 async function connectWhatsApp(): Promise<void> {
   const authDir = path.join(WHATSAPP_DIR, 'auth');
   fs.mkdirSync(authDir, { recursive: true });
@@ -489,6 +579,13 @@ async function startMessageLoop(): Promise<void> {
     } catch (err) {
       logger.error({ err }, 'Error in message loop');
     }
+    // Drain voice outbox — agent drops OGG files here for the router to send
+    try {
+      await drainVoiceOutbox();
+    } catch (err) {
+      logger.error({ err }, 'Error draining voice outbox');
+    }
+
     await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
   }
 }
