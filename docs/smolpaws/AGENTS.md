@@ -13,6 +13,6 @@ Operational rules (working style, PRs, beads, agent mail, etc.) live in the root
 | `USER.md` | About Engel |
 | `TOOLS.md` | Local machine layout, commands, browser notes |
 | `MEMORY.md` | Stub pointing to private durable memory at `~/.smolpaws/memory/` |
-| `HEARTBEAT.md` | Heartbeat protocol — Slack, beads, memory consolidation |
+| `HEARTBEAT.md` | Heartbeat protocol — Slack, beads, dreaming |
 | `BOOT.md` | Reserved for future startup hooks |
 | `BOOTSTRAP.md` | Reserved for first-run identity ritual |
