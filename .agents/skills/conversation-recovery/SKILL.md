@@ -28,13 +28,17 @@ Use this skill when a new conversation starts after the previous one ended abrup
 
 ### 1. Find the old conversation
 
+There are **three sources** to check, in order of completeness:
+
+#### Source A: Conversation event files (richest — agent actions, tool calls, full context)
+
 Conversations live at `~/.openhands/conversations/<conversation-id>/`. Each has:
 - `events.jsonl` — full event log (can be thousands of lines)
 - `meta.json` — scope, ingress, and task metadata
 - `state.json` — final agent state
-- `turns.json` — turn boundaries
+- `turns.json` — turn boundaries with user messages (survives agent handoffs)
 
-If you know the conversation ID (e.g. from a WhatsApp message or scope context), go directly. Otherwise, find the most recent conversation for this scope:
+**Important:** When a conversation is handed off to a new agent (new turn), the new agent's events replace the old ones in `events.jsonl`. But `turns.json` preserves ALL turns including the previous agent's user messages. Always check `turns.json` for the full history.
 
 ```bash
 # Find recent conversations by modification time
@@ -42,7 +46,46 @@ ls -lt ~/.openhands/conversations/ | head -10
 
 # Or search by scope in meta.json
 grep -rl '"scope_id": "main"' ~/.openhands/conversations/*/meta.json | head -5
+
+# Check which conversation belongs to which group
+cat ~/repos/smolpaws/data/sessions.json
 ```
+
+#### Source B: WhatsApp message database (all messages, both directions, never truncated)
+
+The WhatsApp DB at `~/.smolpaws/whatsapp/messages.db` stores ALL messages — user messages AND agent responses — for every registered group. This is the **most reliable source** when agent events have been lost.
+
+```bash
+# Get the last 50 messages in a specific group
+sqlite3 ~/.smolpaws/whatsapp/messages.db "
+  SELECT sender_name, substr(content, 1, 300), timestamp
+  FROM messages
+  WHERE chat_jid = '<GROUP_JID>'
+  ORDER BY timestamp DESC
+  LIMIT 50;
+"
+
+# Search for specific content across all chats
+sqlite3 ~/.smolpaws/whatsapp/messages.db "
+  SELECT sender_name, substr(content, 1, 200), timestamp
+  FROM messages
+  WHERE content LIKE '%search term%'
+  ORDER BY timestamp DESC
+  LIMIT 10;
+"
+```
+
+Known group JIDs (from `data/registered_groups.json`):
+- Main: `259279391080479@lid`
+- Hunting: `120363425888191045@g.us`
+- smolpaws chat: `120363427179107779@g.us`
+- OpenHands: `120363426327189600@g.us`
+
+Agent messages have `sender_name` = the group JID (e.g. `120363425888191045`). User messages have the user's WhatsApp name.
+
+#### Source C: Daily memory files and durable memory
+
+If the conversation produced memory entries, check `~/.smolpaws/memory/YYYY-MM-DD.md` for the relevant date(s) and `~/.smolpaws/memory/MEMORY.md` for promoted facts.
 
 ### 2. Extract the last N events
 
