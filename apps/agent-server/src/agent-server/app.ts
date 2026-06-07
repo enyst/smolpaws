@@ -133,6 +133,17 @@ export async function createAgentServerApp(
 export async function startAgentServer(
   deps: AgentServerDeps = createAgentServerDeps(),
 ): Promise<void> {
+  // Load provider secrets from macOS Keychain before anything else
+  try {
+    const { loadKeychainSecrets } = await import('../../../../src/shared/keychain.js');
+    const loaded = await loadKeychainSecrets();
+    if (loaded.length > 0) {
+      console.log(`Loaded ${loaded.length} secret(s) from Keychain: ${loaded.join(', ')}`);
+    }
+  } catch {
+    // Not on macOS or keychain unavailable — skip silently
+  }
+
   const { app } = await createAgentServerApp(deps);
   const port = Number(deps.env.PORT ?? deps.env.RUNNER_PORT ?? 8788);
   const host = resolveRunnerHost(deps.env);
