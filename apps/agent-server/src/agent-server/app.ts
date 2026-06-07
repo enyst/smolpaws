@@ -138,4 +138,24 @@ export async function startAgentServer(
   const host = resolveRunnerHost(deps.env);
   assertSafeRunnerBind(deps.env);
   await app.listen({ port, host });
+
+  // Start bridge adapters after the server is listening
+  const runnerUrl = `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}`;
+  const { loadBridges } = await import('../../../../src/shared/bridgeLoader.js');
+  const { bridgeRegistry } = await import('../../../../src/shared/bridgeAdapter.js');
+  await loadBridges({
+    runnerUrl,
+    runnerToken: deps.env.SMOLPAWS_RUNNER_TOKEN,
+    logger: app.log as unknown as import('pino').Logger,
+    env: deps.env,
+  });
+
+  // Stop bridges on shutdown
+  const shutdown = async () => {
+    app.log.info('Stopping bridge adapters');
+    await bridgeRegistry.stopAll();
+  };
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.on(signal, () => void shutdown().finally(() => process.exit(0)));
+  }
 }
