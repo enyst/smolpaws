@@ -46,11 +46,11 @@ When people contribute, they shouldn't add "Telegram support alongside WhatsApp.
 
 Skills we'd love contributors to build:
 
-### Communication Channels
+### Bridges
 Skills to add or switch to different messaging platforms:
-- `/add-telegram` - Add Telegram as an input channel
-- `/add-slack` - Add Slack as an input channel
-- `/add-discord` - Add Discord as an input channel
+- `/add-telegram` - Add Telegram as an input bridge
+- `/add-slack` - Add Slack as an input bridge
+- `/add-discord` - Add Discord as an input bridge
 - `/add-sms` - Add SMS via Twilio or similar
 - `/convert-to-telegram` - Replace WhatsApp with Telegram entirely
 
@@ -72,7 +72,7 @@ A personal Claude assistant accessible via WhatsApp, with minimal custom code.
 **Core components:**
 - **`@smolpaws/agent-sdk`** as the shared TypeScript agent runtime
 - **Apple Container** for isolated agent execution (Linux VMs)
-- **WhatsApp** as the primary I/O channel
+- **WhatsApp** as the primary I/O bridge
 - **Persistent memory** per conversation and globally
 - **Scheduled tasks** that run Claude and can message back
 - **Web access** for search and browsing
@@ -176,7 +176,7 @@ Runtime ownership note:
 
 ### Skills
 - `/setup` - Install dependencies, authenticate WhatsApp, configure scheduler, start services
-- `/customize` - General-purpose skill for adding capabilities (new channels like Telegram, new integrations, behavior changes)
+- `/customize` - General-purpose skill for adding capabilities (new bridges like Telegram, new integrations, behavior changes)
 
 ### Deployment
 - Runs on local Mac via launchd

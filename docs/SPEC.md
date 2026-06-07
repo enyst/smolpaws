@@ -383,7 +383,7 @@ This allows the agent to understand the conversation context even if it wasn't m
 |---------|---------|--------|
 | `@Assistant [message]` | `@smolpaws what's the weather?` | Talk to Claude |
 
-### Commands Available in Main Channel Only
+### Commands Available in Main Bridge Only
 
 | Command | Example | Effect |
 |---------|---------|--------|

@@ -8,7 +8,7 @@ The clean boundary is:
 
 - **agent-server owns conversation state and turn state**
 - **a shared ingress turn client consumes that API**
-- **channel adapters only deliver outbound thread messages and final replies**
+- **bridge adapters only deliver outbound thread messages and final replies**
 - **host-runtime control-plane work stays outside the ingress client**
 
 That gives us the behavior we actually want:
@@ -140,7 +140,7 @@ That means a client cannot prove that:
 
 #### 3. Control-plane artifacts are mixed into ingress design
 
-`task_commands/claim` is not a channel delivery concern. It is a SmolPaws host-runtime concern:
+`task_commands/claim` is not a bridge delivery concern. It is a SmolPaws host-runtime concern:
 
 - scheduler changes
 - database updates
@@ -206,12 +206,12 @@ It should not reconstruct turn semantics from:
 - event searches over mixed history
 - “last assistant reply” heuristics
 
-### 3. Keep channel delivery thin
+### 3. Keep bridge delivery thin
 
 WhatsApp, Discord, and GitHub should differ only in how they deliver artifacts:
 
 - WhatsApp sends chat messages
-- Discord replies in-channel
+- Discord replies in its channel
 - GitHub posts comments and may keep duplicate-suppression policy
 
 They should not each own their own runner orchestration rules.
@@ -228,7 +228,7 @@ Introduce two related but separate abstractions.
 
 ### A. Shared ingress turn client
 
-This is the channel-neutral client used by WhatsApp, Discord, and GitHub.
+This is the bridge-neutral client used by WhatsApp, Discord, and GitHub.
 
 It has two logical responsibilities:
 
@@ -516,7 +516,7 @@ If needed, they can support a transitional adapter. The target design should sti
 
 ## Module and dependency direction
 
-The new shared client should live in a channel-neutral home, not under `apps/agent-server`.
+The new shared client should live in a bridge-neutral home, not under `apps/agent-server`.
 
 A clean direction would be:
 
@@ -553,7 +553,7 @@ Add server-owned turn routes, turn ids, and message-submission ids while keeping
 
 ### Step 3
 
-Implement a channel-neutral shared ingress turn client in its own shared module/package.
+Implement a bridge-neutral shared ingress turn client in its own shared module/package.
 
 ### Step 4
 

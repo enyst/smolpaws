@@ -1,6 +1,6 @@
 ---
 name: add-gmail
-description: Add Gmail integration to SmolPaws. Can be configured as a tool (agent reads/sends emails when triggered from WhatsApp) or as a full channel (emails can trigger the agent, schedule tasks, and receive replies). Guides through GCP OAuth setup and implements the integration.
+description: Add Gmail integration to SmolPaws. Can be configured as a tool (agent reads/sends emails when triggered from WhatsApp) or as a full bridge (emails can trigger the agent, schedule tasks, and receive replies). Guides through GCP OAuth setup and implements the integration.
 ---
 
 # Add Gmail Integration
@@ -8,7 +8,7 @@ description: Add Gmail integration to SmolPaws. Can be configured as a tool (age
 This skill adds Gmail capabilities to SmolPaws. It can be configured in two modes:
 
 1. **Tool Mode** - Agent can read/send emails, but only when triggered from WhatsApp
-2. **Channel Mode** - Emails can trigger the agent, schedule tasks, and receive email replies
+2. **Bridge Mode** - Emails can trigger the agent, schedule tasks, and receive email replies
 
 ## Initial Questions
 
@@ -21,7 +21,7 @@ Ask the user:
 > - Triggered only from WhatsApp (e.g., "@smolpaws check my email" or "@smolpaws send an email to...")
 > - Simpler setup, no email polling
 >
-> **Option 2: Channel Mode**
+> **Option 2: Bridge Mode**
 > - Everything in Tool Mode, plus:
 > - Emails to a specific address/label trigger the agent
 > - Agent replies via email (not WhatsApp)
@@ -259,7 +259,7 @@ sleep 2 && launchctl list | grep smolpaws
 
 Tell the user:
 
-> Gmail integration is set up! Test it by sending this message in your WhatsApp main channel:
+> Gmail integration is set up! Test it by sending this message in your WhatsApp main bridge:
 >
 > `@smolpaws check my recent emails`
 >
@@ -275,11 +275,11 @@ tail -f logs/smolpaws.log
 
 ---
 
-## Channel Mode Implementation
+## Bridge Mode Implementation
 
-Channel Mode includes everything from Tool Mode, plus email polling and routing.
+Bridge Mode includes everything from Tool Mode, plus email polling and routing.
 
-### Additional Questions for Channel Mode
+### Additional Questions for Bridge Mode
 
 Ask the user:
 
@@ -312,7 +312,7 @@ Also ask:
 >
 > **Option C: Single Context**
 > - All emails share the main group context
-> - Like an additional input to the main channel
+> - Like an additional input to the main bridge
 
 Store their choices for implementation.
 
@@ -325,7 +325,7 @@ Complete all Tool Mode steps above before continuing. Verify Gmail tools work by
 Read `src/types.ts` and add this interface:
 
 ```typescript
-export interface EmailChannelConfig {
+export interface EmailBridgeConfig {
   enabled: boolean;
   triggerMode: 'label' | 'address' | 'subject';
   triggerValue: string;  // Label name, address pattern, or subject prefix
@@ -338,7 +338,7 @@ export interface EmailChannelConfig {
 Read `src/config.ts` and add this configuration (customize values based on user's earlier answers):
 
 ```typescript
-export const EMAIL_CHANNEL: EmailChannelConfig = {
+export const EMAIL_BRIDGE: EmailBridgeConfig = {
   enabled: true,
   triggerMode: 'label',  // or 'address' or 'subject'
   triggerValue: 'SmolPaws',  // the label name, address pattern, or prefix
@@ -386,12 +386,12 @@ export function markEmailResponded(messageId: string): void {
 
 Also find the `initDatabase()` function in `src/db.ts` and add a call to `initEmailTable()`.
 
-### Step 4: Create Email Channel Module
+### Step 4: Create Email Bridge Module
 
-Create a new file `src/email-channel.ts` with this content:
+Create a new file `src/email-bridge.ts` with this content:
 
 ```typescript
-import { EMAIL_CHANNEL } from './config.js';
+import { EMAIL_BRIDGE } from './config.js';
 import { isEmailProcessed, markEmailProcessed, markEmailResponded } from './db.js';
 import pino from 'pino';
 
@@ -415,15 +415,15 @@ interface EmailMessage {
 export async function checkForNewEmails(): Promise<EmailMessage[]> {
   // Build query based on trigger mode
   let query: string;
-  switch (EMAIL_CHANNEL.triggerMode) {
+  switch (EMAIL_BRIDGE.triggerMode) {
     case 'label':
-      query = `label:${EMAIL_CHANNEL.triggerValue} is:unread`;
+      query = `label:${EMAIL_BRIDGE.triggerValue} is:unread`;
       break;
     case 'address':
-      query = `to:${EMAIL_CHANNEL.triggerValue} is:unread`;
+      query = `to:${EMAIL_BRIDGE.triggerValue} is:unread`;
       break;
     case 'subject':
-      query = `subject:${EMAIL_CHANNEL.triggerValue} is:unread`;
+      query = `subject:${EMAIL_BRIDGE.triggerValue} is:unread`;
       break;
   }
 
@@ -449,15 +449,15 @@ export async function sendEmailReply(
     ? subject
     : `Re: ${subject}`;
 
-  const prefixedBody = EMAIL_CHANNEL.replyPrefix
-    ? `${EMAIL_CHANNEL.replyPrefix}${body}`
+  const prefixedBody = EMAIL_BRIDGE.replyPrefix
+    ? `${EMAIL_BRIDGE.replyPrefix}${body}`
     : body;
 
   // Implementation: invoke Gmail MCP send_email
 }
 
 export function getContextKey(email: EmailMessage): string {
-  switch (EMAIL_CHANNEL.contextMode) {
+  switch (EMAIL_BRIDGE.contextMode) {
     case 'thread':
       return `email-thread-${email.threadId}`;
     case 'sender':
@@ -473,17 +473,17 @@ export function getContextKey(email: EmailMessage): string {
 Read `src/index.ts` and add the email polling infrastructure. First, add these imports at the top:
 
 ```typescript
-import { checkForNewEmails, sendEmailReply, getContextKey } from './email-channel.js';
-import { EMAIL_CHANNEL } from './config.js';
+import { checkForNewEmails, sendEmailReply, getContextKey } from './email-bridge.js';
+import { EMAIL_BRIDGE } from './config.js';
 import { isEmailProcessed, markEmailProcessed, markEmailResponded } from './db.js';
 
 async function startEmailLoop(): Promise<void> {
-  if (!EMAIL_CHANNEL.enabled) {
-    logger.info('Email channel disabled');
+  if (!EMAIL_BRIDGE.enabled) {
+    logger.info('Email bridge disabled');
     return;
   }
 
-  logger.info(`Email channel running (trigger: ${EMAIL_CHANNEL.triggerMode}:${EMAIL_CHANNEL.triggerValue})`);
+  logger.info(`Email bridge running (trigger: ${EMAIL_BRIDGE.triggerMode}:${EMAIL_BRIDGE.triggerValue})`);
 
   while (true) {
     try {
@@ -521,7 +521,7 @@ Respond to this email. Your response will be sent as an email reply.`;
       logger.error({ err }, 'Error in email loop');
     }
 
-    await new Promise(resolve => setTimeout(resolve, EMAIL_CHANNEL.pollIntervalMs));
+    await new Promise(resolve => setTimeout(resolve, EMAIL_BRIDGE.pollIntervalMs));
   }
 }
 
@@ -546,7 +546,7 @@ async function runEmailAgent(
   // 1. A dedicated "email" group folder
   // 2. Or dynamic folders per thread/sender
 
-  const groupFolder = EMAIL_CHANNEL.contextMode === 'single'
+  const groupFolder = EMAIL_BRIDGE.contextMode === 'single'
     ? 'main'  // Use main group context
     : `email/${contextKey}`;  // Isolated email context
 
@@ -613,7 +613,7 @@ mkdir -p groups/email
 Write `groups/email/AGENTS.md`:
 
 ```markdown
-# Email Channel
+# Email Bridge
 
 You are responding to emails. Your responses will be sent as email replies.
 
@@ -649,7 +649,7 @@ Restart the service:
 launchctl kickstart -k gui/$(id -u)/com.smolpaws
 ```
 
-Verify it started and check for email channel startup message:
+Verify it started and check for email bridge startup message:
 
 ```bash
 sleep 3 && tail -20 logs/smolpaws.log | grep -i email
@@ -657,7 +657,7 @@ sleep 3 && tail -20 logs/smolpaws.log | grep -i email
 
 Tell the user:
 
-> Email channel is now active! Test it by sending an email that matches your trigger:
+> Email bridge is now active! Test it by sending an email that matches your trigger:
 > - **Label mode:** Apply the "${triggerValue}" label to any email
 > - **Address mode:** Send an email to ${triggerValue}
 > - **Subject mode:** Send an email with subject starting with "${triggerValue}"
@@ -709,11 +709,11 @@ To remove Gmail entirely:
 2. Remove from `src/container-runner.ts`:
    - Delete the `~/.gmail-mcp` mount block
 
-3. Remove from `src/index.ts` (Channel Mode only):
+3. Remove from `src/index.ts` (Bridge Mode only):
    - Delete `startEmailLoop()` call
    - Delete email-related imports
 
-4. Delete `src/email-channel.ts` (if created)
+4. Delete `src/email-bridge.ts` (if created)
 
 5. Remove Gmail sections from `groups/*/AGENTS.md`
 

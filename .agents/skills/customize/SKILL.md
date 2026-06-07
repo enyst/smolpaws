@@ -1,6 +1,6 @@
 ---
 name: customize
-description: Add new capabilities or modify SmolPaws behavior. Use when user wants to add channels (Telegram, Slack, email input), change triggers, add integrations, modify the router, or make any other customizations. This is an interactive skill that asks questions to understand what the user wants.
+description: Add new capabilities or modify SmolPaws behavior. Use when user wants to add bridges (Telegram, Slack, email input), change triggers, add integrations, modify the router, or make any other customizations. This is an interactive skill that asks questions to understand what the user wants.
 ---
 
 # SmolPaws Customization
@@ -28,19 +28,19 @@ This skill helps users add capabilities or modify behavior. Use AskUserQuestion 
 
 ## Common Customization Patterns
 
-### Adding a New Input Channel (e.g., Telegram, Slack, Email)
+### Adding a New Input Bridge (e.g., Telegram, Slack, Email)
 
 Questions to ask:
-- Which channel? (Telegram, Slack, Discord, email, SMS, etc.)
+- Which bridge? (Telegram, Slack, Discord, email, SMS, etc.)
 - Same trigger word or different?
 - Same memory hierarchy or separate?
-- Should messages from this channel go to existing groups or new ones?
+- Should messages from this bridge go to existing groups or new ones?
 
 Implementation pattern:
-1. Find/add MCP server for the channel
+1. Find/add MCP server for the bridge
 2. Add connection and message handling in `src/index.ts`
 3. Store messages in the database (update `src/db.ts` if needed)
-4. Ensure responses route back to correct channel
+4. Ensure responses route back to correct bridge
 
 ### Adding a New MCP Integration
 
@@ -98,7 +98,7 @@ launchctl load ~/Library/LaunchAgents/com.smolpaws.plist
 
 ## Example Interaction
 
-User: "Add Telegram as an input channel"
+User: "Add Telegram as an input bridge"
 
 1. Ask: "Should Telegram use the same @smolpaws trigger, or a different one?"
 2. Ask: "Should Telegram messages create separate conversation contexts, or share with WhatsApp groups?"
