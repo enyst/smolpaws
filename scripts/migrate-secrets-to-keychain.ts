@@ -15,12 +15,14 @@ import os from 'node:os';
 import { keychainGet, keychainSet } from '../src/shared/keychain.js';
 
 const KEYS_TO_MIGRATE = [
-  'LITELLM_API_KEY',
+  'LITELLM_API_KEY_APP',
+  'LITELLM_API_KEY_EVAL',
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
   'GEMINI_API_KEY',
   'NVIDIA_API_KEY',
-  'LITELLM_API_KEY_EVAL',
+  'OPENHANDS_API_KEY',
+  'SMOLPAWS_OPENHANDS_API_KEY',
 ];
 
 const dryRun = process.argv.includes('--dry-run');

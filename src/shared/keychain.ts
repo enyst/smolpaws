@@ -48,12 +48,14 @@ export async function keychainDelete(account: string): Promise<boolean> {
 
 /** Known provider secret keys to look for in the Keychain. */
 const PROVIDER_KEYS = [
-  'LITELLM_API_KEY',
+  'LITELLM_API_KEY_APP',
+  'LITELLM_API_KEY_EVAL',
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
   'GEMINI_API_KEY',
   'NVIDIA_API_KEY',
-  'LITELLM_API_KEY_EVAL',
+  'OPENHANDS_API_KEY',
+  'SMOLPAWS_OPENHANDS_API_KEY',
 ];
 
 /**
