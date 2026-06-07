@@ -46,36 +46,40 @@ export async function keychainDelete(account: string): Promise<boolean> {
   return exitCode === 0;
 }
 
-/** Known provider secret keys to look for in the Keychain. */
-const PROVIDER_KEYS = [
-  'LITELLM_API_KEY_APP',
-  'LITELLM_API_KEY_EVAL',
-  'OPENAI_API_KEY',
-  'ANTHROPIC_API_KEY',
-  'GEMINI_API_KEY',
-  'NVIDIA_API_KEY',
-  'OPENHANDS_API_KEY',
-  'SMOLPAWS_OPENHANDS_API_KEY',
+/**
+ * Known provider secrets. Each entry maps a Keychain account name
+ * to the env var name the SDK expects. When they differ (e.g.
+ * LITELLM_API_KEY_APP → LITELLM_API_KEY), the Keychain name is
+ * for human clarity and the env name is what the runtime reads.
+ */
+const PROVIDER_SECRETS: Array<{ keychain: string; env: string }> = [
+  { keychain: 'LITELLM_API_KEY_APP', env: 'LITELLM_API_KEY' },
+  { keychain: 'LITELLM_API_KEY_EVAL', env: 'LITELLM_API_KEY_EVAL' },
+  { keychain: 'OPENAI_API_KEY', env: 'OPENAI_API_KEY' },
+  { keychain: 'ANTHROPIC_API_KEY', env: 'ANTHROPIC_API_KEY' },
+  { keychain: 'GEMINI_API_KEY', env: 'GEMINI_API_KEY' },
+  { keychain: 'NVIDIA_API_KEY', env: 'NVIDIA_API_KEY' },
+  { keychain: 'OPENHANDS_API_KEY', env: 'OPENHANDS_API_KEY' },
+  { keychain: 'SMOLPAWS_OPENHANDS_API_KEY', env: 'SMOLPAWS_OPENHANDS_API_KEY' },
 ];
 
 /**
  * Load secrets from macOS Keychain into process.env.
- * Keychain takes priority — existing env vars are NOT overwritten
- * unless `overwrite` is true.
+ * Existing env vars are NOT overwritten unless `overwrite` is true.
  *
- * Returns the list of keys that were loaded.
+ * Returns the list of env var names that were loaded.
  */
 export async function loadKeychainSecrets(
-  keys = PROVIDER_KEYS,
+  secrets = PROVIDER_SECRETS,
   overwrite = false,
 ): Promise<string[]> {
   const loaded: string[] = [];
-  for (const key of keys) {
-    if (!overwrite && process.env[key]) continue;
-    const value = await keychainGet(key);
+  for (const { keychain, env } of secrets) {
+    if (!overwrite && process.env[env]) continue;
+    const value = await keychainGet(keychain);
     if (value) {
-      process.env[key] = value;
-      loaded.push(key);
+      process.env[env] = value;
+      loaded.push(env);
     }
   }
   return loaded;
