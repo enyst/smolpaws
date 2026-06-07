@@ -1,0 +1,27 @@
+{
+  "259279391080479@lid": {
+    "name": "Main",
+    "folder": "main",
+    "trigger": "@smolpaws",
+    "added_at": "2026-03-24T14:15:00Z"
+  },
+  "120363427179107779@g.us": {
+    "name": "smolpaws chat",
+    "folder": "smolpaws-chat",
+    "trigger": "@smolpaws",
+    "added_at": "2026-04-28T09:53:35.000Z"
+  },
+  "120363425888191045@g.us": {
+    "name": "Hunting",
+    "folder": "hunting",
+    "trigger": "@smolpaws",
+    "triggerFree": true,
+    "added_at": "2026-04-28T21:06:00.000Z"
+  },
+  "120363426327189600@g.us": {
+    "name": "OpenHands",
+    "folder": "openhands",
+    "trigger": "@smolpaws",
+    "added_at": "2026-06-05T12:30:00.000Z"
+  }
+}

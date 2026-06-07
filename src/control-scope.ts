@@ -5,8 +5,8 @@ export function isControlScope(scopeFolder: string): boolean {
   return scopeFolder === MAIN_GROUP_FOLDER;
 }
 
-export function shouldRespondWithoutTrigger(scopeFolder: string): boolean {
-  return isControlScope(scopeFolder);
+export function shouldRespondWithoutTrigger(scopeFolder: string, triggerFree?: boolean): boolean {
+  return isControlScope(scopeFolder) || triggerFree === true;
 }
 
 export function canTargetScope(sourceScopeFolder: string, targetScopeFolder: string): boolean {

@@ -219,9 +219,10 @@ async function processMessage(msg: NewMessage): Promise<void> {
 
   const content = msg.content.trim();
 
-  // The control scope responds to ambient messages; all others require an @mention.
+  // The control scope and trigger-free groups respond to ambient messages;
+  // all others require an @mention.
   // Images with @trigger in the caption match normally; control scope sees everything.
-  if (!shouldRespondWithoutTrigger(group.folder) && !TRIGGER_PATTERN.test(content)) return;
+  if (!shouldRespondWithoutTrigger(group.folder, group.triggerFree) && !TRIGGER_PATTERN.test(content)) return;
 
   // Get all messages since last agent interaction so the session has full context
   const sinceTimestamp = lastAgentTimestamp[msg.chat_jid] || '';
