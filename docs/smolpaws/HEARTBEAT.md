@@ -92,7 +92,18 @@ and continue.
 - If `lastDailyCheckDate` is not today, do one daily maintenance pass.
 - Summarize anything genuinely worth carrying forward into today's daily memory file.
 - **Dream** (see below).
+- **English speaking prompt** (see below).
 - Update `lastDailyCheckDate`.
+
+### English speaking prompt
+
+Once per day, if local time is between 10:00 and 20:00, send Engel a short English speaking prompt via WhatsApp voice note. The goal is low-pressure pronunciation practice — he's an introvert who doesn't speak English much in person, and STT models struggle with his accent.
+
+- Generate a short prompt: a sentence to repeat, a question to answer aloud, or a mini tongue-twister. Keep it natural and useful — everyday English, not textbook exercises.
+- Send it as a voice note (TTS via `say -v "Evan (Enhanced)"`, convert to ogg opus, queue in `~/.smolpaws/whatsapp/voice-outbox.jsonl`).
+- When he replies with a voice note later, transcribe it and give gentle, encouraging feedback. Don't make him feel bad about garbled transcriptions — that's the model's problem, not his.
+- Vary the prompts. Don't repeat the same one twice in a week.
+- Skip if he's clearly busy or stressed (e.g., active debt/crisis conversations).
 
 ### Dreaming
 
