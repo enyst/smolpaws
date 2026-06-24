@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { discoverBridges, checkReadiness, loadBridges, type PluginManifest } from './bridgeLoader.js';
+import { discoverBridges, checkReadiness, loadBridges, collectBridgeSecretEnv, type PluginManifest } from './bridgeLoader.js';
 import { bridgeRegistry, BaseBridgeAdapter } from './bridgeAdapter.js';
 
 function createTmpAppsDir(): string {
@@ -233,6 +233,79 @@ test('checkReadiness returns ready when no requiredEnv defined', () => {
   const result = checkReadiness(manifest, {});
   assert.equal(result.ready, true);
   assert.deepEqual(result.missing, []);
+});
+
+// ── collectBridgeSecretEnv ─────────────────────────────────────────────
+
+test('collectBridgeSecretEnv returns the union of secretEnv across bridges', async () => {
+  const appsDir = createTmpAppsDir();
+  try {
+    const discordDir = path.join(appsDir, 'discord');
+    mkdirSync(discordDir);
+    writeFileSync(
+      path.join(discordDir, 'plugin.json'),
+      JSON.stringify({
+        name: 'discord',
+        label: 'Discord',
+        kind: 'bridge',
+        version: '1.0.0',
+        secretEnv: ['DISCORD_BOT_TOKEN'],
+      }),
+    );
+
+    const slackDir = path.join(appsDir, 'slack');
+    mkdirSync(slackDir);
+    writeFileSync(
+      path.join(slackDir, 'plugin.json'),
+      JSON.stringify({
+        name: 'slack',
+        label: 'Slack',
+        kind: 'bridge',
+        version: '1.0.0',
+        secretEnv: ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN'],
+      }),
+    );
+
+    const names = await collectBridgeSecretEnv(appsDir);
+    assert.deepEqual(
+      [...names].sort(),
+      ['DISCORD_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_BOT_TOKEN'],
+    );
+  } finally {
+    rmSync(appsDir, { recursive: true, force: true });
+  }
+});
+
+test('collectBridgeSecretEnv dedupes and ignores bridges without secretEnv', async () => {
+  const appsDir = createTmpAppsDir();
+  try {
+    for (const name of ['a', 'b']) {
+      const dir = path.join(appsDir, name);
+      mkdirSync(dir);
+      writeFileSync(
+        path.join(dir, 'plugin.json'),
+        JSON.stringify({
+          name,
+          label: name,
+          kind: 'bridge',
+          version: '1.0.0',
+          secretEnv: ['SHARED_TOKEN'],
+        }),
+      );
+    }
+    // A bridge with no secretEnv at all.
+    const cDir = path.join(appsDir, 'c');
+    mkdirSync(cDir);
+    writeFileSync(
+      path.join(cDir, 'plugin.json'),
+      JSON.stringify({ name: 'c', label: 'c', kind: 'bridge', version: '1.0.0' }),
+    );
+
+    const names = await collectBridgeSecretEnv(appsDir);
+    assert.deepEqual(names, ['SHARED_TOKEN']);
+  } finally {
+    rmSync(appsDir, { recursive: true, force: true });
+  }
 });
 
 // ── loadBridges ────────────────────────────────────────────────────────

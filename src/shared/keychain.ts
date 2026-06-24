@@ -61,6 +61,11 @@ const PROVIDER_SECRETS: Array<{ keychain: string; env: string }> = [
   { keychain: 'NVIDIA_API_KEY', env: 'NVIDIA_API_KEY' },
   { keychain: 'OPENHANDS_API_KEY', env: 'OPENHANDS_API_KEY' },
   { keychain: 'SMOLPAWS_OPENHANDS_API_KEY', env: 'SMOLPAWS_OPENHANDS_API_KEY' },
+  // App-level secrets (not LLM providers) used by the agent-server and
+  // Worker integrations. Keychain account name matches the env var name.
+  { keychain: 'GITHUB_TOKEN', env: 'GITHUB_TOKEN' },
+  { keychain: 'DAYTONA_KEY', env: 'DAYTONA_KEY' },
+  { keychain: 'GOOGLE_CLIENT_SECRET', env: 'GOOGLE_CLIENT_SECRET' },
 ];
 
 /**
@@ -83,4 +88,22 @@ export async function loadKeychainSecrets(
     }
   }
   return loaded;
+}
+
+/**
+ * Load secrets into process.env where the Keychain account name is
+ * identical to the env var name (e.g. bridge tokens declared in plugin
+ * manifests as `secretEnv`). Existing env vars are not overwritten
+ * unless `overwrite` is true.
+ *
+ * Returns the list of env var names that were loaded.
+ */
+export async function loadKeychainSecretsByName(
+  names: string[],
+  overwrite = false,
+): Promise<string[]> {
+  return loadKeychainSecrets(
+    names.map((name) => ({ keychain: name, env: name })),
+    overwrite,
+  );
 }

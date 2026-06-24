@@ -133,12 +133,21 @@ export async function createAgentServerApp(
 export async function startAgentServer(
   deps: AgentServerDeps = createAgentServerDeps(),
 ): Promise<void> {
-  // Load provider secrets from macOS Keychain before anything else
+  // Load secrets from macOS Keychain before anything else: provider/LLM
+  // keys plus any bridge tokens declared as `secretEnv` in plugin.json.
   try {
-    const { loadKeychainSecrets } = await import('../../../../src/shared/keychain.js');
+    const { loadKeychainSecrets, loadKeychainSecretsByName } = await import(
+      '../../../../src/shared/keychain.js'
+    );
+    const { collectBridgeSecretEnv } = await import(
+      '../../../../src/shared/bridgeLoader.js'
+    );
     const loaded = await loadKeychainSecrets();
-    if (loaded.length > 0) {
-      console.log(`Loaded ${loaded.length} secret(s) from Keychain: ${loaded.join(', ')}`);
+    const bridgeSecretNames = await collectBridgeSecretEnv();
+    const loadedBridge = await loadKeychainSecretsByName(bridgeSecretNames);
+    const all = [...loaded, ...loadedBridge];
+    if (all.length > 0) {
+      console.log(`Loaded ${all.length} secret(s) from Keychain: ${all.join(', ')}`);
     }
   } catch {
     // Not on macOS or keychain unavailable — skip silently
@@ -158,7 +167,9 @@ export async function startAgentServer(
     runnerUrl,
     runnerToken: deps.env.SMOLPAWS_RUNNER_TOKEN,
     logger: app.log as unknown as import('pino').Logger,
-    env: deps.env,
+    // Check readiness against the full process env (which now includes
+    // Keychain-loaded bridge secrets), not the narrow RunnerEnv subset.
+    env: process.env,
   });
 
   // Stop bridges on shutdown

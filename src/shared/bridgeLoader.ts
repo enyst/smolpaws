@@ -25,6 +25,13 @@ export type PluginManifest = {
   description?: string;
   requiredEnv?: string[];
   optionalEnv?: string[];
+  /**
+   * Env vars that hold secrets and should be sourced from the macOS
+   * Keychain (service "openhands", account == env var name) rather
+   * than from a plaintext .env file. These are loaded into process.env
+   * at startup before readiness is checked.
+   */
+  secretEnv?: string[];
 };
 
 export type DiscoveredBridge = {
@@ -80,6 +87,22 @@ export async function discoverBridges(
   }
 
   return bridges.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Collect the union of `secretEnv` env-var names declared across all
+ * discovered bridge manifests. Used to source bridge tokens from the
+ * macOS Keychain at startup.
+ */
+export async function collectBridgeSecretEnv(
+  appsDir = resolveAppsDir(),
+): Promise<string[]> {
+  const bridges = await discoverBridges(appsDir);
+  const names = new Set<string>();
+  for (const bridge of bridges) {
+    for (const key of bridge.manifest.secretEnv ?? []) names.add(key);
+  }
+  return [...names];
 }
 
 // ── Readiness ──────────────────────────────────────────────────────────

@@ -7,6 +7,9 @@
   "requiredEnv": [
     "DISCORD_BOT_TOKEN"
   ],
+  "secretEnv": [
+    "DISCORD_BOT_TOKEN"
+  ],
   "optionalEnv": [
     "DISCORD_TRIGGER",
     "DISCORD_ALLOWED_GUILDS",

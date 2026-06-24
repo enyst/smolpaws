@@ -8,6 +8,10 @@
     "SLACK_BOT_TOKEN",
     "SLACK_APP_TOKEN"
   ],
+  "secretEnv": [
+    "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN"
+  ],
   "optionalEnv": [
     "SLACK_ALLOWED_TEAM_IDS",
     "SLACK_ALLOWED_CHANNEL_IDS",

@@ -14,15 +14,25 @@ import path from 'node:path';
 import os from 'node:os';
 import { keychainGet, keychainSet } from '../src/shared/keychain.js';
 
-const KEYS_TO_MIGRATE = [
-  'LITELLM_API_KEY_APP',
-  'LITELLM_API_KEY_EVAL',
-  'OPENAI_API_KEY',
-  'ANTHROPIC_API_KEY',
-  'GEMINI_API_KEY',
-  'NVIDIA_API_KEY',
-  'OPENHANDS_API_KEY',
-  'SMOLPAWS_OPENHANDS_API_KEY',
+// Keychain account name → .env var name. Same name unless noted.
+// LITELLM_API_KEY_APP is stored under that name in Keychain but read
+// from LITELLM_API_KEY in .env (the runtime maps it back on load).
+const KEYS_TO_MIGRATE: Array<{ keychain: string; env: string }> = [
+  { keychain: 'LITELLM_API_KEY_APP', env: 'LITELLM_API_KEY' },
+  { keychain: 'LITELLM_API_KEY_EVAL', env: 'LITELLM_API_KEY_EVAL' },
+  { keychain: 'OPENAI_API_KEY', env: 'OPENAI_API_KEY' },
+  { keychain: 'ANTHROPIC_API_KEY', env: 'ANTHROPIC_API_KEY' },
+  { keychain: 'GEMINI_API_KEY', env: 'GEMINI_API_KEY' },
+  { keychain: 'NVIDIA_API_KEY', env: 'NVIDIA_API_KEY' },
+  { keychain: 'OPENHANDS_API_KEY', env: 'OPENHANDS_API_KEY' },
+  { keychain: 'SMOLPAWS_OPENHANDS_API_KEY', env: 'SMOLPAWS_OPENHANDS_API_KEY' },
+  // App + bridge secrets (account name == env var name).
+  { keychain: 'GITHUB_TOKEN', env: 'GITHUB_TOKEN' },
+  { keychain: 'DAYTONA_KEY', env: 'DAYTONA_KEY' },
+  { keychain: 'GOOGLE_CLIENT_SECRET', env: 'GOOGLE_CLIENT_SECRET' },
+  { keychain: 'DISCORD_BOT_TOKEN', env: 'DISCORD_BOT_TOKEN' },
+  { keychain: 'SLACK_BOT_TOKEN', env: 'SLACK_BOT_TOKEN' },
+  { keychain: 'SLACK_APP_TOKEN', env: 'SLACK_APP_TOKEN' },
 ];
 
 const dryRun = process.argv.includes('--dry-run');
@@ -54,34 +64,35 @@ async function main() {
   let skipped = 0;
   let alreadyInKeychain = 0;
 
-  for (const key of KEYS_TO_MIGRATE) {
-    const envValue = env[key];
+  for (const { keychain, env: envName } of KEYS_TO_MIGRATE) {
+    const label = keychain === envName ? keychain : `${keychain} (from ${envName})`;
+    const envValue = env[envName];
     if (!envValue) {
-      console.log(`  ${key}: not in .env — skip`);
+      console.log(`  ${label}: not in .env — skip`);
       skipped++;
       continue;
     }
 
-    const existing = await keychainGet(key);
+    const existing = await keychainGet(keychain);
     if (existing) {
       if (existing === envValue) {
-        console.log(`  ${key}: already in Keychain (same value) ✓`);
+        console.log(`  ${label}: already in Keychain (same value) ✓`);
       } else {
-        console.log(`  ${key}: already in Keychain (DIFFERENT value) ⚠️  — skipping, review manually`);
+        console.log(`  ${label}: already in Keychain (DIFFERENT value) ⚠️  — skipping, review manually`);
       }
       alreadyInKeychain++;
       continue;
     }
 
     if (dryRun) {
-      console.log(`  ${key}: would migrate (${envValue.length} chars)`);
+      console.log(`  ${label}: would migrate (${envValue.length} chars)`);
     } else {
-      const ok = await keychainSet(key, envValue);
+      const ok = await keychainSet(keychain, envValue);
       if (ok) {
-        console.log(`  ${key}: migrated to Keychain ✓`);
+        console.log(`  ${label}: migrated to Keychain ✓`);
         migrated++;
       } else {
-        console.log(`  ${key}: FAILED to store in Keychain ✗`);
+        console.log(`  ${label}: FAILED to store in Keychain ✗`);
       }
     }
   }
