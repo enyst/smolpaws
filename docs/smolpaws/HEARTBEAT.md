@@ -4,7 +4,7 @@ This file is live for the local LaunchAgent heartbeat ingress.
 
 Heartbeat runs should go through the normal local agent-server. If the local loopback agent-server is not already running, the launcher may start it first and then queue this heartbeat as a normal conversation.
 
-Default schedule on this machine is once per hour. Reuse one heartbeat conversation per local day, then start a new conversation on the next day.
+Default schedule on this machine is once every 24 hours. Reuse one heartbeat conversation per local day, then start a new conversation on the next day.
 
 ## Scope
 
@@ -58,6 +58,12 @@ and continue.
 - Read the token: `JSON.parse(localStorage.getItem('localConfig_v2')).teams['T06P212QSEA'].token`
 
 #### What to check
+
+0. **Unread sweep first (authoritative).** Before anything else, ask Slack what is actually unread, rather than guessing from a fixed channel list. Call `client.counts` (`fetch('/api/client.counts', …)`) and read:
+   - `channels[]` / `mpims[]` where `has_unreads` is true or `mention_count > 0`
+   - `ims[]` where `has_unreads` is true or `dm_count > 0`
+   - `threads.has_unreads` / `threads.mention_count` (thread replies you'd otherwise miss — this is how the Paul Bloch #feedback reply and the Graham #proj-automations thread got caught)
+   For every channel/DM/thread flagged unread, pull it with `conversations.history` / `conversations.replies` and read what's new. This sweep is the source of truth; the fixed channel list below is a fallback floor, not a ceiling. Note: `client.counts` reflects the browser's read state, so once the heartbeat runs daily, a full day of activity will surface here — read it, don't let the volume make you skim.
 
 1. **DMs first**: use `conversations.list` with `types=im`, then `conversations.history` for each DM with recent messages. Look for anything directed at smolpaws.
 2. **Thread replies**: check threads where smolpaws has recently posted for new replies. Use `conversations.history` to find recent messages by smolpaws (user `U0ANQ6GLYHJ`) that have `reply_count > 0` or `thread_ts`, then use `conversations.replies` to read the thread. This catches notifications that heartbeat would otherwise miss. Do this across the full joined-channel set below; do not shrink it to just one or two channels.

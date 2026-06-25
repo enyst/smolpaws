@@ -11,7 +11,7 @@
     <key>WorkingDirectory</key>
     <string>{{PROJECT_ROOT}}</string>
     <key>StartInterval</key>
-    <integer>3600</integer>
+    <integer>86400</integer>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
