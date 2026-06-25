@@ -130,7 +130,7 @@ Do not rush this. Do not treat it as a checklist. *Dream* about the accumulated 
 Inspired by Letta's sleep-time compute concept and their Context Constitution (see `docs/context-constitution.md`).
 
 **Inputs to read:**
-1. Current `MEMORY.md` (durable memory)
+1. Current `MEMORY.md` (durable memory) — read this first, and respect its **"Never consolidate sensitive content"** rule.
 2. Daily memory files from `~/.smolpaws/memory/`:
    - **First dream** (`lastDreamDate` is null): read *all* daily memory files. This is the bootstrap pass — there may be older files with valuable context that has never been dreamed through.
    - **Subsequent runs**: read daily memory files from the past 7 days only.
