@@ -49,6 +49,14 @@ The ported design family (`/codebase-design`, `/improve-codebase-architecture`, 
 - **`CONTEXT.md`** (repo root, or per-context when a root `CONTEXT-MAP.md` exists) — the domain glossary / ubiquitous language. A glossary and nothing else: no implementation details, no specs. See `.agents/skills/domain-modeling/CONTEXT-FORMAT.md`.
 - **`docs/adr/NNNN-slug.md`** — Architectural Decision Records for hard-to-reverse, surprising, trade-off decisions the design skills should not re-litigate. See `.agents/skills/domain-modeling/ADR-FORMAT.md`.
 
+### HTML artifact delivery (SmolPaws)
+
+The HTML skills (`/show-me`, `/improve-codebase-architecture`) produce a self-contained page. SmolPaws delivers it by **publishing to GitHub Pages** — ignore the `htmlpreview` guidance in those skills' craft docs; we serve pages directly.
+
+- **Shareable link (default):** publish to the `enyst.github.io` Pages site (repo `~/repos/enyst.github.io`, public, `main`, `.nojekyll` so raw HTML renders as-is). Commit the page under a topic dir — `arch/` for architecture reviews, alongside the existing study pages — push, and hand back the clean `https://enyst.github.io/<path>` URL. Pages serves it with the right content-type, so it renders directly: no `htmlpreview` wrapper, no private-repo problem.
+- **Quick local look:** write to `$TMPDIR` and `open` it — fine when the reader is at this machine and nothing needs sharing.
+- **Later:** once the `liberty-labs.org` pages are done, these will move there. Until then, `enyst.github.io` is the target.
+
 ## Working Style
 
 - Read before guessing.
