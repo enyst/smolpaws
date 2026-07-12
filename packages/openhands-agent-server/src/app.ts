@@ -3,6 +3,9 @@ import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
+import { MacOSKeychainSecretStore, type SecretStore } from '@smolpaws/openhands-agent';
+
+import { registerAgentProfileRoutes } from './agentProfilesRouter.js';
 import { BashEventService } from './bashService.js';
 import { registerBashRoutes } from './bashRouter.js';
 import { ConversationService, type ConversationServiceOptions } from './conversationService.js';
@@ -12,6 +15,10 @@ import { registerEventRoutes } from './eventRouter.js';
 import { registerFileRoutes } from './fileRouter.js';
 import { registerGitRoutes } from './gitRouter.js';
 import { generateOpenApiSchema } from './openapi.js';
+import { registerProfileRoutes } from './profilesRouter.js';
+import { ServerStateService } from './serverState.js';
+import { registerSettingsRoutes } from './settingsRouter.js';
+import { registerSkillsRoutes } from './skillsRouter.js';
 import { registerSocketRoutes } from './sockets.js';
 
 const startedAt = Date.now();
@@ -19,12 +26,15 @@ const startedAt = Date.now();
 export interface AgentServerAppOptions extends ConversationServiceOptions {
   readonly config?: Partial<AgentServerConfig>;
   readonly conversationService?: ConversationService;
+  readonly secretStore?: SecretStore;
+  readonly serverStateService?: ServerStateService;
   readonly logger?: boolean;
 }
 
 export interface AgentServerApp {
   readonly app: FastifyInstance;
   readonly conversationService: ConversationService;
+  readonly serverStateService: ServerStateService;
 }
 
 export async function createAgentServerApp(options: AgentServerAppOptions = {}): Promise<AgentServerApp> {
@@ -37,6 +47,7 @@ export async function createAgentServerApp(options: AgentServerAppOptions = {}):
     ...options.config,
     conversationsPath,
     bashEventsPath: options.config?.bashEventsPath ?? defaultConfig.bashEventsPath,
+    statePath: options.config?.statePath ?? defaultConfig.statePath,
     workspaceRoot,
     allowedFileRoots,
   };
@@ -46,6 +57,7 @@ export async function createAgentServerApp(options: AgentServerAppOptions = {}):
   };
   const conversationService = options.conversationService ?? new ConversationService(serviceOptions);
   const bashEventService = new BashEventService({ bashEventsDir: config.bashEventsPath });
+  const serverStateService = options.serverStateService ?? new ServerStateService({ stateDir: config.statePath, secretStore: options.secretStore ?? new MacOSKeychainSecretStore() });
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 25 * 1024 * 1024 });
 
   await app.register(multipart);
@@ -57,11 +69,15 @@ export async function createAgentServerApp(options: AgentServerAppOptions = {}):
   registerBashRoutes(app, bashEventService);
   registerGitRoutes(app);
   registerFileRoutes(app, config);
+  registerSettingsRoutes(app, serverStateService);
+  registerProfileRoutes(app, serverStateService);
+  registerAgentProfileRoutes(app, serverStateService);
+  registerSkillsRoutes(app, { stateDir: config.statePath, workspaceRoot: config.workspaceRoot });
   registerSocketRoutes(app, { config, conversationService, bashEventService });
   app.addHook('onClose', () => Promise.all([conversationService.close(), bashEventService.close()]).then(() => undefined));
   registerErrorHandler(app);
 
-  return { app, conversationService };
+  return { app, conversationService, serverStateService };
 }
 
 function registerAuth(app: FastifyInstance, config: AgentServerConfig): void {

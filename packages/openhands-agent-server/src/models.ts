@@ -4,6 +4,7 @@ import {
   contentSchema,
   conversationExecutionStatus,
   eventSchema,
+  llmProfileSchema,
   messageSchema,
   type Content,
   type ConversationExecutionStatus,
@@ -313,6 +314,107 @@ export function messageFromSendRequest(request: SendMessageRequest): Message {
     content: request.content,
   });
 }
+
+
+export const llmProfilePayloadSchema = llmProfileSchema;
+export type LlmProfilePayload = z.infer<typeof llmProfilePayloadSchema>;
+
+export const profileListResponseSchema = z.object({ profiles: z.array(llmProfilePayloadSchema), active_profile_id: z.string().nullable().default(null) }).strict();
+export type ProfileListResponse = z.infer<typeof profileListResponseSchema>;
+
+export const renameProfileRequestSchema = z.object({ new_name: z.string().min(1).max(128) }).strict();
+export type RenameProfileRequest = z.infer<typeof renameProfileRequestSchema>;
+
+export const profileMutationResponseSchema = z.object({ name: z.string(), message: z.string() }).strict();
+export type ProfileMutationResponse = z.infer<typeof profileMutationResponseSchema>;
+
+export const activateProfileResponseSchema = z.object({ id: z.string(), message: z.string() }).strict();
+export type ActivateProfileResponse = z.infer<typeof activateProfileResponseSchema>;
+
+export const agentSettingsPayloadSchema = z.object({}).catchall(z.unknown());
+export const conversationSettingsPayloadSchema = z.object({}).catchall(z.unknown());
+export const settingsResponseSchema = z
+  .object({
+    agent_settings: agentSettingsPayloadSchema,
+    conversation_settings: conversationSettingsPayloadSchema,
+    llm_api_key_set: z.boolean().default(false),
+    active_profile_id: z.string().nullable().default(null),
+    active_agent_profile_id: z.string().nullable().default(null),
+  })
+  .strict();
+export type SettingsResponse = z.infer<typeof settingsResponseSchema>;
+
+export const settingsUpdateRequestSchema = z
+  .object({
+    agent_settings: agentSettingsPayloadSchema.optional(),
+    conversation_settings: conversationSettingsPayloadSchema.optional(),
+    llm_api_key: z.string().nullable().optional(),
+    active_profile_id: z.string().nullable().optional(),
+    active_agent_profile_id: z.string().nullable().optional(),
+  })
+  .passthrough();
+export type SettingsUpdateRequest = z.infer<typeof settingsUpdateRequestSchema>;
+
+export const settingsSchemaResponseSchema = z.object({ schema: z.record(z.string(), z.unknown()) }).strict();
+
+export const secretCreateRequestSchema = z.object({ name: z.string().min(1).max(64).regex(/^[A-Za-z][A-Za-z0-9_]*$/u), value: z.string() }).strict();
+export type SecretCreateRequest = z.infer<typeof secretCreateRequestSchema>;
+export const secretItemResponseSchema = z.object({ name: z.string(), created_at: z.string(), updated_at: z.string(), value: z.string().optional() }).strict();
+export const secretsListResponseSchema = z.object({ secrets: z.array(secretItemResponseSchema.omit({ value: true })) }).strict();
+
+export const skillInfoSchema = z
+  .object({
+    name: z.string(),
+    type: z.enum(['repo', 'knowledge', 'agentskills']),
+    content: z.string(),
+    triggers: z.array(z.string()).default([]),
+    source: z.string().nullable().default(null),
+    description: z.string().nullable().default(null),
+    is_agentskills_format: z.boolean().default(false),
+    disable_model_invocation: z.boolean().default(false),
+  })
+  .strict();
+export const skillsRequestSchema = z
+  .object({
+    load_public: z.boolean().default(false),
+    load_user: z.boolean().default(true),
+    load_project: z.boolean().default(true),
+    load_org: z.boolean().default(false),
+    project_dir: z.string().nullable().default(null),
+    marketplace_path: z.string().nullable().default(null),
+    sandbox_config: z.unknown().nullable().default(null),
+    org_configs: z.array(z.unknown()).nullable().default(null),
+    org_config: z.unknown().nullable().default(null),
+  })
+  .passthrough();
+export type SkillsRequest = z.infer<typeof skillsRequestSchema>;
+export const skillsResponseSchema = z.object({ skills: z.array(skillInfoSchema), sources: z.record(z.string(), z.number().int().nonnegative()).default({}) }).strict();
+export const syncResponseSchema = z.object({ status: z.enum(['success', 'error']), message: z.string() }).strict();
+export const installSkillRequestSchema = z.object({ source: z.string().min(1), ref: z.string().nullable().default(null), repo_path: z.string().nullable().default(null), force: z.boolean().default(false) }).strict();
+export type InstallSkillRequest = z.infer<typeof installSkillRequestSchema>;
+export const installedSkillResponseSchema = z
+  .object({
+    name: z.string(),
+    version: z.string().default(''),
+    description: z.string().default(''),
+    enabled: z.boolean().default(true),
+    source: z.string(),
+    resolved_ref: z.string().nullable().default(null),
+    repo_path: z.string().nullable().default(null),
+    installed_at: z.string(),
+    install_path: z.string(),
+  })
+  .strict();
+export const installedSkillsListResponseSchema = z.object({ skills: z.array(installedSkillResponseSchema) }).strict();
+export const updateSkillStateRequestSchema = z.object({ enabled: z.boolean() }).strict();
+export const updateSkillStateResponseSchema = z.object({ name: z.string(), enabled: z.boolean() }).strict();
+export const uninstallSkillResponseSchema = z.object({ message: z.string() }).strict();
+export const updateSkillResponseSchema = z.object({ message: z.string(), skill: installedSkillResponseSchema }).strict();
+export const marketplaceCatalogResponseSchema = z.object({ skills: z.array(z.unknown()).default([]) }).strict();
+
+export const agentProfilePayloadSchema = z.object({}).catchall(z.unknown());
+export const agentProfileListResponseSchema = z.object({ profiles: z.array(agentProfilePayloadSchema), active_agent_profile_id: z.string().nullable().default(null) }).strict();
+export const agentProfileDiagnosticsSchema = z.object({ valid: z.boolean(), errors: z.array(z.string()).default([]), resolved_settings: z.record(z.string(), z.unknown()).nullable().default(null) }).strict();
 
 export function textFromContent(content: readonly Content[]): string {
   return content

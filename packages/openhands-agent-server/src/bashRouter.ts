@@ -27,7 +27,7 @@ export function registerBashRoutes(app: FastifyInstance, service: BashEventServi
     return event;
   });
 
-  app.get('/api/bash/bash_events/', async (request) => service.batchGetBashEvents(arrayQuery(queryRecord(request).event_ids)));
+  app.get('/api/bash/bash_events', async (request) => service.batchGetBashEvents(arrayQuery(queryRecord(request).event_ids)));
 
   app.post('/api/bash/start_bash_command', async (request) => {
     const { command } = await service.startBashCommand(parseBody(executeBashRequestSchema, request.body));

@@ -17,7 +17,7 @@ export async function getGitChanges(targetPath: string, ref: string | null = nul
   });
   if (repoRoot === null) return [];
 
-  const relativePath = relativeTarget(repoRoot, targetPath);
+  const relativePath = await relativeTarget(repoRoot, targetPath);
   const pathArgs = relativePath === '' ? [] : ['--', relativePath];
   const baseRef = ref ?? 'HEAD';
   const result = await runCapturedCommand('git', ['--no-pager', 'diff', '--name-status', baseRef, ...pathArgs], repoRoot);
@@ -41,7 +41,7 @@ export async function getGitDiff(targetPath: string, ref: string | null = null):
   });
   if (repoRoot === null) return { modified: null, original: null };
 
-  const relativePath = relativeTarget(repoRoot, targetPath);
+  const relativePath = await relativeTarget(repoRoot, targetPath);
   const baseRef = ref ?? 'HEAD';
   const original = await runCapturedCommand('git', ['show', `${baseRef}:${relativePath}`], repoRoot);
   const modified = await fs.readFile(path.resolve(targetPath), 'utf8').catch(() => null);
@@ -56,13 +56,21 @@ async function resolveGitRepositoryRoot(targetPath: string): Promise<string> {
   const cwd = stats.isDirectory() ? targetPath : path.dirname(targetPath);
   const result = await runCapturedCommand('git', ['rev-parse', '--show-toplevel'], cwd);
   if (result.exitCode !== 0) throw new Error('git_repository_not_found');
-  return result.stdout.trim();
+  return canonicalPath(result.stdout.trim());
 }
 
-function relativeTarget(repoRoot: string, targetPath: string): string {
-  const absolute = path.resolve(targetPath);
-  const relative = path.relative(repoRoot, absolute);
-  return relative === '.' ? '' : relative;
+async function relativeTarget(repoRoot: string, targetPath: string): Promise<string> {
+  const [canonicalRepoRoot, canonicalTarget] = await Promise.all([canonicalPath(repoRoot), canonicalPath(targetPath)]);
+  const relative = path.relative(canonicalRepoRoot, canonicalTarget);
+  if (relative === '.') return '';
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('git_target_outside_repository');
+  }
+  return relative;
+}
+
+async function canonicalPath(targetPath: string): Promise<string> {
+  return fs.realpath(targetPath).catch(() => path.resolve(targetPath));
 }
 
 function parseNameStatus(stdout: string): GitChange[] {

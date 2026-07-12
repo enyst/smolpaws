@@ -6,6 +6,7 @@ export interface AgentServerConfig {
   readonly webUrl?: string | null;
   readonly conversationsPath: string;
   readonly bashEventsPath: string;
+  readonly statePath: string;
   readonly workspaceRoot: string;
   readonly allowedFileRoots: readonly string[];
 }
@@ -20,6 +21,7 @@ export function getDefaultConfig(env: Record<string, string | undefined> = proce
     webUrl: env.WEB_URL ?? null,
     conversationsPath,
     bashEventsPath: env.OPENHANDS_BASH_EVENTS_PATH ?? path.join(conversationsPath, 'bash_events'),
+    statePath: env.OPENHANDS_AGENT_SERVER_STATE_PATH ?? path.join(conversationsPath, 'server_state'),
     workspaceRoot,
     allowedFileRoots: [workspaceRoot, ...extraRoots],
   };

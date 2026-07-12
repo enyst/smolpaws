@@ -127,11 +127,13 @@ export class EventService {
       throw new Error('conversation_already_running');
     }
     this.runPromise = this.runAndPublish();
-    try {
-      await this.runPromise;
-    } finally {
-      this.runPromise = null;
-    }
+    void this.runPromise
+      .catch((error: unknown) => {
+        console.error('conversation_run_error', error);
+      })
+      .finally(() => {
+        this.runPromise = null;
+      });
   }
 
   async pause(): Promise<void> {
@@ -200,6 +202,7 @@ export class EventService {
   }
 
   async close(): Promise<void> {
+    await this.runPromise?.catch(() => undefined);
     await this.pubSub.close();
   }
 

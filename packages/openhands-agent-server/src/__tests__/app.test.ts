@@ -1,14 +1,18 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
+import { Agent, EventLog, FinishTool, InMemorySecretStore, LocalFileStore, RemoteConversation, RemoteWorkspace, TestLLM, ToolDefinition, textContent } from '@smolpaws/openhands-agent';
 import { describe, expect, test } from 'vitest';
 import { z } from 'zod';
 
-import { Agent, EventLog, FinishTool, LocalFileStore, TestLLM, ToolDefinition, textContent } from '@smolpaws/openhands-agent';
-
 import { createAgentServerApp } from '../app.js';
 import { generateOpenApiSchema } from '../openapi.js';
+
+const execFileAsync = promisify(execFile);
+
 
 function agentFactory() {
   return new Agent({
@@ -64,6 +68,62 @@ function delayedFinishAgentFactory() {
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitFor(assertion: () => Promise<void> | void, timeoutMs = 1000): Promise<void> {
+  const started = performance.now();
+  let lastError: unknown;
+  while (performance.now() - started < timeoutMs) {
+    try {
+      await assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await sleep(20);
+    }
+  }
+  if (lastError instanceof Error) throw lastError;
+  throw new Error('waitFor timed out');
+}
+
+async function waitForWebSocketOpen(socket: WebSocket, timeoutMs = 1000): Promise<void> {
+  if (socket.readyState === WebSocket.OPEN) return;
+  await waitForWebSocketEvent(socket, 'open', timeoutMs);
+}
+
+async function waitForWebSocketMessage(socket: WebSocket, timeoutMs = 1000): Promise<string> {
+  const event = await waitForWebSocketEvent<MessageEvent>(socket, 'message', timeoutMs);
+  return typeof event.data === 'string' ? event.data : Buffer.from(event.data as ArrayBuffer).toString('utf8');
+}
+
+function waitForWebSocketEvent<T extends Event>(socket: WebSocket, eventName: string, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for WebSocket ${eventName}`));
+    }, timeoutMs);
+    const onEvent = (event: Event) => {
+      cleanup();
+      resolve(event as T);
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error(`WebSocket error before ${eventName}`));
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error(`WebSocket closed before ${eventName}`));
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.removeEventListener(eventName, onEvent);
+      socket.removeEventListener('error', onError);
+      socket.removeEventListener('close', onClose);
+    };
+    socket.addEventListener(eventName, onEvent);
+    socket.addEventListener('error', onError);
+    socket.addEventListener('close', onClose);
+  });
 }
 
 describe('createAgentServerApp', () => {
@@ -154,8 +214,10 @@ describe('createAgentServerApp', () => {
       const run = await app.inject({ method: 'POST', url: `/api/conversations/${id}/run` });
       expect(run.statusCode).toBe(200);
 
-      const info = await app.inject({ method: 'GET', url: `/api/conversations/${id}` });
-      expect(info.json<{ execution_status: string }>().execution_status).toBe('finished');
+      await waitFor(async () => {
+        const info = await app.inject({ method: 'GET', url: `/api/conversations/${id}` });
+        expect(info.json<{ execution_status: string }>().execution_status).toBe('finished');
+      });
 
       const final = await app.inject({ method: 'GET', url: `/api/conversations/${id}/agent_final_response` });
       expect(final.json<{ response: string }>().response).toBe('done');
@@ -261,8 +323,188 @@ describe('createAgentServerApp', () => {
     expect(schema.paths['/api/bash/execute_bash_command']?.post).toBeDefined();
     expect(schema.paths['/api/git/changes']?.get).toBeDefined();
     expect(schema.paths['/api/file/home']?.get).toBeDefined();
+    expect(schema.paths['/api/settings']?.get).toBeDefined();
+    expect(schema.paths['/api/profiles']?.post).toBeDefined();
+    expect(schema.paths['/api/agent-profiles']?.post).toBeDefined();
+    expect(schema.paths['/api/skills']?.post).toBeDefined();
+    const eventSearch = schema.paths['/api/conversations/{conversation_id}/events/search']?.get as { readonly parameters?: Array<{ readonly name: string; readonly in: string }> } | undefined;
+    expect(eventSearch?.parameters).toContainEqual(expect.objectContaining({ name: 'limit', in: 'query' }));
+    expect(eventSearch?.parameters).toContainEqual(expect.objectContaining({ name: 'sort_order', in: 'query' }));
+    const bashBatch = schema.paths['/api/bash/bash_events']?.get as { readonly parameters?: Array<{ readonly name: string; readonly in: string }> } | undefined;
+    expect(bashBatch?.parameters).toContainEqual(expect.objectContaining({ name: 'event_ids', in: 'query' }));
     const confirmationPolicy = schema.paths['/api/conversations/{conversation_id}/confirmation_policy']?.post as { readonly responses?: unknown } | undefined;
     expect(confirmationPolicy?.responses).toHaveProperty('410');
     expect(schema.paths['/api/conversations/{conversation_id}/turns']).toBeUndefined();
   });
+
+  test('POST /run schedules work and returns before the agent finishes', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
+    const { app } = await createAgentServerApp({ agentFactory: delayedFinishAgentFactory, config: { conversationsPath: root } });
+    try {
+      const start = await app.inject({ method: 'POST', url: '/api/conversations', payload: {} });
+      const id = start.json<{ id: string }>().id;
+      await app.inject({ method: 'POST', url: `/api/conversations/${id}/events`, payload: { role: 'user', content: [textContent('finish slowly')], run: false } });
+      const started = performance.now();
+      const run = await app.inject({ method: 'POST', url: `/api/conversations/${id}/run` });
+      expect(run.statusCode).toBe(200);
+      expect(performance.now() - started).toBeLessThan(70);
+      await waitFor(async () => {
+        const final = await app.inject({ method: 'GET', url: `/api/conversations/${id}/agent_final_response` });
+        expect(final.json<{ response: string }>().response).toBe('first done');
+      });
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('accepts WebSocket session API key as the first message', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
+    const { app } = await createAgentServerApp({ config: { conversationsPath: path.join(root, 'conversations'), sessionApiKey: 'secret' } });
+    let socket: WebSocket | null = null;
+    try {
+      const start = await app.inject({ method: 'POST', url: '/api/conversations', headers: { 'x-session-api-key': 'secret' }, payload: {} });
+      const id = start.json<{ id: string }>().id;
+      await app.listen({ host: '127.0.0.1', port: 0 });
+      const address = app.server.address();
+      if (address === null || typeof address === 'string') throw new Error('Expected TCP address');
+      socket = new WebSocket(`ws://127.0.0.1:${address.port}/sockets/events/${id}`);
+      await waitForWebSocketOpen(socket);
+      socket.send(JSON.stringify({ type: 'auth', session_api_key: 'secret' }));
+      const payload = JSON.parse(await waitForWebSocketMessage(socket)) as { key?: string };
+      expect(payload.key).toBe('full_state');
+    } finally {
+      socket?.close();
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('canonicalizes git paths reached through a filesystem alias', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
+    const repo = path.join(root, 'repo');
+    const alias = path.join(root, 'repo-alias');
+    const filePath = path.join(repo, 'tracked.txt');
+    await mkdir(repo);
+    await execFileAsync('git', ['-C', repo, 'init', '-q']);
+    await execFileAsync('git', ['-C', repo, 'config', 'user.email', 'test@example.com']);
+    await execFileAsync('git', ['-C', repo, 'config', 'user.name', 'Test User']);
+    await writeFile(filePath, 'base\n', 'utf8');
+    await execFileAsync('git', ['-C', repo, 'add', 'tracked.txt']);
+    await execFileAsync('git', ['-C', repo, 'commit', '-q', '-m', 'init']);
+    await symlink(repo, alias);
+    await writeFile(filePath, 'changed\n', 'utf8');
+    const { app } = await createAgentServerApp({ config: { conversationsPath: path.join(root, 'conversations'), workspaceRoot: repo } });
+    try {
+      const changes = await app.inject({ method: 'GET', url: `/api/git/changes?path=${encodeURIComponent(path.join(alias, 'tracked.txt'))}` });
+      expect(changes.statusCode).toBe(200);
+      expect(changes.json()).toEqual([{ status: 'UPDATED', path: 'tracked.txt' }]);
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('serves bash batch events on the upstream path without a trailing slash', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
+    const { app } = await createAgentServerApp({ config: { conversationsPath: path.join(root, 'conversations'), bashEventsPath: path.join(root, 'bash-events') } });
+    try {
+      const batch = await app.inject({ method: 'GET', url: '/api/bash/bash_events?event_ids=missing-event-id' });
+      expect(batch.statusCode).toBe(200);
+      expect(batch.json()).toEqual([null]);
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+
+  test('serves settings, profiles, agent-profiles, and secret metadata without plaintext persistence', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
+    const statePath = path.join(root, 'state');
+    const { app } = await createAgentServerApp({ config: { conversationsPath: path.join(root, 'conversations'), statePath }, secretStore: new InMemorySecretStore() });
+    try {
+      const profile = await app.inject({ method: 'POST', url: '/api/profiles', payload: { profileId: 'audit', providerId: 'openai', model: 'gpt-5-nano', baseUrl: null, openAiApiMode: 'responses' } });
+      expect(profile.statusCode).toBe(201);
+      expect((await app.inject({ method: 'POST', url: '/api/profiles/audit/activate' })).statusCode).toBe(200);
+      const settings = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { llm_api_key: 'fake-secret-value' } });
+      expect(settings.statusCode).toBe(200);
+      expect(settings.json<{ llm_api_key_set: boolean }>().llm_api_key_set).toBe(true);
+
+      const secret = await app.inject({ method: 'PUT', url: '/api/settings/secrets', payload: { name: 'TOKEN', value: 'plaintext-token' } });
+      expect(secret.statusCode).toBe(200);
+      expect(secret.body).not.toContain('plaintext-token');
+      const redacted = await app.inject({ method: 'GET', url: '/api/settings/secrets/TOKEN' });
+      expect(redacted.json<{ value: string }>().value).toBe('**********');
+
+      const agentProfile = await app.inject({ method: 'POST', url: '/api/agent-profiles', payload: { name: 'cat', llm_profile_ref: 'audit' } });
+      expect(agentProfile.statusCode).toBe(201);
+      const agentProfileId = agentProfile.json<{ id: string }>().id;
+      expect((await app.inject({ method: 'POST', url: `/api/agent-profiles/${agentProfileId}/activate` })).statusCode).toBe(200);
+      const materialized = await app.inject({ method: 'POST', url: '/api/agent-profiles/cat/materialize' });
+      expect(materialized.statusCode).toBe(200);
+      expect(JSON.stringify(materialized.json())).not.toMatch(/sk-secret-value|plaintext-token/u);
+      expect(await readFile(path.join(statePath, 'state.json'), 'utf8')).not.toMatch(/sk-secret-value|plaintext-token/u);
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('loads project skills and manages local installed skills', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
+    const projectSkill = path.join(root, 'project', '.openhands', 'skills', 'demo', 'SKILL.md');
+    const localSkill = path.join(root, 'local-skill', 'SKILL.md');
+    await mkdir(path.dirname(projectSkill), { recursive: true });
+    await mkdir(path.dirname(localSkill), { recursive: true });
+    await writeFile(projectSkill, '---\nname: demo\ndescription: Demo project skill\ntriggers:\n  - demo\n---\nUse demo skill.\n', 'utf8');
+    await writeFile(localSkill, '---\nname: installed-demo\ndescription: Installed skill\n---\nInstalled content.\n', 'utf8');
+    const { app } = await createAgentServerApp({ config: { conversationsPath: path.join(root, 'conversations'), statePath: path.join(root, 'state'), workspaceRoot: path.join(root, 'project') }, secretStore: new InMemorySecretStore() });
+    try {
+      const loaded = await app.inject({ method: 'POST', url: '/api/skills', payload: { load_user: false, load_project: true, project_dir: path.join(root, 'project') } });
+      expect(loaded.statusCode).toBe(200);
+      expect(loaded.json<{ skills: Array<{ name: string }> }>().skills.some((skill) => skill.name === 'demo')).toBe(true);
+      const installed = await app.inject({ method: 'POST', url: '/api/skills/install', payload: { source: path.dirname(localSkill) } });
+      expect(installed.statusCode).toBe(201);
+      const list = await app.inject({ method: 'GET', url: '/api/skills/installed' });
+      expect(list.json<{ skills: Array<{ name: string; enabled: boolean }> }>().skills).toContainEqual(expect.objectContaining({ name: 'installed-demo', enabled: true }));
+      const disabled = await app.inject({ method: 'PATCH', url: '/api/skills/installed/installed-demo', payload: { enabled: false } });
+      expect(disabled.json()).toEqual({ name: 'installed-demo', enabled: false });
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('supports SDK RemoteConversation and RemoteWorkspace against the live Fastify app', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
+    const { app } = await createAgentServerApp({ agentFactory: delayedFinishAgentFactory, config: { conversationsPath: path.join(root, 'conversations'), workspaceRoot: root, sessionApiKey: 'secret' }, secretStore: new InMemorySecretStore() });
+    try {
+      await app.listen({ host: '127.0.0.1', port: 0 });
+      const address = app.server.address();
+      if (address === null || typeof address === 'string') throw new Error('Expected TCP address');
+      const host = `http://127.0.0.1:${address.port}`;
+      const start = await app.inject({ method: 'POST', url: '/api/conversations', headers: { 'x-session-api-key': 'secret' }, payload: {} });
+      const conversation = new RemoteConversation({ host, conversationId: start.json<{ id: string }>().id, apiKey: 'secret' });
+      await conversation.sendMessage('hello');
+      const started = performance.now();
+      await conversation.run({ blocking: false });
+      expect(performance.now() - started).toBeLessThan(100);
+
+      const workspace = new RemoteWorkspace({ host, apiKey: 'secret', workingDir: root });
+      const command = await workspace.executeCommand('printf remote-ok', { timeoutSeconds: 3 });
+      expect(command.stdout).toBe('remote-ok');
+      await writeFile(path.join(root, 'upload-source.txt'), 'client file', 'utf8');
+      const upload = await workspace.fileUpload(path.join(root, 'upload-source.txt'), 'uploaded-by-client.txt');
+      expect(upload.success).toBe(true);
+      const downloadPath = path.join(root, 'downloaded.txt');
+      const download = await workspace.fileDownload('uploaded-by-client.txt', downloadPath);
+      expect(download.success).toBe(true);
+      expect(await readFile(downloadPath, 'utf8')).toBe('client file');
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
 });

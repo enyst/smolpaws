@@ -19,18 +19,21 @@
     "README.md"
   ],
   "scripts": {
+    "ci": "npm run openapi && npm test && npm run test:coverage && npm run typecheck && npm run lint && npm run build",
     "build": "npm run build:bundle && npm run build:types",
     "build:bundle": "tsup --config tsup.config.ts",
     "build:types": "tsc -p tsconfig.json",
     "lint": "eslint ./src",
+    "manual:llm": "tsx examples/manual-llm-smoke.ts",
     "openapi": "tsx scripts/generate-openapi.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@fastify/multipart": "^9.4.0",
     "@fastify/websocket": "^11.2.0",
-    "@smolpaws/openhands-agent": "file:../../../openhands-agent",
+    "@smolpaws/openhands-agent": "file:vendor/openhands-agent",
     "fastify": "^5.7.4",
     "zod": "^4.4.3"
   },
@@ -52,5 +55,8 @@
   },
   "overrides": {
     "esbuild": "^0.28.1"
-  }
+  },
+  "bundledDependencies": [
+    "@smolpaws/openhands-agent"
+  ]
 }

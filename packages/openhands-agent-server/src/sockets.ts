@@ -25,8 +25,7 @@ export function registerSocketRoutes(app: FastifyInstance, deps: SocketRouteDeps
 }
 
 async function handleEventsSocket(socket: SocketLike, request: FastifyRequest, deps: SocketRouteDeps): Promise<void> {
-  if (!isSocketAuthorized(request, deps.config)) {
-    socket.close(1008, 'Invalid or missing session API key');
+  if (!(await authenticateSocket(socket, request, deps.config))) {
     return;
   }
 
@@ -73,8 +72,7 @@ async function handleEventsSocket(socket: SocketLike, request: FastifyRequest, d
 }
 
 async function handleBashEventsSocket(socket: SocketLike, request: FastifyRequest, deps: SocketRouteDeps): Promise<void> {
-  if (!isSocketAuthorized(request, deps.config)) {
-    socket.close(1008, 'Invalid or missing session API key');
+  if (!(await authenticateSocket(socket, request, deps.config))) {
     return;
   }
 
@@ -104,11 +102,68 @@ async function handleBashEventsSocket(socket: SocketLike, request: FastifyReques
   socket.on('error', () => void deps.bashEventService.unsubscribeFromEvents(subscriberId));
 }
 
-function isSocketAuthorized(request: FastifyRequest, config: AgentServerConfig): boolean {
+async function authenticateSocket(socket: SocketLike, request: FastifyRequest, config: AgentServerConfig): Promise<boolean> {
   const expected = config.sessionApiKey;
   if (expected === undefined || expected === null || expected === '') return true;
+
   const query = request.query as Record<string, unknown>;
-  return request.headers['x-session-api-key'] === expected || query.session_api_key === expected;
+  const supplied = request.headers['x-session-api-key'] ?? query.session_api_key;
+  if (supplied !== undefined) {
+    if (supplied === expected) return true;
+    socket.close(4001, 'Authentication failed');
+    return false;
+  }
+
+  const message = await readFirstSocketMessage(socket, 10_000).catch(() => null);
+  if (message === null) {
+    socket.close(4001, 'Authentication failed');
+    return false;
+  }
+
+  const parsed = parseAuthMessage(message);
+  if (parsed?.session_api_key !== expected) {
+    socket.close(4001, 'Authentication failed');
+    return false;
+  }
+  return true;
+}
+
+function parseAuthMessage(message: unknown): { readonly session_api_key: string } | null {
+  try {
+    const payload = JSON.parse(bufferToString(message)) as unknown;
+    if (typeof payload !== 'object' || payload === null) return null;
+    if (!('type' in payload) || payload.type !== 'auth') return null;
+    if (!('session_api_key' in payload) || typeof payload.session_api_key !== 'string') return null;
+    return { session_api_key: payload.session_api_key };
+  } catch {
+    return null;
+  }
+}
+
+function readFirstSocketMessage(socket: SocketLike, timeoutMs: number): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('websocket_first_message_auth_timeout'));
+    }, timeoutMs);
+    const onMessage = (data: unknown) => {
+      cleanup();
+      resolve(data);
+    };
+    const onCloseOrError = () => {
+      cleanup();
+      reject(new Error('websocket_closed_before_auth'));
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off('message', onMessage);
+      socket.off('close', onCloseOrError);
+      socket.off('error', onCloseOrError);
+    };
+    socket.once('message', onMessage);
+    socket.once('close', onCloseOrError);
+    socket.once('error', onCloseOrError);
+  });
 }
 
 function bufferToString(data: unknown): string {
@@ -125,4 +180,8 @@ interface SocketLike {
   close(code?: number, reason?: string): void;
   on(event: 'message', listener: (data: unknown) => void): void;
   on(event: 'close' | 'error', listener: () => void): void;
+  once(event: 'message', listener: (data: unknown) => void): void;
+  once(event: 'close' | 'error', listener: () => void): void;
+  off(event: 'message', listener: (data: unknown) => void): void;
+  off(event: 'close' | 'error', listener: () => void): void;
 }

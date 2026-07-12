@@ -24,16 +24,15 @@ Implemented in this slice:
 - git changes/diff routes
 - file home/search/download/upload routes
 - SDK `EventLog` durability with server-owned `meta.json`
-- zod-backed contracts, tsup/vitest/type-checked eslint, and OpenAPI CLI generation
+- settings, profiles, agent-profiles, skills, and keychain-backed secret metadata routes
+- zod-backed contracts, tsup/vitest/type-checked eslint, coverage, and OpenAPI CLI generation
+- package-local manual LLM smoke workflow (`npm run manual:llm` with `OPENAI_API_KEY`)
 
 Required next parity work:
 
-- skills routes/services
-- settings routes/services with **LLM-profile-first** semantics
-- profiles and agent-profiles routes/services
-- conversation secrets using the SDK's keychain-backed `SecretStore` only
-- leases, deeper bash/git/file edge-case parity, and the future message-queue layer
-  that replaces SmolPaws turns
+- conversation leases and multi-instance ownership safeguards
+- deeper live-agent parity runs against additional providers/models
+- the future message-queue layer that replaces SmolPaws turns
 
 Intentionally not wanted in this package:
 
@@ -66,12 +65,31 @@ See [`TRANSPILE_RULES.md`](TRANSPILE_RULES.md) for durable porting rules
 fulfilled criteria, accepted deviations, persistence ownership, and next parity
 checklist.
 
+Package-local validation:
+
+```sh
+npm run ci
+```
+
+Generate this package's OpenAPI schema with:
+
+```sh
+npm run openapi
+```
+
 Generate all current SmolPaws OpenAPI artifacts from the repository root with:
 
 ```sh
 scripts/generate-openapi.sh
 ```
 
+Run the manual live-LLM smoke only when you intentionally want to spend a real model call:
+
+```sh
+OPENAI_API_KEY=... npm run manual:llm
+```
+
+The manual smoke stores the supplied API key in macOS Keychain for its process-local profile; it does not write plaintext secrets to package files.
 
 ## References the transpile should follow
 

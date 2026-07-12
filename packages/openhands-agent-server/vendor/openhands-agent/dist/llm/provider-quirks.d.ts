@@ -1,0 +1,11 @@
+import type { LLMProfile, ReasoningEffort } from './index.js';
+export declare const ANTHROPIC_THINKING_MIN_BUDGET = 1024;
+export declare const ANTHROPIC_THINKING_MAX_BUDGET = 128000;
+export declare function isGpt5Model(model: string | null | undefined): boolean;
+export declare function hasExtendedThinking(profile: LLMProfile): boolean;
+export declare function isAnthropicModel(profile: LLMProfile): boolean;
+export declare function supportsThinkingBlocks(profile: LLMProfile): boolean;
+export declare function supportsPromptCaching(profile: LLMProfile): boolean;
+export declare function getAnthropicThinkingBudget(profile: LLMProfile, maxTokens: number): number | undefined;
+export declare function normalizeGenerationParamsForModel(profile: LLMProfile): LLMProfile;
+export declare function toGeminiThinkingLevel(reasoningEffort: ReasoningEffort | null): 'LOW' | 'MEDIUM' | 'HIGH' | undefined;

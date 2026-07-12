@@ -23,11 +23,43 @@ import {
   updateConversationRequestSchema,
   updateSecretsRequestSchema,
   confirmationResponseRequestSchema,
+  activateProfileResponseSchema,
+  agentProfileDiagnosticsSchema,
+  agentProfileListResponseSchema,
+  agentProfilePayloadSchema,
+  installedSkillResponseSchema,
+  installedSkillsListResponseSchema,
+  installSkillRequestSchema,
+  llmProfilePayloadSchema,
+  marketplaceCatalogResponseSchema,
+  profileListResponseSchema,
+  profileMutationResponseSchema,
+  renameProfileRequestSchema,
+  secretCreateRequestSchema,
+  secretItemResponseSchema,
+  secretsListResponseSchema,
+  settingsResponseSchema,
+  settingsSchemaResponseSchema,
+  settingsUpdateRequestSchema,
+  skillsRequestSchema,
+  skillsResponseSchema,
+  syncResponseSchema,
+  uninstallSkillResponseSchema,
+  updateSkillResponseSchema,
+  updateSkillStateRequestSchema,
+  updateSkillStateResponseSchema,
 } from './models.js';
 
-export type HttpMethod = 'get' | 'post' | 'patch' | 'delete';
+export type HttpMethod = 'get' | 'post' | 'put' | 'patch' | 'delete';
 
 type Schema = z.ZodType<unknown>;
+
+interface QueryParameterSpec {
+  readonly name: string;
+  readonly schema: Record<string, unknown>;
+  readonly required?: boolean;
+  readonly description?: string;
+}
 
 export interface RouteSpec {
   readonly method: HttpMethod;
@@ -35,6 +67,7 @@ export interface RouteSpec {
   readonly tags: readonly string[];
   readonly summary: string;
   readonly requestBody?: Schema;
+  readonly query?: readonly QueryParameterSpec[];
   readonly responses: Readonly<Record<number, Schema | null>>;
 }
 
@@ -70,6 +103,24 @@ const acceptedDeviationSchema = z.object({ detail: z.string(), accepted_deviatio
 const bashClearResponseSchema = z.object({ cleared_count: z.number().int().nonnegative() }).strict();
 
 
+const paginationQuery: readonly QueryParameterSpec[] = [
+  { name: 'limit', schema: { type: 'integer', minimum: 1, maximum: 100 }, description: 'Maximum number of items to return.' },
+  { name: 'page_id', schema: { type: 'string', nullable: true }, description: 'Opaque pagination cursor.' },
+];
+const eventSearchQuery: readonly QueryParameterSpec[] = [
+  ...paginationQuery,
+  { name: 'kind', schema: { type: 'string', nullable: true } },
+  { name: 'source', schema: { type: 'string', nullable: true } },
+  { name: 'body', schema: { type: 'string', nullable: true } },
+  { name: 'sort_order', schema: { type: 'string', enum: ['TIMESTAMP', 'TIMESTAMP_DESC'] } },
+  { name: 'timestamp_gte', schema: { type: 'string', format: 'date-time', nullable: true } },
+  { name: 'timestamp_lt', schema: { type: 'string', format: 'date-time', nullable: true } },
+];
+const eventCountQuery: readonly QueryParameterSpec[] = eventSearchQuery.filter((parameter) => parameter.name !== 'limit' && parameter.name !== 'page_id' && parameter.name !== 'sort_order');
+const idsQuery: readonly QueryParameterSpec[] = [{ name: 'ids', schema: { type: 'string' }, required: true, description: 'Comma-separated IDs.' }];
+const pathQuery: readonly QueryParameterSpec[] = [{ name: 'path', schema: { type: 'string' }, description: 'Filesystem path.' }];
+
+
 const conversationBatchSchema = z.array(conversationInfoSchema.nullable());
 
 export const routeSpecs = [
@@ -79,9 +130,9 @@ export const routeSpecs = [
   { method: 'get', path: '/ready', tags: ['Server Details'], summary: 'Readiness check', responses: { 200: healthStatusSchema, 503: healthStatusSchema } },
   { method: 'get', path: '/server_info', tags: ['Server Details'], summary: 'Server information', responses: { 200: serverInfoSchema } },
 
-  { method: 'get', path: '/api/conversations/search', tags: ['Conversations'], summary: 'Search conversations', responses: { 200: conversationPageSchema } },
+  { method: 'get', path: '/api/conversations/search', tags: ['Conversations'], summary: 'Search conversations', query: paginationQuery, responses: { 200: conversationPageSchema } },
   { method: 'get', path: '/api/conversations/count', tags: ['Conversations'], summary: 'Count conversations', responses: { 200: z.number().int().nonnegative() } },
-  { method: 'get', path: '/api/conversations', tags: ['Conversations'], summary: 'Batch get conversations', responses: { 200: conversationBatchSchema } },
+  { method: 'get', path: '/api/conversations', tags: ['Conversations'], summary: 'Batch get conversations', query: idsQuery, responses: { 200: conversationBatchSchema } },
   { method: 'post', path: '/api/conversations', tags: ['Conversations'], summary: 'Start conversation', requestBody: openApiStartConversationRequestSchema, responses: { 200: conversationInfoSchema, 201: conversationInfoSchema } },
   { method: 'get', path: '/api/conversations/{conversation_id}', tags: ['Conversations'], summary: 'Get conversation', responses: { 200: conversationInfoSchema, 404: null } },
   { method: 'patch', path: '/api/conversations/{conversation_id}', tags: ['Conversations'], summary: 'Update conversation metadata', requestBody: updateConversationRequestSchema, responses: { 200: successSchema, 404: null } },
@@ -100,27 +151,62 @@ export const routeSpecs = [
   { method: 'post', path: '/api/conversations/{conversation_id}/condense', tags: ['Conversations'], summary: 'Condense conversation', responses: { 200: successSchema, 404: null, 501: null } },
   { method: 'post', path: '/api/conversations/{conversation_id}/fork', tags: ['Conversations'], summary: 'Fork conversation', requestBody: forkConversationRequestSchema, responses: { 201: conversationInfoSchema, 404: null, 409: null } },
 
-  { method: 'get', path: '/api/conversations/{conversation_id}/events/search', tags: ['Events'], summary: 'Search conversation events', responses: { 200: openApiEventPageSchema, 404: null } },
-  { method: 'get', path: '/api/conversations/{conversation_id}/events/count', tags: ['Events'], summary: 'Count conversation events', responses: { 200: z.number().int().nonnegative(), 404: null } },
-  { method: 'get', path: '/api/conversations/{conversation_id}/events', tags: ['Events'], summary: 'Batch get conversation events', responses: { 200: eventBatchSchema, 404: null } },
+  { method: 'get', path: '/api/conversations/{conversation_id}/events/search', tags: ['Events'], summary: 'Search conversation events', query: eventSearchQuery, responses: { 200: openApiEventPageSchema, 404: null } },
+  { method: 'get', path: '/api/conversations/{conversation_id}/events/count', tags: ['Events'], summary: 'Count conversation events', query: eventCountQuery, responses: { 200: z.number().int().nonnegative(), 404: null } },
+  { method: 'get', path: '/api/conversations/{conversation_id}/events', tags: ['Events'], summary: 'Batch get conversation events', query: idsQuery, responses: { 200: eventBatchSchema, 404: null } },
   { method: 'post', path: '/api/conversations/{conversation_id}/events', tags: ['Events'], summary: 'Send a message', requestBody: openApiSendMessageRequestSchema, responses: { 200: successSchema, 404: null } },
   { method: 'get', path: '/api/conversations/{conversation_id}/events/{event_id}', tags: ['Events'], summary: 'Get conversation event', responses: { 200: openApiEventSchema, 404: null } },
   { method: 'post', path: '/api/conversations/{conversation_id}/events/respond_to_confirmation', tags: ['Events'], summary: 'Accepted deviation: confirmation responses are intentionally unsupported', requestBody: confirmationResponseRequestSchema, responses: { 410: acceptedDeviationSchema, 404: null } },
 
-  { method: 'get', path: '/api/bash/bash_events/search', tags: ['Bash'], summary: 'Search bash events', responses: { 200: bashEventPageSchema } },
+  { method: 'get', path: '/api/bash/bash_events/search', tags: ['Bash'], summary: 'Search bash events', query: paginationQuery, responses: { 200: bashEventPageSchema } },
   { method: 'get', path: '/api/bash/bash_events/{event_id}', tags: ['Bash'], summary: 'Get bash event', responses: { 200: bashEventSchema, 404: null } },
-  { method: 'get', path: '/api/bash/bash_events', tags: ['Bash'], summary: 'Batch get bash events', responses: { 200: z.array(bashEventSchema.nullable()) } },
+  { method: 'get', path: '/api/bash/bash_events', tags: ['Bash'], summary: 'Batch get bash events', query: [{ name: 'event_ids', schema: { type: 'string' }, required: true, description: 'Comma-separated event IDs.' }], responses: { 200: z.array(bashEventSchema.nullable()) } },
   { method: 'post', path: '/api/bash/start_bash_command', tags: ['Bash'], summary: 'Start bash command', requestBody: executeBashRequestSchema, responses: { 200: bashEventSchema } },
   { method: 'post', path: '/api/bash/execute_bash_command', tags: ['Bash'], summary: 'Execute bash command', requestBody: executeBashRequestSchema, responses: { 200: bashEventSchema } },
   { method: 'delete', path: '/api/bash/bash_events', tags: ['Bash'], summary: 'Clear bash events', responses: { 200: bashClearResponseSchema } },
 
-  { method: 'get', path: '/api/git/changes', tags: ['Git'], summary: 'Get git changes', responses: { 200: z.array(gitChangeSchema), 400: null } },
-  { method: 'get', path: '/api/git/diff', tags: ['Git'], summary: 'Get git diff', responses: { 200: gitDiffSchema, 400: null } },
+  { method: 'get', path: '/api/settings/agent-schema', tags: ['Settings'], summary: 'Get agent settings schema', responses: { 200: settingsSchemaResponseSchema } },
+  { method: 'get', path: '/api/settings/conversation-schema', tags: ['Settings'], summary: 'Get conversation settings schema', responses: { 200: settingsSchemaResponseSchema } },
+  { method: 'get', path: '/api/settings', tags: ['Settings'], summary: 'Get current settings', responses: { 200: settingsResponseSchema } },
+  { method: 'patch', path: '/api/settings', tags: ['Settings'], summary: 'Update settings', requestBody: settingsUpdateRequestSchema, responses: { 200: settingsResponseSchema, 422: null } },
+  { method: 'get', path: '/api/settings/secrets', tags: ['Settings'], summary: 'List secret metadata', responses: { 200: secretsListResponseSchema } },
+  { method: 'put', path: '/api/settings/secrets', tags: ['Settings'], summary: 'Create or update a keychain-backed secret', requestBody: secretCreateRequestSchema, responses: { 200: secretItemResponseSchema, 422: null } },
+  { method: 'get', path: '/api/settings/secrets/{name}', tags: ['Settings'], summary: 'Get redacted secret metadata', responses: { 200: secretItemResponseSchema, 404: null } },
+  { method: 'delete', path: '/api/settings/secrets/{name}', tags: ['Settings'], summary: 'Delete a keychain-backed secret', responses: { 200: successSchema, 404: null } },
+
+  { method: 'get', path: '/api/profiles', tags: ['Profiles'], summary: 'List LLM profiles', responses: { 200: profileListResponseSchema } },
+  { method: 'get', path: '/api/profiles/{name}', tags: ['Profiles'], summary: 'Get LLM profile', responses: { 200: llmProfilePayloadSchema, 404: null } },
+  { method: 'post', path: '/api/profiles', tags: ['Profiles'], summary: 'Create or update LLM profile', requestBody: llmProfilePayloadSchema, responses: { 201: llmProfilePayloadSchema, 422: null } },
+  { method: 'delete', path: '/api/profiles/{name}', tags: ['Profiles'], summary: 'Delete LLM profile', responses: { 200: profileMutationResponseSchema } },
+  { method: 'post', path: '/api/profiles/{name}/rename', tags: ['Profiles'], summary: 'Rename LLM profile', requestBody: renameProfileRequestSchema, responses: { 200: profileMutationResponseSchema, 404: null, 409: null } },
+  { method: 'post', path: '/api/profiles/{name}/activate', tags: ['Profiles'], summary: 'Activate LLM profile', responses: { 200: activateProfileResponseSchema, 404: null } },
+
+  { method: 'get', path: '/api/agent-profiles', tags: ['Agent Profiles'], summary: 'List agent profiles', responses: { 200: agentProfileListResponseSchema } },
+  { method: 'get', path: '/api/agent-profiles/{name}', tags: ['Agent Profiles'], summary: 'Get agent profile', responses: { 200: agentProfilePayloadSchema, 404: null } },
+  { method: 'post', path: '/api/agent-profiles', tags: ['Agent Profiles'], summary: 'Create or update agent profile', requestBody: agentProfilePayloadSchema, responses: { 201: agentProfilePayloadSchema, 422: null } },
+  { method: 'delete', path: '/api/agent-profiles/{name}', tags: ['Agent Profiles'], summary: 'Delete agent profile', responses: { 200: profileMutationResponseSchema } },
+  { method: 'post', path: '/api/agent-profiles/{name}/rename', tags: ['Agent Profiles'], summary: 'Rename agent profile', requestBody: renameProfileRequestSchema, responses: { 200: profileMutationResponseSchema, 404: null, 409: null } },
+  { method: 'post', path: '/api/agent-profiles/{profile_id}/activate', tags: ['Agent Profiles'], summary: 'Activate agent profile', responses: { 200: activateProfileResponseSchema, 404: null } },
+  { method: 'post', path: '/api/agent-profiles/{name}/materialize', tags: ['Agent Profiles'], summary: 'Materialize agent profile diagnostics', responses: { 200: agentProfileDiagnosticsSchema, 404: null } },
+
+  { method: 'post', path: '/api/skills', tags: ['Skills'], summary: 'Load available skills', requestBody: skillsRequestSchema, responses: { 200: skillsResponseSchema } },
+  { method: 'post', path: '/api/skills/sync', tags: ['Skills'], summary: 'Sync public skills cache', responses: { 200: syncResponseSchema } },
+  { method: 'post', path: '/api/skills/install', tags: ['Skills'], summary: 'Install local skill', requestBody: installSkillRequestSchema, responses: { 201: installedSkillResponseSchema, 400: null, 409: null, 422: null } },
+  { method: 'get', path: '/api/skills/installed', tags: ['Skills'], summary: 'List installed skills', responses: { 200: installedSkillsListResponseSchema } },
+  { method: 'get', path: '/api/skills/installed/{skill_name}', tags: ['Skills'], summary: 'Get installed skill', responses: { 200: installedSkillResponseSchema, 404: null } },
+  { method: 'patch', path: '/api/skills/installed/{skill_name}', tags: ['Skills'], summary: 'Enable or disable installed skill', requestBody: updateSkillStateRequestSchema, responses: { 200: updateSkillStateResponseSchema, 404: null } },
+  { method: 'delete', path: '/api/skills/installed/{skill_name}', tags: ['Skills'], summary: 'Uninstall skill', responses: { 200: uninstallSkillResponseSchema, 404: null } },
+  { method: 'post', path: '/api/skills/installed/{skill_name}/refresh', tags: ['Skills'], summary: 'Refresh installed skill', responses: { 200: updateSkillResponseSchema, 404: null } },
+  { method: 'get', path: '/api/skills/marketplace', tags: ['Skills'], summary: 'Get marketplace catalog', responses: { 200: marketplaceCatalogResponseSchema } },
+
+
+  { method: 'get', path: '/api/git/changes', tags: ['Git'], summary: 'Get git changes', query: pathQuery, responses: { 200: z.array(gitChangeSchema), 400: null } },
+  { method: 'get', path: '/api/git/diff', tags: ['Git'], summary: 'Get git diff', query: pathQuery, responses: { 200: gitDiffSchema, 400: null } },
   { method: 'get', path: '/api/git/changes/{path}', tags: ['Git'], summary: 'Get git changes for path', responses: { 200: z.array(gitChangeSchema), 400: null } },
   { method: 'get', path: '/api/git/diff/{path}', tags: ['Git'], summary: 'Get git diff for path', responses: { 200: gitDiffSchema, 400: null } },
 
-  { method: 'post', path: '/api/file/upload', tags: ['File'], summary: 'Upload file', responses: { 200: successSchema, 400: null, 403: null } },
-  { method: 'get', path: '/api/file/download', tags: ['File'], summary: 'Download file', responses: { 200: z.unknown(), 400: null, 403: null, 404: null } },
+  { method: 'post', path: '/api/file/upload', tags: ['File'], summary: 'Upload file', query: pathQuery, responses: { 200: successSchema, 400: null, 403: null } },
+  { method: 'get', path: '/api/file/download', tags: ['File'], summary: 'Download file', query: pathQuery, responses: { 200: z.unknown(), 400: null, 403: null, 404: null } },
   { method: 'post', path: '/api/file/upload/{path}', tags: ['File'], summary: 'Upload file by path', responses: { 200: successSchema, 400: null, 403: null } },
   { method: 'get', path: '/api/file/download/{path}', tags: ['File'], summary: 'Download file by path', responses: { 200: z.unknown(), 400: null, 403: null, 404: null } },
   { method: 'get', path: '/api/file/home', tags: ['File'], summary: 'Get home and favorite directories', responses: { 200: homeResponseSchema } },
@@ -159,7 +245,7 @@ function operationForRoute(route: RouteSpec): Record<string, unknown> {
   return {
     tags: route.tags,
     summary: route.summary,
-    parameters: pathParameters(route.path),
+    parameters: [...pathParameters(route.path), ...queryParameters(route.query ?? [])],
     ...(route.requestBody === undefined ? {} : { requestBody: jsonRequestBody(route.requestBody) }),
     responses: Object.fromEntries(
       Object.entries(route.responses).map(([status, schema]) => [status, responseObject(schema)]),
@@ -173,6 +259,16 @@ function pathParameters(path: string): Array<Record<string, unknown>> {
     in: 'path',
     required: true,
     schema: { type: 'string', format: match[1]?.endsWith('_id') ? 'uuid' : undefined },
+  }));
+}
+
+function queryParameters(query: readonly QueryParameterSpec[]): Array<Record<string, unknown>> {
+  return query.map((parameter) => ({
+    name: parameter.name,
+    in: 'query',
+    required: parameter.required ?? false,
+    ...(parameter.description === undefined ? {} : { description: parameter.description }),
+    schema: parameter.schema,
   }));
 }
 
