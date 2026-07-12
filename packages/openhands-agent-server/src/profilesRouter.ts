@@ -19,6 +19,12 @@ export function registerProfileRoutes(app: FastifyInstance, state: ServerStateSe
     reply.status(201);
     return profile;
   });
+  app.post('/api/profiles/:name', async (request, reply) => {
+    const name = param(request, 'name');
+    const profile = await state.saveProfile(parseBody(llmProfilePayloadSchema, { ...(isRecord(request.body) ? request.body : {}), profileId: name }));
+    reply.status(201);
+    return profile;
+  });
   app.delete('/api/profiles/:name', async (request) => {
     const name = param(request, 'name');
     await state.deleteProfile(name);
@@ -45,4 +51,8 @@ export function registerProfileRoutes(app: FastifyInstance, state: ServerStateSe
     }
     return { id: name, message: `Profile '${name}' activated` };
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

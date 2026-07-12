@@ -19,13 +19,14 @@
     "README.md"
   ],
   "scripts": {
-    "ci": "npm run openapi && npm test && npm run test:coverage && npm run typecheck && npm run lint && npm run build",
+    "ci": "npm run openapi && npm run test:route-parity && npm test && npm run test:coverage && npm run typecheck && npm run lint && npm run build",
     "build": "npm run build:bundle && npm run build:types",
     "build:bundle": "tsup --config tsup.config.ts",
     "build:types": "tsc -p tsconfig.json",
     "lint": "eslint ./src",
     "manual:llm": "tsx examples/manual-llm-smoke.ts",
     "openapi": "tsx scripts/generate-openapi.ts",
+    "test:route-parity": "tsx scripts/check-route-parity.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"

@@ -7,6 +7,7 @@ import { MacOSKeychainSecretStore, type SecretStore } from '@smolpaws/openhands-
 
 import { registerAgentProfileRoutes } from './agentProfilesRouter.js';
 import { BashEventService } from './bashService.js';
+import { ConversationLeaseHeldError, ConversationOwnershipLostError } from './conversationLease.js';
 import { registerBashRoutes } from './bashRouter.js';
 import { ConversationService, type ConversationServiceOptions } from './conversationService.js';
 import { type AgentServerConfig, getDefaultConfig } from './config.js';
@@ -51,13 +52,15 @@ export async function createAgentServerApp(options: AgentServerAppOptions = {}):
     workspaceRoot,
     allowedFileRoots,
   };
+  const secretStore = options.secretStore ?? new MacOSKeychainSecretStore();
   const serviceOptions: ConversationServiceOptions = {
     persistenceDir: config.conversationsPath,
+    secretStore,
     ...(options.agentFactory === undefined ? {} : { agentFactory: options.agentFactory }),
   };
   const conversationService = options.conversationService ?? new ConversationService(serviceOptions);
   const bashEventService = new BashEventService({ bashEventsDir: config.bashEventsPath });
-  const serverStateService = options.serverStateService ?? new ServerStateService({ stateDir: config.statePath, secretStore: options.secretStore ?? new MacOSKeychainSecretStore() });
+  const serverStateService = options.serverStateService ?? new ServerStateService({ stateDir: config.statePath, secretStore });
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 25 * 1024 * 1024 });
 
   await app.register(multipart);
@@ -105,6 +108,14 @@ function registerErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
       reply.status(422).send({ detail: error.issues.map((issue) => ({ path: issue.path, message: issue.message })) });
+      return;
+    }
+    if (error instanceof ConversationLeaseHeldError || error instanceof ConversationOwnershipLostError) {
+      reply.status(409).send({ detail: error.message });
+      return;
+    }
+    if (error instanceof Error && error.message.startsWith('invalid_conversation_secret_name:')) {
+      reply.status(400).send({ detail: error.message });
       return;
     }
     reply.status(500).send({ detail: error instanceof Error ? error.message : String(error) });

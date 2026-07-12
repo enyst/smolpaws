@@ -9,6 +9,8 @@ import { describe, expect, test } from 'vitest';
 import { z } from 'zod';
 
 import { createAgentServerApp } from '../app.js';
+import { leaseFileName } from '../conversationLease.js';
+import { conversationSecretRef } from '../conversationSecrets.js';
 import { generateOpenApiSchema } from '../openapi.js';
 
 const execFileAsync = promisify(execFile);
@@ -447,6 +449,79 @@ describe('createAgentServerApp', () => {
       expect(await readFile(path.join(statePath, 'state.json'), 'utf8')).not.toMatch(/sk-secret-value|plaintext-token/u);
     } finally {
       await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('stores conversation secrets only in SecretStore and never in metadata or events', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
+    const secretStore = new InMemorySecretStore();
+    const conversationsPath = path.join(root, 'conversations');
+    const conversationId = '11111111-1111-4111-8111-111111111111';
+    const { app } = await createAgentServerApp({ config: { conversationsPath }, secretStore });
+    try {
+      const started = await app.inject({
+        method: 'POST',
+        url: '/api/conversations',
+        payload: { id: conversationId, secrets: { START_TOKEN: 'start-secret-value' } },
+      });
+      expect(started.statusCode).toBe(201);
+      expect(await secretStore.get(conversationSecretRef(conversationId, 'START_TOKEN'))).toBe('start-secret-value');
+
+      const updated = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/secrets`,
+        payload: { secrets: { RUNTIME_TOKEN: { value: 'runtime-secret-value' }, START_TOKEN: null } },
+      });
+      expect(updated.statusCode).toBe(200);
+      expect(await secretStore.get(conversationSecretRef(conversationId, 'START_TOKEN'))).toBeNull();
+      expect(await secretStore.get(conversationSecretRef(conversationId, 'RUNTIME_TOKEN'))).toBe('runtime-secret-value');
+
+      const info = (await app.inject({ method: 'GET', url: `/api/conversations/${conversationId}` })).json<{ secret_registry: Record<string, unknown> }>();
+      expect(info.secret_registry).toEqual({ RUNTIME_TOKEN: { source: 'keychain', ref: conversationSecretRef(conversationId, 'RUNTIME_TOKEN') } });
+
+      const meta = await readFile(path.join(conversationsPath, conversationId, 'meta.json'), 'utf8');
+      expect(meta).toContain('RUNTIME_TOKEN');
+      expect(meta).not.toMatch(/start-secret-value|runtime-secret-value/u);
+      const eventsDir = path.join(conversationsPath, conversationId, 'events');
+
+      const forkId = '33333333-3333-4333-8333-333333333333';
+      const forked = await app.inject({ method: 'POST', url: `/api/conversations/${conversationId}/fork`, payload: { id: forkId } });
+      expect(forked.statusCode).toBe(201);
+      expect(await secretStore.get(conversationSecretRef(forkId, 'RUNTIME_TOKEN'))).toBe('runtime-secret-value');
+      expect(await readFile(path.join(conversationsPath, forkId, 'meta.json'), 'utf8')).not.toContain('runtime-secret-value');
+
+      const eventFiles = await readdir(eventsDir).catch(() => []);
+      const events = await Promise.all(eventFiles.map((file) => readFile(path.join(eventsDir, file), 'utf8')));
+      expect(events.join('\n')).not.toMatch(/start-secret-value|runtime-secret-value/u);
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('prevents simultaneous ownership of the same persisted conversation', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
+    const conversationsPath = path.join(root, 'conversations');
+    const conversationId = '22222222-2222-4222-8222-222222222222';
+    const first = await createAgentServerApp({ config: { conversationsPath }, secretStore: new InMemorySecretStore() });
+    try {
+      const started = await first.app.inject({ method: 'POST', url: '/api/conversations', payload: { id: conversationId } });
+      expect(started.statusCode).toBe(201);
+      const lease = JSON.parse(await readFile(path.join(conversationsPath, conversationId, leaseFileName), 'utf8')) as Record<string, unknown>;
+      expect(lease.owner_instance_id).toEqual(expect.any(String));
+      expect(lease.generation).toBe(1);
+
+      const second = await createAgentServerApp({ config: { conversationsPath }, secretStore: new InMemorySecretStore() });
+      try {
+        const duplicate = await second.app.inject({ method: 'POST', url: '/api/conversations', payload: { id: conversationId } });
+        expect(duplicate.statusCode).toBe(409);
+        expect(duplicate.json<{ detail: string }>().detail).toContain('conversation lease is held');
+      } finally {
+        await second.app.close();
+      }
+    } finally {
+      await first.app.close();
       await rm(root, { recursive: true, force: true });
     }
   });

@@ -12,6 +12,7 @@ interface PersistedConversationFile {
   readonly workspace?: unknown;
   readonly title?: string | null;
   readonly tags?: Record<string, string>;
+  readonly secret_names?: readonly string[];
   readonly created_at?: string;
   readonly updated_at?: string;
 }
@@ -55,6 +56,7 @@ export class ConversationMetadataStore {
       workspace: stored.workspace,
       title: stored.title,
       tags: stored.tags,
+      secret_names: stored.secret_names,
       created_at: stored.created_at,
       updated_at: stored.updated_at,
     };
@@ -108,6 +110,7 @@ function parseMeta(id: string, raw: unknown, defaultRoot: string, now: string): 
     workspace: request.workspace,
     title: typeof object.title === 'string' ? object.title : null,
     tags: isStringRecord(object.tags) ? object.tags : {},
+    secret_names: Array.isArray(object.secret_names) ? object.secret_names.filter((item): item is string => typeof item === 'string') : [],
     created_at: typeof object.created_at === 'string' ? object.created_at : now,
     updated_at: typeof object.updated_at === 'string' ? object.updated_at : now,
   };

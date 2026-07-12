@@ -19,6 +19,12 @@ export function registerAgentProfileRoutes(app: FastifyInstance, state: ServerSt
     reply.status(201);
     return profile;
   });
+  app.post('/api/agent-profiles/:name', async (request, reply) => {
+    const name = param(request, 'name');
+    const profile = await state.saveAgentProfile(parseBody(agentProfilePayloadSchema, { ...(isRecord(request.body) ? request.body : {}), name }));
+    reply.status(201);
+    return profile;
+  });
   app.delete('/api/agent-profiles/:name', async (request) => {
     const name = param(request, 'name');
     await state.deleteAgentProfile(name);
@@ -53,6 +59,10 @@ export function registerAgentProfileRoutes(app: FastifyInstance, state: ServerSt
     }
     return { valid: true, errors: [], resolved_settings: redactedSettings(profile) };
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function redactedSettings(profile: Record<string, unknown>): Record<string, unknown> {

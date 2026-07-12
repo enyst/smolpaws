@@ -105,8 +105,9 @@ export function registerConversationRoutes(app: FastifyInstance, service: Conver
   app.post('/api/conversations/:conversation_id/secrets', async (request, reply) => {
     const eventService = await eventServiceOr404(reply, service, param(request, 'conversation_id'));
     if (eventService === null) return undefined;
-    parseBody(updateSecretsRequestSchema, request.body);
-    return notImplemented(reply, 'conversation_secrets_not_implemented');
+    const body = parseBody(updateSecretsRequestSchema, request.body);
+    await eventService.updateSecrets(body.secrets);
+    return { success: true };
   });
 
   app.post('/api/conversations/:conversation_id/confirmation_policy', async (request, reply) => {

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   Agent,
+  type SecretStore,
   ConversationState,
   EventLog,
   EVENTS_DIR,
@@ -18,6 +19,7 @@ import {
 } from '@smolpaws/openhands-agent';
 
 import { resolvePersistenceRoot } from './conversationMetadata.js';
+import { conversationSecretRef, extractConversationSecretUpdates } from './conversationSecrets.js';
 import { type ConfirmationResponseRequest, type EventPage, type EventSortOrder, textFromContent } from './models.js';
 import type { StoredConversation } from './models.js';
 import { PubSub, type Subscriber } from './pubSub.js';
@@ -34,6 +36,7 @@ export interface EventServiceOptions {
   readonly events?: readonly Event[];
   readonly eventLog?: EventLog;
   readonly saveConversation?: (stored: StoredConversation) => Promise<void>;
+  readonly secretStore?: SecretStore;
 }
 
 export class EventService {
@@ -42,6 +45,7 @@ export class EventService {
   readonly state: ConversationState;
   private readonly pubSub = new PubSub<Event>(50);
   private readonly saveConversation: (stored: StoredConversation) => Promise<void>;
+  private readonly secretStore: SecretStore | undefined;
   private readonly conversationPromise: Promise<LocalConversation>;
   private readonly publishedEventIds = new Set<string>();
   private runPromise: Promise<void> | null = null;
@@ -52,6 +56,7 @@ export class EventService {
     this.eventLog = options.eventLog ?? createEventLog(options.stored);
     this.state = new ConversationState({ eventLog: this.eventLog, events: options.events ?? [] });
     this.saveConversation = options.saveConversation ?? (async () => undefined);
+    this.secretStore = options.secretStore;
     this.conversationPromise = this.createConversation(options.agentFactory);
   }
 
@@ -151,8 +156,22 @@ export class EventService {
     throw new Error('accepted_deviation:confirmation_responses');
   }
 
-  async updateSecrets(_secrets: Record<string, unknown>): Promise<void> {
-    throw new Error('conversation_secrets_not_implemented');
+  async updateSecrets(secrets: Record<string, unknown>): Promise<void> {
+    const store = this.secretStore;
+    if (store === undefined) {
+      throw new Error('conversation_secret_store_not_configured');
+    }
+    const updates = extractConversationSecretUpdates(secrets);
+    await Promise.all([
+      ...[...updates.set].map(([name, value]) => store.set(conversationSecretRef(this.stored.id, name), value)),
+      ...updates.delete.map((name) => store.delete(conversationSecretRef(this.stored.id, name))),
+    ]);
+    const names = new Set(this.stored.secret_names);
+    for (const name of updates.set.keys()) names.add(name);
+    for (const name of updates.delete) names.delete(name);
+    this.stored.secret_names = [...names].sort();
+    this.touch();
+    await this.saveConversation(this.stored);
   }
 
   async setConfirmationPolicy(_policy: unknown): Promise<void> {

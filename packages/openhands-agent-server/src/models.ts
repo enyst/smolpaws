@@ -59,6 +59,7 @@ export const startConversationRequestSchema = z
     stuck_detection: z.boolean().default(true),
     title: z.string().nullable().optional(),
     tags: z.record(z.string(), z.string()).default({}),
+    secrets: z.record(z.string(), z.unknown()).optional(),
     worktree: z.boolean().default(false),
   })
   .passthrough();
@@ -133,6 +134,7 @@ export interface StoredConversation {
   readonly workspace: WorkspacePayload;
   title: string | null;
   tags: Record<string, string>;
+  secret_names: readonly string[];
   created_at: string;
   updated_at: string;
 }

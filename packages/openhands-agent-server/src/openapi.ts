@@ -94,6 +94,7 @@ const openApiStartConversationRequestSchema = z
     title: z.string().nullable().optional(),
     tags: z.record(z.string(), z.string()).default({}),
     worktree: z.boolean().default(false),
+    secrets: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 const openApiEventSchema = z.object({ kind: z.string() }).passthrough();
@@ -144,7 +145,8 @@ export const routeSpecs = [
   { method: 'post', path: '/api/conversations/{conversation_id}/goal', tags: ['Conversations'], summary: 'Start goal loop', requestBody: startGoalRequestSchema, responses: { 200: successSchema, 404: null, 501: null } },
   { method: 'post', path: '/api/conversations/{conversation_id}/goal/stop', tags: ['Conversations'], summary: 'Stop goal loop', responses: { 200: successSchema, 404: null, 501: null } },
   { method: 'post', path: '/api/conversations/{conversation_id}/goal/resume', tags: ['Conversations'], summary: 'Resume goal loop', responses: { 200: successSchema, 404: null, 501: null } },
-  { method: 'post', path: '/api/conversations/{conversation_id}/secrets', tags: ['Conversations'], summary: 'Update conversation secrets', requestBody: updateSecretsRequestSchema, responses: { 200: successSchema, 404: null, 501: null } },
+  { method: 'post', path: '/api/conversations/{conversation_id}/secrets', tags: ['Conversations'], summary: 'Update keychain-backed conversation secrets', requestBody: updateSecretsRequestSchema, responses: { 200: successSchema, 400: null, 404: null } },
+
   { method: 'post', path: '/api/conversations/{conversation_id}/confirmation_policy', tags: ['Conversations'], summary: 'Accepted deviation: confirmation policy is intentionally unsupported', requestBody: setConfirmationPolicyRequestSchema, responses: { 410: acceptedDeviationSchema, 404: null } },
   { method: 'post', path: '/api/conversations/{conversation_id}/security_analyzer', tags: ['Conversations'], summary: 'Accepted deviation: security analyzer is intentionally unsupported', requestBody: setSecurityAnalyzerRequestSchema, responses: { 410: acceptedDeviationSchema, 404: null } },
   { method: 'post', path: '/api/conversations/{conversation_id}/ask_agent', tags: ['Conversations'], summary: 'Ask agent out of band', requestBody: askAgentRequestSchema, responses: { 200: askAgentResponseSchema, 404: null, 501: null } },
@@ -177,6 +179,7 @@ export const routeSpecs = [
   { method: 'get', path: '/api/profiles', tags: ['Profiles'], summary: 'List LLM profiles', responses: { 200: profileListResponseSchema } },
   { method: 'get', path: '/api/profiles/{name}', tags: ['Profiles'], summary: 'Get LLM profile', responses: { 200: llmProfilePayloadSchema, 404: null } },
   { method: 'post', path: '/api/profiles', tags: ['Profiles'], summary: 'Create or update LLM profile', requestBody: llmProfilePayloadSchema, responses: { 201: llmProfilePayloadSchema, 422: null } },
+  { method: 'post', path: '/api/profiles/{name}', tags: ['Profiles'], summary: 'Create or update LLM profile by name', requestBody: llmProfilePayloadSchema, responses: { 201: llmProfilePayloadSchema, 422: null } },
   { method: 'delete', path: '/api/profiles/{name}', tags: ['Profiles'], summary: 'Delete LLM profile', responses: { 200: profileMutationResponseSchema } },
   { method: 'post', path: '/api/profiles/{name}/rename', tags: ['Profiles'], summary: 'Rename LLM profile', requestBody: renameProfileRequestSchema, responses: { 200: profileMutationResponseSchema, 404: null, 409: null } },
   { method: 'post', path: '/api/profiles/{name}/activate', tags: ['Profiles'], summary: 'Activate LLM profile', responses: { 200: activateProfileResponseSchema, 404: null } },
@@ -184,6 +187,7 @@ export const routeSpecs = [
   { method: 'get', path: '/api/agent-profiles', tags: ['Agent Profiles'], summary: 'List agent profiles', responses: { 200: agentProfileListResponseSchema } },
   { method: 'get', path: '/api/agent-profiles/{name}', tags: ['Agent Profiles'], summary: 'Get agent profile', responses: { 200: agentProfilePayloadSchema, 404: null } },
   { method: 'post', path: '/api/agent-profiles', tags: ['Agent Profiles'], summary: 'Create or update agent profile', requestBody: agentProfilePayloadSchema, responses: { 201: agentProfilePayloadSchema, 422: null } },
+  { method: 'post', path: '/api/agent-profiles/{name}', tags: ['Agent Profiles'], summary: 'Create or update agent profile by name', requestBody: agentProfilePayloadSchema, responses: { 201: agentProfilePayloadSchema, 422: null } },
   { method: 'delete', path: '/api/agent-profiles/{name}', tags: ['Agent Profiles'], summary: 'Delete agent profile', responses: { 200: profileMutationResponseSchema } },
   { method: 'post', path: '/api/agent-profiles/{name}/rename', tags: ['Agent Profiles'], summary: 'Rename agent profile', requestBody: renameProfileRequestSchema, responses: { 200: profileMutationResponseSchema, 404: null, 409: null } },
   { method: 'post', path: '/api/agent-profiles/{profile_id}/activate', tags: ['Agent Profiles'], summary: 'Activate agent profile', responses: { 200: activateProfileResponseSchema, 404: null } },

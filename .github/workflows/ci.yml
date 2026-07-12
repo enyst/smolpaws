@@ -24,6 +24,9 @@ jobs:
       - name: Install agent-server dependencies
         run: npm ci --prefix apps/agent-server
 
+      - name: Install OpenHands agent-server package dependencies
+        run: npm ci --prefix packages/openhands-agent-server
+
       - name: Install GitHub ingress dependencies
         run: npm ci --prefix apps/github
 
@@ -38,6 +41,14 @@ jobs:
 
       - name: Run agent-server runtime tests
         run: npm run agent-server:test
+
+      - name: Run OpenHands agent-server package CI
+        run: npm run ci --prefix packages/openhands-agent-server
+
+      - name: Verify generated OpenAPI artifacts are committed
+        run: |
+          npm run openapi:generate
+          git diff --exit-code -- packages/openhands-agent-server/openapi.json
 
       - name: Run GitHub ingress tests
         run: npm run github:test
