@@ -407,13 +407,15 @@ describe('createAgentServerApp', () => {
     }
   });
 
-  test('serves bash batch events on the upstream path without a trailing slash', async () => {
+  test('serves bash batch events on documented and upstream trailing-slash paths', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
     const { app } = await createAgentServerApp({ config: { conversationsPath: path.join(root, 'conversations'), bashEventsPath: path.join(root, 'bash-events') } });
     try {
-      const batch = await app.inject({ method: 'GET', url: '/api/bash/bash_events?event_ids=missing-event-id' });
-      expect(batch.statusCode).toBe(200);
-      expect(batch.json()).toEqual([null]);
+      for (const url of ['/api/bash/bash_events?event_ids=missing-event-id', '/api/bash/bash_events/?event_ids=missing-event-id']) {
+        const batch = await app.inject({ method: 'GET', url });
+        expect(batch.statusCode).toBe(200);
+        expect(batch.json()).toEqual([null]);
+      }
     } finally {
       await app.close();
       await rm(root, { recursive: true, force: true });

@@ -77,11 +77,13 @@ Primary upstream modules for this package:
 | Models | `src/models.ts` | zod-backed REST request/response/event model compatibility. |
 | Conversations | `src/conversationRouter.ts`, `src/conversationService.ts` | Start/search/count/get/update/delete/fork conversations, plus run/pause/interrupt helpers. |
 | Events | `src/eventRouter.ts`, `src/eventService.ts` | Thin wrapper over SDK `EventLog` + `ConversationState`, plus PubSub publication. |
-| Metadata | `src/conversationMetadata.ts` | Server-owned `meta.json` load/save/delete. No event log ownership. |
+| Metadata + leases | `src/conversationMetadata.ts`, `src/conversationLease.ts` | Server-owned `meta.json` load/save/delete guarded by per-conversation lease ownership. No event log ownership. |
 | PubSub/sockets | `src/pubSub.ts`, `src/sockets.ts` | In-process fanout for conversation events and bash events. |
 | Bash | `src/bashRouter.ts`, `src/bashService.ts` | Upstream-shaped bash command/event routes and bash event websocket support. |
 | Git | `src/gitRouter.ts`, `src/gitService.ts` | Upstream-shaped changes/diff routes. |
 | File | `src/fileRouter.ts` | Upstream-shaped home/search/download/upload routes with multipart support. |
+| Settings/profiles/skills | `src/serverState.ts`, `src/settingsRouter.ts`, `src/profilesRouter.ts`, `src/agentProfilesRouter.ts`, `src/skillsRouter.ts` | Profile-first settings, profile CRUD/activation/materialization, and local skills APIs. |
+| Secrets | `src/conversationSecrets.ts`, SDK `SecretStore` | Keychain-backed app/conversation secret references without plaintext metadata or event persistence. |
 | OpenAPI | `src/openapi.ts`, `scripts/generate-openapi.ts` | zod-to-JSON-Schema route table and generated schema CLI. |
 
 ## Request and event flow
@@ -153,10 +155,9 @@ Bash/git/file routes:
 - Do **not** move SDK responsibilities into the server package.
 - Do **not** chase upstream HEAD casually; advance the pinned commit deliberately.
 
-## Required next route families
+## Required route families implemented in this slice
 
-These route families are required for the replaceable SmolPaws server goal and
-should be ported red-green from pinned upstream tests where possible:
+These route families are required for the replaceable SmolPaws server goal and are implemented with tests and OpenAPI coverage in this slice:
 
 - skills routes/services
 - settings routes/services with LLM-profile-first semantics
@@ -164,6 +165,7 @@ should be ported red-green from pinned upstream tests where possible:
 - agent-profiles routes/services
 - LLM profile-oriented routes needed by settings/profile flows
 - conversation secret interfaces backed by the SDK keychain `SecretStore`
+- per-conversation lease ownership safeguards for multi-instance/restart overlap
 
 ## Accepted deviations and useful-later deferrals
 
@@ -197,6 +199,8 @@ npm run lint
 npm test
 npm run build
 npm run openapi
+npm run test:route-parity
+npm run test:pack
 ```
 
 From the repository root, regenerate all current OpenAPI artifacts with:

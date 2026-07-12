@@ -6,9 +6,9 @@ the REST/WebSocket server layer that sits on top of the SDK.
 
 ## Status
 
-**First buildable TypeScript slice.** This package now contains the upstream-shaped
-Fastify REST/WebSocket skeleton for conversations, events, pub/sub, and OpenAPI schema
-generation. It is the server-layer sibling to
+**Validated TypeScript parity slice.** This package now contains the upstream-shaped
+Fastify REST/WebSocket server for the implemented conversation, event, pub/sub,
+settings/profile/skills, persistence, secret, lease, and OpenAPI surfaces. It is the server-layer sibling to
 [`@smolpaws/openhands-agent`](https://github.com/smolpaws/openhands-agent) (the SDK transpile),
 which deliberately shipped only the client side of the server boundary
 (`RemoteConversation`/`RemoteWorkspace`) and left the server itself unported.
@@ -23,14 +23,15 @@ Implemented in this slice:
 - bash command/event routes and `/sockets/bash-events`
 - git changes/diff routes
 - file home/search/download/upload routes
-- SDK `EventLog` durability with server-owned `meta.json`
+- SDK `EventLog` durability with server-owned, lease-guarded `meta.json`
+- per-conversation lease ownership safeguards for multi-instance/restart overlap
 - settings, profiles, agent-profiles, skills, and keychain-backed secret metadata routes
-- zod-backed contracts, tsup/vitest/type-checked eslint, coverage, and OpenAPI CLI generation
+- keychain-backed conversation secret flows without plaintext metadata/event persistence
+- zod-backed contracts, tsup/vitest/type-checked eslint, coverage, OpenAPI CLI generation, route-parity checks, and packed-consumer smoke testing
 - package-local manual LLM smoke workflow (`npm run manual:llm` with `OPENAI_API_KEY`)
 
 Required next parity work:
 
-- conversation leases and multi-instance ownership safeguards
 - deeper live-agent parity runs against additional providers/models
 - the future message-queue layer that replaces SmolPaws turns
 
@@ -70,6 +71,8 @@ Package-local validation:
 ```sh
 npm run ci
 ```
+
+The package CI includes a `npm pack --dry-run`, real tarball pack, throwaway consumer install, TypeScript import check, and runtime import smoke through `npm run test:pack`.
 
 Generate this package's OpenAPI schema with:
 
