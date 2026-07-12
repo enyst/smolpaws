@@ -62,7 +62,10 @@
                       "type": "string"
                     },
                     "python_version": {
-                      "default": "v25.9.0",
+                      "default": "not-applicable",
+                      "type": "string"
+                    },
+                    "node_version": {
                       "type": "string"
                     },
                     "usable_tools": {
@@ -130,6 +133,7 @@
                     "build_git_sha",
                     "build_git_ref",
                     "python_version",
+                    "node_version",
                     "usable_tools",
                     "runtime_idle_timeout_seconds",
                     "max_foreground_terminal_timeout_seconds",
@@ -315,7 +319,10 @@
                       "type": "string"
                     },
                     "python_version": {
-                      "default": "v25.9.0",
+                      "default": "not-applicable",
+                      "type": "string"
+                    },
+                    "node_version": {
                       "type": "string"
                     },
                     "usable_tools": {
@@ -383,6 +390,7 @@
                     "build_git_sha",
                     "build_git_ref",
                     "python_version",
+                    "node_version",
                     "usable_tools",
                     "runtime_idle_timeout_seconds",
                     "max_foreground_terminal_timeout_seconds",

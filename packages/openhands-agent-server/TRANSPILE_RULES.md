@@ -107,5 +107,9 @@ current slice.
   artifacts, currently including `packages/openhands-agent-server/openapi.json`.
 - Compare the generated TypeScript schema against the pinned Python schema with an
   explicit allowlist for intentional deviations.
+- Generated artifacts must be deterministic across Node versions and hosts.
+  Runtime-only process data belongs in live responses with semantically named
+  fields (for example `node_version`), not as environment-derived OpenAPI
+  defaults.
 - Request schemas should reflect client input shape, query parameters, headers,
   multipart bodies, and status codes accurately enough for generated clients.

@@ -317,9 +317,23 @@ describe('createAgentServerApp', () => {
     await app.close();
   });
 
+  test('reports Node runtime version without nondeterministic OpenAPI defaults', async () => {
+    const { app } = await createAgentServerApp();
+    try {
+      const response = await app.inject({ method: 'GET', url: '/server_info' });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ python_version: 'not-applicable', node_version: process.version });
+    } finally {
+      await app.close();
+    }
+  });
+
   test('generates OpenAPI paths for upstream conversation/event contract', () => {
     const schema = generateOpenApiSchema();
     expect(schema.openapi).toBe('3.1.0');
+    const serializedSchema = JSON.stringify(schema);
+    expect(serializedSchema).not.toContain(process.version);
+    expect(serializedSchema).toContain('node_version');
     expect(schema.paths['/api/conversations/{conversation_id}/run']?.post).toBeDefined();
     expect(schema.paths['/api/conversations/{conversation_id}/events/search']?.get).toBeDefined();
     expect(schema.paths['/api/bash/execute_bash_command']?.post).toBeDefined();
