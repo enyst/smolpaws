@@ -26,12 +26,30 @@ Implemented in this slice:
 - SDK `EventLog` durability with server-owned `meta.json`
 - zod-backed contracts, tsup/vitest/type-checked eslint, and OpenAPI CLI generation
 
-Still intentionally stubbed/deferred:
+Required next parity work:
 
-- ACP runtime/model switching, goal loops, confirmation responses, conversation secrets,
-  condensation, and ask-agent helpers
-- workspace/skills/settings/profile routers and deeper bash/git/file edge-case parity
-- leases and the future message-queue layer that replaces SmolPaws turns
+- skills routes/services
+- settings routes/services with **LLM-profile-first** semantics
+- profiles and agent-profiles routes/services
+- conversation secrets using the SDK's keychain-backed `SecretStore` only
+- leases, deeper bash/git/file edge-case parity, and the future message-queue layer
+  that replaces SmolPaws turns
+
+Intentionally not wanted in this package:
+
+- ACP runtime/model switching
+- security analyzers / risk scoring
+- confirmation mode, confirmation policy, confirmation gates, and confirmation replies
+- deferred init
+
+Genuinely deferred / useful later:
+
+- file trajectory download
+- OpenAI-compatible `/v1/*` gateway
+- VS Code and desktop routes
+- auth cookie routes
+- MCP test route
+- workspace routers
 
 ## Provenance
 
@@ -42,9 +60,18 @@ Still intentionally stubbed/deferred:
 
 ## Architecture and criteria
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the server-specific
-transpilation rules, fulfilled criteria, accepted deviations, persistence ownership,
-and next parity checklist.
+See [`TRANSPILE_RULES.md`](TRANSPILE_RULES.md) for durable porting rules
+(secrets, LLM profiles, route-family scope, tests, and OpenAPI) and
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the first-slice architecture,
+fulfilled criteria, accepted deviations, persistence ownership, and next parity
+checklist.
+
+Generate all current SmolPaws OpenAPI artifacts from the repository root with:
+
+```sh
+scripts/generate-openapi.sh
+```
+
 
 ## References the transpile should follow
 

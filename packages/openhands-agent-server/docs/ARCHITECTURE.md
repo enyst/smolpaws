@@ -56,12 +56,16 @@ Primary upstream modules for this package:
    `scripts/generate-openapi.ts` are part of parity. New routes should update
    `src/openapi.ts` and the OpenAPI path assertions.
 8. **Accepted deviations stay explicit.** Confirmation policy, confirmation
-   responses, and security analyzer endpoints are represented as accepted-deviation
-   responses. Do not revive them as fake stubs.
-9. **No plaintext secret persistence.** This package inherits the SDK's secret
-   model: persistent settings should contain references, while raw secrets belong
-   in the keyring-backed `SecretStore` path when that server surface is added.
-10. **Tests prove protocol behavior.** Vitest coverage currently checks route
+   responses, security analyzers, ACP runtime/model switching, and deferred init
+   are not wanted as active features. If compatibility routes exist, they should
+   return accepted-deviation/unsupported responses rather than fake no-ops.
+9. **Secrets are keychain-only.** Keep upstream-facing secret interfaces where
+   practical, but do not port Fernet/cipher/plaintext implementation details. Raw
+   secrets belong only in the SDK's keychain-backed `SecretStore` path.
+10. **LLM config is profile-first.** Required settings/profile work should prefer
+   LLM profiles and secret references. Avoid raw LLM objects/API keys in server
+   surfaces except where compatibility genuinely requires it.
+11. **Tests prove protocol behavior.** Vitest coverage currently checks route
     basics, auth, OpenAPI shape, SDK agent execution, and restart restoration from
     the SDK `EventLog`.
 
@@ -138,27 +142,50 @@ Bash/git/file routes:
 ## Explicit non-goals for this package
 
 - Do **not** port SmolPaws `/turns`.
-- Do **not** implement confirmation policy/gates.
+- Do **not** implement ACP runtime/model switching.
+- Do **not** implement confirmation mode, confirmation policy/gates, or
+  confirmation replies.
 - Do **not** implement security analyzer/risk scoring.
+- Do **not** implement deferred init.
 - Do **not** create a second event persistence format.
+- Do **not** create an alternate secret storage model; use keychain-backed
+  `SecretStore` only.
 - Do **not** move SDK responsibilities into the server package.
 - Do **not** chase upstream HEAD casually; advance the pinned commit deliberately.
 
-## Accepted deviations from upstream Python
+## Required next route families
 
-These surfaces may appear in the OpenAPI table so callers get a clear response,
-but they are intentionally not implemented:
+These route families are required for the replaceable SmolPaws server goal and
+should be ported red-green from pinned upstream tests where possible:
+
+- skills routes/services
+- settings routes/services with LLM-profile-first semantics
+- profiles routes/services
+- agent-profiles routes/services
+- LLM profile-oriented routes needed by settings/profile flows
+- conversation secret interfaces backed by the SDK keychain `SecretStore`
+
+## Accepted deviations and useful-later deferrals
+
+Accepted deviations / not wanted as active features:
 
 - confirmation policy
 - respond-to-confirmation
 - security analyzer
 - ACP runtime/model switching
-- ask-agent helpers
-- condensation helpers
-- full secrets/settings/profile runtime routes
+- deferred init
 
-Use explicit accepted-deviation responses for confirmation/security rather than
-silent no-ops. The goal is clarity for clients and future agents.
+Useful later, but not immediate blockers for the first replaceable slice:
+
+- file trajectory download
+- OpenAI-compatible `/v1/*` gateway
+- VS Code and desktop routes
+- auth cookie routes
+- MCP test route
+- workspace routers
+
+Use explicit accepted-deviation or unsupported responses where compatibility routes
+exist. The goal is clarity for clients and future agents.
 
 ## Validation criteria before opening or updating a PR
 
@@ -170,6 +197,12 @@ npm run lint
 npm test
 npm run build
 npm run openapi
+```
+
+From the repository root, regenerate all current OpenAPI artifacts with:
+
+```sh
+scripts/generate-openapi.sh
 ```
 
 Useful regression expectations:
