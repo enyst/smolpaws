@@ -28,6 +28,7 @@ Implemented in this slice:
 - settings, profiles, agent-profiles, skills, and keychain-backed secret metadata routes
 - keychain-backed conversation secret flows without plaintext metadata/event persistence
 - zod-backed contracts, tsup/vitest/type-checked eslint, coverage, OpenAPI CLI generation, route-parity checks, and packed-consumer smoke testing
+- credential-free local endpoint smoke workflow (`npm run smoke:local`) covering the real Fastify REST/WebSocket surface without `RemoteConversation`/`RemoteWorkspace`
 - package-local manual LLM smoke workflow (`npm run manual:llm` with `OPENAI_API_KEY`)
 
 Required next parity work:
@@ -72,7 +73,15 @@ Package-local validation:
 npm run ci
 ```
 
-The package CI includes a `npm pack --dry-run`, real tarball pack, throwaway consumer install, TypeScript import check, and runtime import smoke through `npm run test:pack`.
+The package CI includes a `npm pack --dry-run`, real tarball pack, throwaway consumer install, TypeScript import check, runtime import smoke through `npm run test:pack`, and the credential-free local endpoint smoke.
+
+Run the broad real local endpoint smoke directly with:
+
+```sh
+npm run smoke:local
+```
+
+It starts an in-process Fastify app, uses deterministic SDK `TestLLM`, hits the REST and WebSocket endpoints directly, verifies async user messages are preserved separately, and checks dummy `OH_SECRET` values are not persisted as plaintext metadata/events. It intentionally does not use `RemoteConversation` or `RemoteWorkspace`.
 
 Generate this package's OpenAPI schema with:
 
@@ -86,13 +95,13 @@ Generate all current SmolPaws OpenAPI artifacts from the repository root with:
 scripts/generate-openapi.sh
 ```
 
-Run the manual live-LLM smoke only when you intentionally want to spend a real model call:
+Run the manual live-LLM smoke only when you intentionally want to spend real OpenAI model calls:
 
 ```sh
-OPENAI_API_KEY=... npm run manual:llm
+OPENAI_API_KEY=... OPENAI_MODELS=gpt-5-nano,gpt-5-mini npm run manual:llm
 ```
 
-The manual smoke stores the supplied API key in macOS Keychain for its process-local profile; it does not write plaintext secrets to package files.
+The manual smoke starts local Fastify servers and uses direct `fetch` calls to the REST API; it intentionally does not use `RemoteConversation` or `RemoteWorkspace`. It creates distinct local LLM profiles for each model, verifies the server profile endpoints, binds the injected `agentFactory` to the matching profile/model, exercises dummy `OH_SECRET` writes through settings and conversation secret routes, and scans the temporary server root to prove the dummy secret value was not persisted as plaintext. The profile endpoints currently persist/activate metadata but do not themselves replace the injected `agentFactory`; that seam is reported explicitly in the smoke output.
 
 ## References the transpile should follow
 
