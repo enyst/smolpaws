@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -67,6 +67,27 @@ function delayedFinishAgentFactory() {
     tools: [delayTool, FinishTool.create()],
   });
 }
+
+function llmProfilePayload(profileId: string, model: string) {
+  return {
+    profileId,
+    providerId: 'openai',
+    model,
+    baseUrl: null,
+    openAiApiMode: 'responses',
+    temperature: null,
+    topP: null,
+    topK: null,
+    maxInputTokens: null,
+    maxOutputTokens: null,
+    timeoutSeconds: 120,
+    reasoningEffort: null,
+    reasoningSummary: null,
+    headers: {},
+    useProfileKeyOverride: true,
+  };
+}
+
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -165,7 +186,7 @@ describe('createAgentServerApp', () => {
   test('restores persisted conversations and events after restart', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
     try {
-      const first = await createAgentServerApp({ config: { conversationsPath: root } });
+      const first = await createAgentServerApp({ config: { conversationsPath: root }, secretStore: new InMemorySecretStore() });
       const start = await first.app.inject({
         method: 'POST',
         url: '/api/conversations',
@@ -402,7 +423,7 @@ describe('createAgentServerApp', () => {
 
   test('does not retry an event append after lock cleanup fails post-write', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
-    const { app } = await createAgentServerApp({ config: { conversationsPath: root } });
+    const { app } = await createAgentServerApp({ config: { conversationsPath: root }, secretStore: new InMemorySecretStore() });
     const originalLockAsync = LocalFileStore.prototype.lockAsync;
     let eventLogCallbacks = 0;
     LocalFileStore.prototype.lockAsync = async function lockAsyncWithCleanupFailure<T>(
@@ -441,7 +462,7 @@ describe('createAgentServerApp', () => {
 
   test('accepts WebSocket session API key as the first message', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
-    const { app } = await createAgentServerApp({ config: { conversationsPath: path.join(root, 'conversations'), sessionApiKey: 'secret' } });
+    const { app } = await createAgentServerApp({ config: { conversationsPath: path.join(root, 'conversations'), sessionApiKey: 'secret' }, secretStore: new InMemorySecretStore() });
     let socket: WebSocket | null = null;
     try {
       const start = await app.inject({ method: 'POST', url: '/api/conversations', headers: { 'x-session-api-key': 'secret' }, payload: {} });
@@ -533,6 +554,142 @@ describe('createAgentServerApp', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test('runs new conversations from activated LLM profiles and settings snapshots', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-profiles-'));
+    const conversationsPath = path.join(root, 'conversations');
+    const statePath = path.join(root, 'state');
+    const firstWorkspace = path.join(root, 'first-workspace');
+    const secondWorkspace = path.join(root, 'second-workspace');
+    const thirdWorkspace = path.join(root, 'third-workspace');
+    const selectedProfiles: string[] = [];
+    await Promise.all([mkdir(firstWorkspace, { recursive: true }), mkdir(secondWorkspace, { recursive: true }), mkdir(thirdWorkspace, { recursive: true })]);
+    const { app } = await createAgentServerApp({
+      config: { conversationsPath, statePath, workspaceRoot: root },
+      secretStore: new InMemorySecretStore(),
+      llmClientFactory: async (profile) => {
+        selectedProfiles.push(`${profile.profileId}:${profile.model}`);
+        return TestLLM.fromMessages([{
+          role: 'assistant',
+          content: [],
+          tool_calls: [{ id: `finish-${profile.profileId}`, name: 'finish', arguments: JSON.stringify({ message: `finished with ${profile.model}` }), origin: 'completion' }],
+        }]);
+      },
+    });
+
+    try {
+      const nano = llmProfilePayload('gpt-nano', 'gpt-5-nano');
+      const mini = llmProfilePayload('gpt-mini', 'gpt-5-mini');
+      expect((await app.inject({ method: 'POST', url: '/api/profiles', payload: nano })).statusCode).toBe(201);
+      expect((await app.inject({ method: 'POST', url: '/api/profiles', payload: mini })).statusCode).toBe(201);
+      expect((await app.inject({ method: 'DELETE', url: '/api/profiles/gpt-mini' })).statusCode).toBe(200);
+      expect((await app.inject({ method: 'GET', url: '/api/profiles/gpt-mini' })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'POST', url: '/api/profiles/gpt-mini', payload: mini })).statusCode).toBe(201);
+
+      expect((await app.inject({ method: 'POST', url: '/api/profiles/gpt-nano/activate' })).statusCode).toBe(200);
+      const baseSettings = (await app.inject({ method: 'GET', url: '/api/settings' })).json<{
+        agent_settings: Record<string, unknown>;
+        conversation_settings: Record<string, unknown>;
+      }>();
+      const nanoSettings = await app.inject({
+        method: 'PATCH',
+        url: '/api/settings',
+        payload: {
+          agent_settings: { ...baseSettings.agent_settings, llm_profile_ref: 'gpt-nano', tools: ['finish'] },
+          conversation_settings: { ...baseSettings.conversation_settings, max_iterations: 2 },
+          llm_api_key: 'test-openai-key',
+        },
+      });
+      expect(nanoSettings.statusCode).toBe(200);
+
+      const first = await app.inject({ method: 'POST', url: '/api/conversations', payload: { workspace: { working_dir: firstWorkspace } } });
+      expect(first.statusCode).toBe(201);
+      const firstInfo = first.json<{ id: string; max_iterations: number; workspace: { working_dir: string }; agent: { llm_profile_ref: string; tools: unknown[] }; launched_agent_profile: { profileId: string; model: string } }>();
+      expect(firstInfo.max_iterations).toBe(2);
+      expect(firstInfo.workspace.working_dir).toBe(firstWorkspace);
+      expect(firstInfo.agent.llm_profile_ref).toBe('gpt-nano');
+      expect(firstInfo.agent.tools).toEqual(['finish']);
+      expect(firstInfo.launched_agent_profile).toMatchObject({ profileId: 'gpt-nano', model: 'gpt-5-nano' });
+      expect(await readFile(path.join(conversationsPath, firstInfo.id, 'meta.json'), 'utf8')).not.toContain('test-openai-key');
+
+      const readdedNano = llmProfilePayload('gpt-nano', 'gpt-5-nano-readded');
+      expect((await app.inject({ method: 'DELETE', url: '/api/profiles/gpt-nano' })).statusCode).toBe(200);
+      expect((await app.inject({ method: 'POST', url: '/api/profiles/gpt-nano', payload: readdedNano })).statusCode).toBe(201);
+      const firstAfterProfileReplacement = (await app.inject({ method: 'GET', url: `/api/conversations/${firstInfo.id}` })).json<{ launched_agent_profile: { profileId: string; model: string } }>();
+      expect(firstAfterProfileReplacement.launched_agent_profile).toMatchObject({ profileId: 'gpt-nano', model: 'gpt-5-nano' });
+      expect((await app.inject({ method: 'POST', url: `/api/conversations/${firstInfo.id}/events`, payload: { role: 'user', content: 'run nano', run: true } })).statusCode).toBe(200);
+      await waitFor(async () => {
+        const final = await app.inject({ method: 'GET', url: `/api/conversations/${firstInfo.id}/agent_final_response` });
+        expect(final.json<{ response: string }>().response).toBe('finished with gpt-5-nano');
+      });
+
+      expect((await app.inject({ method: 'POST', url: '/api/profiles/gpt-mini/activate' })).statusCode).toBe(200);
+      const activated = (await app.inject({ method: 'GET', url: '/api/settings' })).json<{
+        active_profile_id: string;
+        agent_settings: Record<string, unknown>;
+        conversation_settings: Record<string, unknown>;
+      }>();
+      expect(activated.active_profile_id).toBe('gpt-mini');
+      expect(activated.agent_settings.llm_profile_ref).toBe('gpt-mini');
+      expect((await app.inject({
+        method: 'PATCH',
+        url: '/api/settings',
+        payload: {
+          conversation_settings: { ...activated.conversation_settings, max_iterations: 3 },
+          llm_api_key: 'test-openai-key',
+        },
+      })).statusCode).toBe(200);
+
+      const [second, third] = await Promise.all([
+        app.inject({ method: 'POST', url: '/api/conversations', payload: { workspace: { working_dir: secondWorkspace } } }),
+        app.inject({
+          method: 'POST',
+          url: '/api/conversations',
+          payload: {
+            workspace: { working_dir: thirdWorkspace },
+            max_iterations: 4,
+            agent: { ...activated.agent_settings, llm_profile_ref: 'gpt-nano', tools: ['finish'] },
+          },
+        }),
+      ]);
+      expect(second.statusCode).toBe(201);
+      const secondInfo = second.json<{ id: string; max_iterations: number; workspace: { working_dir: string }; agent: { llm_profile_ref: string }; launched_agent_profile: { profileId: string; model: string } }>();
+      expect(secondInfo.id).not.toBe(firstInfo.id);
+      expect(secondInfo.max_iterations).toBe(3);
+      expect(secondInfo.workspace.working_dir).toBe(secondWorkspace);
+      expect(secondInfo.agent.llm_profile_ref).toBe('gpt-mini');
+      expect(secondInfo.launched_agent_profile).toMatchObject({ profileId: 'gpt-mini', model: 'gpt-5-mini' });
+      expect(third.statusCode).toBe(201);
+      const thirdInfo = third.json<{ id: string; max_iterations: number; workspace: { working_dir: string }; agent: { llm_profile_ref: string; tools: unknown[] }; launched_agent_profile: { profileId: string; model: string } }>();
+      expect(thirdInfo.id).not.toBe(firstInfo.id);
+      expect(thirdInfo.id).not.toBe(secondInfo.id);
+      expect(thirdInfo.max_iterations).toBe(4);
+      expect(thirdInfo.workspace.working_dir).toBe(thirdWorkspace);
+      expect(thirdInfo.agent.llm_profile_ref).toBe('gpt-nano');
+      expect(thirdInfo.agent.tools).toEqual(['finish']);
+      expect(thirdInfo.launched_agent_profile).toMatchObject({ profileId: 'gpt-nano', model: 'gpt-5-nano-readded' });
+
+      expect((await app.inject({ method: 'POST', url: `/api/conversations/${secondInfo.id}/events`, payload: { role: 'user', content: 'run mini', run: true } })).statusCode).toBe(200);
+      await waitFor(async () => {
+        const final = await app.inject({ method: 'GET', url: `/api/conversations/${secondInfo.id}/agent_final_response` });
+        expect(final.json<{ response: string }>().response).toBe('finished with gpt-5-mini');
+      });
+      expect((await app.inject({ method: 'POST', url: `/api/conversations/${thirdInfo.id}/events`, payload: { role: 'user', content: 'run explicit nano', run: true } })).statusCode).toBe(200);
+      await waitFor(async () => {
+        const final = await app.inject({ method: 'GET', url: `/api/conversations/${thirdInfo.id}/agent_final_response` });
+        expect(final.json<{ response: string }>().response).toBe('finished with gpt-5-nano-readded');
+      });
+
+      expect(selectedProfiles).toEqual(['gpt-nano:gpt-5-nano', 'gpt-mini:gpt-5-mini', 'gpt-nano:gpt-5-nano-readded']);
+      expect((await stat(path.join(conversationsPath, firstInfo.id))).isDirectory()).toBe(true);
+      expect((await stat(path.join(conversationsPath, secondInfo.id))).isDirectory()).toBe(true);
+      expect((await stat(path.join(conversationsPath, thirdInfo.id))).isDirectory()).toBe(true);
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
 
   test('stores conversation secrets only in SecretStore and never in metadata or events', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
