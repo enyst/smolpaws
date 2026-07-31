@@ -136,10 +136,11 @@ export class EventService {
     if (this.runPromise !== null) {
       throw new Error('conversation_already_running');
     }
-    this.runPromise = this.runAndPublish();
-    void this.runPromise
+    const runPromise = this.runAndPublish().catch((error: unknown) => this.handleRunError(error));
+    this.runPromise = runPromise;
+    void runPromise
       .catch((error: unknown) => {
-        console.error('conversation_run_error', error);
+        console.error('conversation_run_error_cleanup', error);
       })
       .finally(() => {
         this.runPromise = null;
@@ -264,6 +265,12 @@ export class EventService {
       }
       await this.pubSub.publish(this.createStateUpdateEvent());
     } while (this.rerunRequested);
+  }
+
+  private async handleRunError(error: unknown): Promise<void> {
+    console.error('conversation_run_error', error);
+    this.state.executionStatus = conversationExecutionStatus.ERROR;
+    await this.pubSub.publish(this.createStateUpdateEvent());
   }
 
   private async appendAndPublish(event: Event): Promise<void> {

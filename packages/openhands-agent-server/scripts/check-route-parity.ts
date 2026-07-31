@@ -61,6 +61,12 @@ const upstreamSnapshot = routeKeys([
 
   ['GET', '/api/settings/agent-schema'],
   ['GET', '/api/settings/conversation-schema'],
+  ['GET', '/api/settings'],
+  ['PATCH', '/api/settings'],
+  ['GET', '/api/settings/secrets'],
+  ['GET', '/api/settings/secrets/{name}'],
+  ['PUT', '/api/settings/secrets'],
+  ['DELETE', '/api/settings/secrets/{name}'],
 
   ['POST', '/api/skills'],
   ['POST', '/api/skills/sync'],
@@ -153,8 +159,9 @@ const acceptedDeferrals = new Map<RouteKey, string>([
 const implemented = new Set(routeSpecs.map((route) => `${route.method.toUpperCase()} ${route.path}` as RouteKey));
 const missing = [...upstreamSnapshot].filter((route) => !implemented.has(route) && !acceptedDeferrals.has(route));
 const staleDeferrals = [...acceptedDeferrals.keys()].filter((route) => implemented.has(route));
+const unknownDeferrals = [...acceptedDeferrals.keys()].filter((route) => !upstreamSnapshot.has(route));
 
-if (missing.length > 0 || staleDeferrals.length > 0) {
+if (missing.length > 0 || staleDeferrals.length > 0 || unknownDeferrals.length > 0) {
   console.error(`Route parity check failed against OpenHands ${pinnedBaseCommit}.`);
   if (missing.length > 0) {
     console.error('\nMissing upstream routes without accepted deferral:');
@@ -164,10 +171,20 @@ if (missing.length > 0 || staleDeferrals.length > 0) {
     console.error('\nRoutes are implemented but still listed as deferred:');
     for (const route of staleDeferrals) console.error(`  - ${route}`);
   }
+  if (unknownDeferrals.length > 0) {
+    console.error('\nAccepted deferrals absent from the pinned upstream snapshot:');
+    for (const route of unknownDeferrals) console.error(`  - ${route}`);
+  }
   process.exit(1);
 }
 
-console.log(`Route parity check passed against OpenHands ${pinnedBaseCommit}: ${implemented.size} OpenAPI routes, ${acceptedDeferrals.size} accepted deferrals.`);
+const implementedUpstream = [...upstreamSnapshot].filter((route) => implemented.has(route)).length;
+const extensions = [...implemented].filter((route) => !upstreamSnapshot.has(route)).length;
+console.log(
+  `Route parity check passed against OpenHands ${pinnedBaseCommit}: `
+  + `${upstreamSnapshot.size} upstream operations (${implementedUpstream} implemented, ${acceptedDeferrals.size} accepted deferrals); `
+  + `${extensions} additional TypeScript operations.`,
+);
 
 function routeKeys(input: ReadonlyArray<readonly [Method, string]>): ReadonlySet<RouteKey> {
   return new Set(input.map(([method, path]) => `${method} ${path}` as RouteKey));

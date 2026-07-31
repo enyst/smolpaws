@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { Agent, EventLog, FinishTool, InMemorySecretStore, LocalFileStore, RemoteConversation, RemoteWorkspace, TestLLM, ToolDefinition, textContent } from '@smolpaws/openhands-agent';
+import { Agent, EventLog, FinishTool, InMemorySecretStore, LocalFileStore, RemoteConversation, RemoteWorkspace, TestLLM, ToolDefinition, llmProfileSchema, textContent, type LLMClient } from '@smolpaws/openhands-agent';
 import { describe, expect, test } from 'vitest';
 import { z } from 'zod';
 
@@ -66,6 +66,14 @@ function delayedFinishAgentFactory() {
     ]),
     tools: [delayTool, FinishTool.create()],
   });
+}
+
+function failingAgentFactory() {
+  const llm: LLMClient = {
+    profile: llmProfileSchema.parse({ profileId: 'failing-provider', providerId: 'openai', model: 'test-model' }),
+    complete: () => Promise.reject(new Error('provider_response_invalid')),
+  };
+  return new Agent({ llm, tools: [FinishTool.create()] });
 }
 
 function llmProfilePayload(profileId: string, model: string) {
@@ -250,6 +258,34 @@ describe('createAgentServerApp', () => {
     }
   });
 
+  test('marks a conversation as error when the provider rejects a run', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));
+    const { app, conversationService } = await createAgentServerApp({ agentFactory: failingAgentFactory, config: { conversationsPath: root } });
+    try {
+      const start = await app.inject({ method: 'POST', url: '/api/conversations', payload: {} });
+      const id = start.json<{ id: string }>().id;
+      const stateStatuses: string[] = [];
+      const eventService = await conversationService.getEventService(id);
+      expect(eventService).not.toBeNull();
+      await eventService?.subscribeToEvents((event) => {
+        if (event.kind === 'ConversationStateUpdateEvent') stateStatuses.push(event.value.execution_status);
+      });
+      await app.inject({ method: 'POST', url: `/api/conversations/${id}/events`, payload: { role: 'user', content: [textContent('fail')], run: false } });
+      expect((await app.inject({ method: 'POST', url: `/api/conversations/${id}/run` })).statusCode).toBe(200);
+
+      await waitFor(async () => {
+        const info = await app.inject({ method: 'GET', url: `/api/conversations/${id}` });
+        expect(info.json<{ execution_status: string }>().execution_status).toBe('error');
+        expect(stateStatuses).toContain('error');
+      });
+      const eventDir = path.join(root, id, 'events');
+      const persistedEvents = await Promise.all((await readdir(eventDir)).map((file) => readFile(path.join(eventDir, file), 'utf8')));
+      expect(persistedEvents.join('\n')).not.toContain('provider_response_invalid');
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   test('accepts a run=true message while a conversation is already running', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-server-'));

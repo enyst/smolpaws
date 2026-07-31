@@ -25,6 +25,7 @@
     "build:types": "tsc -p tsconfig.json",
     "lint": "eslint ./src ./examples",
     "manual:llm": "tsx examples/manual-llm-smoke.ts",
+    "manual:llm:gemini": "tsx examples/manual-llm-smoke-gemini.ts",
     "openapi": "tsx scripts/generate-openapi.ts",
     "test:route-parity": "tsx scripts/check-route-parity.ts",
     "test:pack": "./scripts/pack-consumer-smoke.sh",
