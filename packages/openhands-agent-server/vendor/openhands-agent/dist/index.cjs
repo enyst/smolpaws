@@ -4162,19 +4162,6 @@ function normalizeGenerationParamsForModel(profile) {
   }
   return profile;
 }
-function toGeminiThinkingLevel(reasoningEffort) {
-  if (reasoningEffort === null) {
-    return void 0;
-  }
-  switch (reasoningEffort) {
-    case "low":
-      return "LOW";
-    case "medium":
-      return "MEDIUM";
-    case "high":
-      return "HIGH";
-  }
-}
 
 // src/llm/anthropic.ts
 var DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com";
@@ -4189,8 +4176,8 @@ var AnthropicMessagesClient = class {
     this.apiKey = apiKey;
     this.fetchImpl = fetchImpl;
   }
-  async complete(messages) {
-    const body = buildAnthropicMessagesBody(this.profile, messages);
+  async complete(messages, tools) {
+    const body = buildAnthropicMessagesBody(this.profile, messages, tools);
     const response = await this.fetchImpl(`${resolveBaseUrl(this.profile)}/v1/messages`, {
       method: "POST",
       headers: buildHeaders(this.profile, this.apiKey),
@@ -4219,7 +4206,7 @@ async function createAnthropicClientFromProfile(profile, store, options = {}) {
   }
   return new AnthropicMessagesClient(profile, apiKey, options.fetch ?? defaultFetch);
 }
-function buildAnthropicMessagesBody(profile, messages) {
+function buildAnthropicMessagesBody(profile, messages, tools) {
   const normalizedProfile = normalizeGenerationParamsForModel(profile);
   const parsedMessages = messages.map((message) => messageSchema.parse(message));
   const systemMessages = parsedMessages.filter((message) => message.role === "system");
@@ -4230,10 +4217,17 @@ function buildAnthropicMessagesBody(profile, messages) {
   const body = {
     model: normalizedProfile.model,
     max_tokens: maxTokens,
-    messages: parsedMessages.filter((message) => message.role !== "system").map((message) => toAnthropicMessage(normalizedProfile, message))
+    messages: toAnthropicMessages(
+      normalizedProfile,
+      parsedMessages.filter((message) => message.role !== "system")
+    )
   };
   if (system.length > 0) {
     body.system = shouldCacheSystem ? [{ type: "text", text: system.join("\n"), cache_control: { type: "ephemeral" } }] : system.join("\n");
+  }
+  if (tools && tools.length > 0) {
+    body.tools = tools.map(toAnthropicTool);
+    body.tool_choice = { type: "auto" };
   }
   if (normalizedProfile.temperature !== null) {
     body.temperature = normalizedProfile.temperature;
@@ -4249,6 +4243,31 @@ function buildAnthropicMessagesBody(profile, messages) {
   }
   return body;
 }
+function toAnthropicTool(tool) {
+  const responsesTool = tool.toResponsesTool();
+  return {
+    name: responsesTool.name,
+    description: responsesTool.description,
+    input_schema: responsesTool.parameters
+  };
+}
+function toAnthropicMessages(profile, messages) {
+  const result = [];
+  for (const message of messages) {
+    if (message.role !== "tool") {
+      result.push(toAnthropicMessage(profile, message));
+      continue;
+    }
+    const toolResult = toAnthropicToolResultBlock(message);
+    const previous = result.at(-1);
+    if (previous?.role === "user" && Array.isArray(previous.content)) {
+      previous.content.push(toolResult);
+    } else {
+      result.push({ role: "user", content: [toolResult] });
+    }
+  }
+  return result;
+}
 function toAnthropicMessage(profile, message) {
   if (message.role === "assistant") {
     return { role: "assistant", content: toAnthropicAssistantContent(message) };
@@ -4263,11 +4282,12 @@ function toAnthropicMessage(profile, message) {
 }
 function toAnthropicAssistantContent(message) {
   const blocks = [];
-  const thinkingBlock = message.thinking_blocks.find(
-    (block) => block.type === "thinking" && block.signature !== null
-  );
-  if (thinkingBlock !== void 0) {
-    blocks.push({ type: "thinking", thinking: thinkingBlock.thinking, signature: thinkingBlock.signature });
+  for (const block of message.thinking_blocks) {
+    if (block.type === "redacted_thinking") {
+      blocks.push({ type: "redacted_thinking", data: block.data });
+    } else if (block.signature !== null) {
+      blocks.push({ type: "thinking", thinking: block.thinking, signature: block.signature });
+    }
   }
   const text = reduceTextContent(message);
   if (text.length > 0) {
@@ -4283,16 +4303,18 @@ function toAnthropicToolUseBlock(toolCall) {
     type: "tool_use",
     id: toolCall.id,
     name: toolCall.name,
-    input: parseToolArguments2(toolCall.arguments)
+    input: parseToolArguments2(toolCall)
   };
 }
 function toAnthropicToolResultBlock(message) {
-  const block = {
+  if (message.tool_call_id === null) {
+    throw new Error("Anthropic tool result requires a tool_call_id.");
+  }
+  return {
     type: "tool_result",
-    tool_use_id: message.tool_call_id ?? "",
+    tool_use_id: message.tool_call_id,
     content: reduceTextContent(message)
   };
-  return block;
 }
 function toAnthropicContentBlock(profile, content) {
   const block = content.type === "text" ? { type: "text", text: content.text } : {
@@ -4307,28 +4329,34 @@ function toAnthropicContentBlock(profile, content) {
   }
   return block;
 }
-function parseToolArguments2(args) {
+function parseToolArguments2(toolCall) {
+  let parsed;
   try {
-    return JSON.parse(args);
+    parsed = JSON.parse(toolCall.arguments);
   } catch {
-    return args;
+    throw new Error(`Anthropic tool call '${toolCall.id}' arguments must be a valid JSON object.`);
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`Anthropic tool call '${toolCall.id}' arguments must be a valid JSON object.`);
+  }
+  return parsed;
 }
 function parseAnthropicMessagesResponse(raw) {
   const parsed = anthropicMessagesResponseSchema.parse(raw);
   const text = parsed.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-  const thinkingBlocks = parsed.content.filter((block) => block.type === "thinking");
-  const reasoningContent = thinkingBlocks.map((block) => block.thinking).join("");
+  const thinkingBlocks = parsed.content.filter(
+    (block) => block.type === "thinking" || block.type === "redacted_thinking"
+  );
+  const reasoningContent = thinkingBlocks.filter((block) => block.type === "thinking").map((block) => block.thinking).join("");
+  const toolUseBlocks = parsed.content.filter((block) => block.type === "tool_use");
+  const toolCalls = toolUseBlocks.map(fromAnthropicToolUse);
   return llmCompletionResponseSchema.parse({
     message: {
       role: "assistant",
       content: text,
+      tool_calls: toolCalls.length > 0 ? toolCalls : null,
       reasoning_content: reasoningContent.length > 0 ? reasoningContent : null,
-      thinking_blocks: thinkingBlocks.map((block) => ({
-        type: "thinking",
-        thinking: block.thinking,
-        signature: block.signature ?? null
-      }))
+      thinking_blocks: thinkingBlocks.map((block) => block.type === "thinking" ? { type: "thinking", thinking: block.thinking, signature: block.signature ?? null } : { type: "redacted_thinking", data: block.data })
     },
     usage: parsed.usage === null ? null : {
       promptTokens: parsed.usage.input_tokens,
@@ -4337,6 +4365,15 @@ function parseAnthropicMessagesResponse(raw) {
     },
     raw
   });
+}
+function fromAnthropicToolUse(block) {
+  return {
+    id: block.id,
+    responses_item_id: null,
+    name: block.name,
+    arguments: JSON.stringify(block.input),
+    origin: "completion"
+  };
 }
 function resolveBaseUrl(profile) {
   return (profile.baseUrl ?? DEFAULT_ANTHROPIC_BASE_URL).replace(/\/+$/u, "");
@@ -4354,8 +4391,22 @@ async function defaultFetch(url, init) {
 }
 var anthropicTextBlockSchema = zod.z.object({ type: zod.z.literal("text"), text: zod.z.string() }).passthrough();
 var anthropicThinkingBlockSchema = zod.z.object({ type: zod.z.literal("thinking"), thinking: zod.z.string(), signature: zod.z.string().nullable().optional() }).passthrough();
-var anthropicOtherBlockSchema = zod.z.object({ type: zod.z.string() }).passthrough();
-var anthropicContentBlockSchema = zod.z.union([anthropicTextBlockSchema, anthropicThinkingBlockSchema, anthropicOtherBlockSchema]);
+var anthropicRedactedThinkingBlockSchema = zod.z.object({ type: zod.z.literal("redacted_thinking"), data: zod.z.string() }).passthrough();
+var anthropicToolUseBlockSchema = zod.z.object({
+  type: zod.z.literal("tool_use"),
+  id: zod.z.string(),
+  name: zod.z.string(),
+  input: zod.z.record(zod.z.string(), zod.z.unknown())
+}).passthrough();
+var knownAnthropicBlockTypes = /* @__PURE__ */ new Set(["text", "thinking", "redacted_thinking", "tool_use"]);
+var anthropicOtherBlockSchema = zod.z.object({ type: zod.z.string().refine((type) => !knownAnthropicBlockTypes.has(type)) }).passthrough();
+var anthropicContentBlockSchema = zod.z.union([
+  anthropicTextBlockSchema,
+  anthropicThinkingBlockSchema,
+  anthropicRedactedThinkingBlockSchema,
+  anthropicToolUseBlockSchema,
+  anthropicOtherBlockSchema
+]);
 var anthropicMessagesResponseSchema = zod.z.object({
   role: zod.z.literal("assistant").default("assistant"),
   content: zod.z.array(anthropicContentBlockSchema),
@@ -4374,17 +4425,17 @@ var GeminiClient = class {
     this.apiKey = apiKey;
     this.fetchImpl = fetchImpl;
   }
-  async complete(messages) {
-    const response = await this.fetchImpl(`${resolveBaseUrl2(this.profile)}/models/${encodeURIComponent(this.profile.model)}:generateContent`, {
+  async complete(messages, tools) {
+    const response = await this.fetchImpl(`${resolveBaseUrl2(this.profile)}/interactions`, {
       method: "POST",
       headers: buildHeaders2(this.profile, this.apiKey),
-      body: JSON.stringify(buildGeminiGenerateContentBody(this.profile, messages))
+      body: JSON.stringify(buildGeminiInteractionsBody(this.profile, messages, tools))
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Gemini generateContent failed with HTTP ${response.status}: ${text}`);
+      throw new Error(`Gemini Interactions completion failed with HTTP ${response.status}: ${text}`);
     }
-    return parseGeminiGenerateContentResponse(await response.json());
+    return parseGeminiInteractionResponse(await response.json());
   }
 };
 async function createGeminiClientFromProfile(profile, store, options = {}) {
@@ -4403,128 +4454,180 @@ async function createGeminiClientFromProfile(profile, store, options = {}) {
   }
   return new GeminiClient(profile, apiKey, options.fetch ?? defaultFetch2);
 }
-function buildGeminiGenerateContentBody(profile, messages) {
-  const normalizedProfile = normalizeGenerationParamsForModel(profile);
+function buildGeminiInteractionsBody(profile, messages, tools = []) {
+  assertSupportedGenerationParams(profile);
   const parsedMessages = messages.map((message) => messageSchema.parse(message));
-  const system = parsedMessages.filter((message) => message.role === "system").flatMap((message) => contentToString(message.content));
+  const systemInstruction = parsedMessages.filter((message) => message.role === "system").flatMap((message) => contentToString(message.content)).join("\n");
   const body = {
-    contents: parsedMessages.filter((message) => message.role !== "system").map(toGeminiContent)
+    model: profile.model,
+    store: false,
+    input: parsedMessages.filter((message) => message.role !== "system").flatMap(toGeminiInteractionSteps)
   };
-  if (system.length > 0) {
-    body.systemInstruction = { parts: system.map((text) => ({ text })) };
+  if (systemInstruction.length > 0) {
+    body.system_instruction = systemInstruction;
   }
-  const generationConfig = buildGenerationConfig(normalizedProfile);
+  if (tools.length > 0) {
+    body.tools = tools.map(toGeminiInteractionTool);
+  }
+  const generationConfig = buildGenerationConfig(profile, tools.length > 0);
   if (Object.keys(generationConfig).length > 0) {
-    body.generationConfig = generationConfig;
+    body.generation_config = generationConfig;
   }
   return body;
 }
-function toGeminiContent(message) {
-  if (message.role === "tool") {
-    return {
-      role: "user",
-      parts: [{ functionResponse: { name: message.name ?? "unknown_tool", response: { content: contentToString(message.content).join("\n") } } }]
-    };
+function assertSupportedGenerationParams(profile) {
+  const unsupported = [
+    ["temperature", profile.temperature],
+    ["topP", profile.topP],
+    ["topK", profile.topK]
+  ].filter((entry) => entry[1] !== null);
+  if (unsupported.length > 0) {
+    throw new Error(
+      `Gemini Interactions does not support profile fields: ${unsupported.map(([name]) => name).join(", ")}.`
+    );
   }
-  return {
-    role: message.role === "assistant" ? "model" : "user",
-    parts: toGeminiParts(message)
-  };
 }
-function toGeminiParts(message) {
-  const signature = firstThinkingSignature(message);
-  const parts = message.content.flatMap((content) => {
-    if (content.type === "text" && content.text.length === 0) {
-      return [];
-    }
-    return [toGeminiPart(content, signature)];
-  });
-  if (message.tool_calls !== null) {
-    parts.push(...message.tool_calls.map((toolCall, index) => toGeminiFunctionCallPart(toolCall, index === 0 ? signature : null)));
-  }
-  return parts;
-}
-function toGeminiPart(content, thoughtSignature) {
-  if (content.type === "text") {
-    const part = { text: content.text };
-    if (thoughtSignature !== null) {
-      part.thoughtSignature = thoughtSignature;
-    }
-    return part;
-  }
-  return { fileData: { fileUri: content.image_urls[0] ?? "" } };
-}
-function toGeminiFunctionCallPart(toolCall, thoughtSignature) {
-  const part = { functionCall: { name: toolCall.name, args: parseToolArguments3(toolCall.arguments) } };
-  if (thoughtSignature !== null) {
-    part.thoughtSignature = thoughtSignature;
-  }
-  return part;
-}
-function buildGenerationConfig(profile) {
+function buildGenerationConfig(profile, hasTools) {
   const config = {};
-  if (profile.temperature !== null) {
-    config.temperature = profile.temperature;
-  }
-  if (profile.topP !== null) {
-    config.topP = profile.topP;
-  }
-  if (profile.topK !== null) {
-    config.topK = profile.topK;
-  }
   if (profile.maxOutputTokens !== null) {
-    config.maxOutputTokens = profile.maxOutputTokens;
+    config.max_output_tokens = profile.maxOutputTokens;
   }
-  const thinkingLevel = toGeminiThinkingLevel(profile.reasoningEffort);
-  if (thinkingLevel !== void 0) {
-    config.thinkingConfig = { thinkingLevel, includeThoughts: true };
+  if (profile.reasoningEffort !== null) {
+    config.thinking_level = profile.reasoningEffort;
+    config.thinking_summaries = "auto";
+  }
+  if (hasTools) {
+    config.tool_choice = "auto";
   }
   return config;
 }
-function parseGeminiGenerateContentResponse(raw) {
-  const parsed = geminiGenerateContentResponseSchema.parse(raw);
-  const firstCandidate = parsed.candidates[0];
-  if (firstCandidate === void 0) {
-    throw new Error("Gemini generateContent returned no candidates.");
+function toGeminiInteractionTool(tool) {
+  const responsesTool = tool.toResponsesTool();
+  return {
+    type: "function",
+    name: responsesTool.name,
+    description: responsesTool.description,
+    parameters: stripUnsupportedSchemaProperties(responsesTool.parameters)
+  };
+}
+function stripUnsupportedSchemaProperties(value) {
+  if (Array.isArray(value)) {
+    return value.map(stripUnsupportedSchemaProperties);
   }
-  const parts = firstCandidate.content.parts;
-  const text = parts.flatMap((part) => part.text === void 0 || part.text.length === 0 || part.thought === true ? [] : [part.text]).join("\n");
-  const reasoningContent = parts.flatMap((part) => part.text === void 0 || part.text.length === 0 || part.thought !== true ? [] : [part.text]).join("");
-  const thoughtSignature = parts.find((part) => part.thoughtSignature !== void 0)?.thoughtSignature ?? null;
-  const toolCalls = parts.flatMap((part, index) => part.functionCall === void 0 ? [] : [fromGeminiFunctionCall(part.functionCall, index)]);
-  const promptTokens = parsed.usageMetadata?.promptTokenCount ?? 0;
-  const completionTokens = parsed.usageMetadata?.candidatesTokenCount ?? 0;
-  const totalTokens = parsed.usageMetadata?.totalTokenCount ?? promptTokens + completionTokens;
+  if (!isJsonObject(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => key !== "$schema" && key !== "additionalProperties").map(([key, child]) => [key, stripUnsupportedSchemaProperties(child)])
+  );
+}
+function toGeminiInteractionSteps(message) {
+  if (message.role === "user") {
+    return [{ type: "user_input", content: toGeminiContent(message.content) }];
+  }
+  if (message.role === "tool") {
+    if (message.tool_call_id === null) {
+      throw new Error("Gemini function result requires a tool_call_id.");
+    }
+    const step = {
+      type: "function_result",
+      call_id: message.tool_call_id,
+      result: toGeminiContent(message.content)
+    };
+    if (message.name !== null) {
+      step.name = message.name;
+    }
+    return [step];
+  }
+  const steps = [];
+  for (const block of message.thinking_blocks) {
+    if (block.type !== "thinking") {
+      continue;
+    }
+    const step = {
+      type: "thought",
+      summary: block.thinking.length === 0 ? [] : [{ type: "text", text: block.thinking }]
+    };
+    if (block.signature !== null) {
+      step.signature = block.signature;
+    }
+    steps.push(step);
+  }
+  const content = toGeminiContent(message.content);
+  if (content.length > 0) {
+    steps.push({ type: "model_output", content });
+  }
+  if (message.tool_calls !== null) {
+    steps.push(...message.tool_calls.map(toGeminiFunctionCallStep));
+  }
+  return steps;
+}
+function toGeminiContent(content) {
+  const result = [];
+  for (const item of content) {
+    if (item.type === "text") {
+      if (item.text.length > 0) {
+        result.push({ type: "text", text: item.text });
+      }
+    } else {
+      result.push(...item.image_urls.map((uri) => ({ type: "image", uri })));
+    }
+  }
+  return result;
+}
+function toGeminiFunctionCallStep(toolCall) {
+  return {
+    type: "function_call",
+    id: toolCall.id,
+    name: toolCall.name,
+    arguments: parseFunctionCallArguments(toolCall)
+  };
+}
+function parseFunctionCallArguments(toolCall) {
+  let parsed;
+  try {
+    parsed = JSON.parse(toolCall.arguments);
+  } catch {
+    throw new Error(`Gemini function call '${toolCall.id}' arguments must be a valid JSON object.`);
+  }
+  if (!isJsonObject(parsed)) {
+    throw new Error(`Gemini function call '${toolCall.id}' arguments must be a valid JSON object.`);
+  }
+  return parsed;
+}
+function parseGeminiInteractionResponse(raw) {
+  const parsed = geminiInteractionResponseSchema.parse(raw);
+  const modelOutputSteps = parsed.steps.filter((step) => step.type === "model_output");
+  const text = modelOutputSteps.flatMap((step) => step.content).filter((content) => content.type === "text").map((content) => content.text).join("\n");
+  const thoughtSteps = parsed.steps.filter((step) => step.type === "thought");
+  const thinkingBlocks = thoughtSteps.map((step) => {
+    const thinking = step.summary.filter((content) => content.type === "text").map((content) => content.text).join("");
+    return { type: "thinking", thinking, signature: step.signature ?? null };
+  });
+  const reasoningContent = thinkingBlocks.map((block) => block.thinking).join("");
+  const toolCalls = parsed.steps.filter((step) => step.type === "function_call").map(fromGeminiFunctionCallStep);
   return llmCompletionResponseSchema.parse({
     message: {
       role: "assistant",
       content: text,
       tool_calls: toolCalls.length > 0 ? toolCalls : null,
       reasoning_content: reasoningContent.length > 0 ? reasoningContent : null,
-      thinking_blocks: thoughtSignature === null ? [] : [{ type: "thinking", thinking: reasoningContent, signature: thoughtSignature }]
+      thinking_blocks: thinkingBlocks
     },
-    usage: { promptTokens, completionTokens, totalTokens },
+    usage: parsed.usage === null ? null : {
+      promptTokens: parsed.usage.total_input_tokens,
+      completionTokens: parsed.usage.total_output_tokens,
+      totalTokens: parsed.usage.total_tokens
+    },
     raw
   });
 }
-function firstThinkingSignature(message) {
-  return message.thinking_blocks.find(
-    (block) => block.type === "thinking" && block.signature !== null
-  )?.signature ?? null;
-}
-function parseToolArguments3(args) {
-  try {
-    return JSON.parse(args);
-  } catch {
-    return args;
-  }
-}
-function fromGeminiFunctionCall(functionCall, index) {
+function fromGeminiFunctionCallStep(step) {
   return {
-    id: `gemini_call_${index}`,
+    id: step.id,
     responses_item_id: null,
-    name: functionCall.name,
-    arguments: JSON.stringify(functionCall.args ?? {}),
+    name: step.name,
+    arguments: JSON.stringify(step.arguments),
     origin: "completion"
   };
 }
@@ -4541,27 +4644,40 @@ function buildHeaders2(profile, apiKey) {
 async function defaultFetch2(url, init) {
   return globalThis.fetch(url, init);
 }
-var geminiFunctionCallSchema = zod.z.object({ name: zod.z.string(), args: zod.z.unknown().optional() }).passthrough();
-var geminiPartSchema = zod.z.object({
-  text: zod.z.string().optional(),
-  thought: zod.z.boolean().optional(),
-  thoughtSignature: zod.z.string().optional(),
-  functionCall: geminiFunctionCallSchema.optional()
+function isJsonObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+var geminiTextContentSchema = zod.z.object({ type: zod.z.literal("text"), text: zod.z.string() }).passthrough();
+var geminiOtherContentSchema = zod.z.object({ type: zod.z.string().refine((type) => type !== "text") }).passthrough();
+var geminiContentSchema = zod.z.union([geminiTextContentSchema, geminiOtherContentSchema]);
+var geminiModelOutputStepSchema = zod.z.object({ type: zod.z.literal("model_output"), content: zod.z.array(geminiContentSchema).default([]) }).passthrough();
+var geminiThoughtStepSchema = zod.z.object({
+  type: zod.z.literal("thought"),
+  signature: zod.z.string().nullable().optional(),
+  summary: zod.z.array(geminiContentSchema).default([])
 }).passthrough();
-var geminiGenerateContentResponseSchema = zod.z.object({
-  candidates: zod.z.array(
-    zod.z.object({
-      content: zod.z.object({
-        role: zod.z.string().default("model"),
-        parts: zod.z.array(geminiPartSchema).default([])
-      }).passthrough()
-    }).passthrough()
-  ),
-  usageMetadata: zod.z.object({
-    promptTokenCount: zod.z.number().int().min(0).optional(),
-    candidatesTokenCount: zod.z.number().int().min(0).optional(),
-    totalTokenCount: zod.z.number().int().min(0).optional()
-  }).passthrough().optional()
+var geminiFunctionCallStepSchema = zod.z.object({
+  type: zod.z.literal("function_call"),
+  id: zod.z.string(),
+  name: zod.z.string(),
+  arguments: zod.z.record(zod.z.string(), zod.z.unknown())
+}).passthrough();
+var knownGeminiStepTypes = /* @__PURE__ */ new Set(["model_output", "thought", "function_call"]);
+var geminiOtherStepSchema = zod.z.object({ type: zod.z.string().refine((type) => !knownGeminiStepTypes.has(type)) }).passthrough();
+var geminiStepSchema = zod.z.union([
+  geminiModelOutputStepSchema,
+  geminiThoughtStepSchema,
+  geminiFunctionCallStepSchema,
+  geminiOtherStepSchema
+]);
+var geminiUsageSchema = zod.z.object({
+  total_input_tokens: zod.z.number().int().min(0).default(0),
+  total_output_tokens: zod.z.number().int().min(0).default(0),
+  total_tokens: zod.z.number().int().min(0).default(0)
+}).passthrough();
+var geminiInteractionResponseSchema = zod.z.object({
+  steps: zod.z.array(geminiStepSchema).default([]),
+  usage: geminiUsageSchema.nullable().default(null)
 }).passthrough();
 var DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 var DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -6027,12 +6143,12 @@ function listUsableTools() {
 }
 function schemaToJsonObject(schema) {
   const jsonSchema = zod.z.toJSONSchema(schema);
-  if (!isJsonObject(jsonSchema)) {
+  if (!isJsonObject2(jsonSchema)) {
     throw new Error("Zod schema did not produce a JSON object schema");
   }
   return jsonSchema;
 }
-function isJsonObject(value) {
+function isJsonObject2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 var baseObservationSchema = zod.z.object({
@@ -6818,7 +6934,7 @@ exports.browserObservationSchema = browserObservationSchema;
 exports.buildAnthropicMessagesBody = buildAnthropicMessagesBody;
 exports.buildChatCompletionsBody = buildChatCompletionsBody;
 exports.buildCloneUrl = buildCloneUrl;
-exports.buildGeminiGenerateContentBody = buildGeminiGenerateContentBody;
+exports.buildGeminiInteractionsBody = buildGeminiInteractionsBody;
 exports.buildOpenAIResponsesBody = buildOpenAIResponsesBody;
 exports.cancellationToken = cancellationToken;
 exports.classifyResponse = classifyResponse;

@@ -1,9 +1,9 @@
 {
   "profiles": [
     {
-      "profileId": "gemini-25-flash",
+      "profileId": "gemini-36-flash",
       "providerId": "gemini",
-      "model": "gemini-2.5-flash",
+      "model": "gemini-3.6-flash",
       "baseUrl": null,
       "openAiApiMode": "chat_completions",
       "temperature": null,
@@ -18,9 +18,9 @@
       "useProfileKeyOverride": true
     },
     {
-      "profileId": "gemini-flash-lite",
+      "profileId": "gemini-flash-latest",
       "providerId": "gemini",
-      "model": "gemini-2.5-flash-lite",
+      "model": "gemini-flash-latest",
       "baseUrl": null,
       "openAiApiMode": "chat_completions",
       "temperature": null,
