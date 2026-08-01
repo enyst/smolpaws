@@ -69,6 +69,14 @@ export async function createAgentServerApp(options: AgentServerAppOptions = {}):
   };
   const conversationService = options.conversationService ?? new ConversationService(serviceOptions);
   const bashEventService = new BashEventService({ bashEventsDir: config.bashEventsPath });
+  const retentionSeconds = config.bashEventsRetentionSeconds;
+  if (retentionSeconds !== null && (!Number.isInteger(retentionSeconds) || retentionSeconds <= 0)) {
+    throw new Error('bashEventsRetentionSeconds must be a positive integer');
+  }
+  const retentionController = retentionSeconds === null ? null : new AbortController();
+  const retentionTask = retentionSeconds === null || retentionController === null
+    ? null
+    : bashEventService.runRetentionCleanupLoop(retentionSeconds, undefined, retentionController.signal);
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 25 * 1024 * 1024 });
 
   await app.register(multipart);
@@ -85,7 +93,10 @@ export async function createAgentServerApp(options: AgentServerAppOptions = {}):
   registerAgentProfileRoutes(app, serverStateService);
   registerSkillsRoutes(app, { stateDir: config.statePath, workspaceRoot: config.workspaceRoot });
   registerSocketRoutes(app, { config, conversationService, bashEventService });
-  app.addHook('onClose', () => Promise.all([conversationService.close(), bashEventService.close()]).then(() => undefined));
+  app.addHook('onClose', async () => {
+    retentionController?.abort();
+    await Promise.all([conversationService.close(), bashEventService.close(), retentionTask]);
+  });
   registerErrorHandler(app);
 
   return { app, conversationService, serverStateService };

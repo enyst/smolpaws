@@ -20,10 +20,15 @@ export async function getGitChanges(targetPath: string, ref: string | null = nul
   const relativePath = await relativeTarget(repoRoot, targetPath);
   const pathArgs = relativePath === '' ? [] : ['--', relativePath];
   const baseRef = ref ?? 'HEAD';
-  const result = await runCapturedCommand('git', ['--no-pager', 'diff', '--name-status', baseRef, ...pathArgs], repoRoot);
-  if (result.exitCode !== 0) throw new Error(result.stderr.trim() || 'git_changes_failed');
-
-  const changes = parseNameStatus(result.stdout);
+  const verifiedRef = await runCapturedCommand('git', ['rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`], repoRoot);
+  let changes: GitChange[] = [];
+  if (verifiedRef.exitCode === 0) {
+    const result = await runCapturedCommand('git', ['--no-pager', 'diff', '--name-status', baseRef, ...pathArgs], repoRoot);
+    if (result.exitCode !== 0) throw new Error(result.stderr.trim() || 'git_changes_failed');
+    changes = parseNameStatus(result.stdout);
+  } else if (baseRef !== 'HEAD') {
+    throw new Error(verifiedRef.stderr.trim() || `invalid_git_ref:${baseRef}`);
+  }
   const untracked = await runCapturedCommand('git', ['--no-pager', 'ls-files', '--others', '--exclude-standard', ...pathArgs], repoRoot);
   if (untracked.exitCode === 0) {
     for (const line of untracked.stdout.split('\n')) {

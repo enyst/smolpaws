@@ -77,6 +77,33 @@ export class BashEventService {
     return files.length;
   }
 
+  async deleteEventsOlderThan(cutoff: Date): Promise<number> {
+    const cutoffPrefix = timestampPrefix(cutoff.toISOString());
+    let count = 0;
+    for (const file of await this.eventFiles()) {
+      if (path.basename(file) >= cutoffPrefix) break;
+      try {
+        await fs.unlink(file);
+        count += 1;
+      } catch (error) {
+        console.error('Failed to delete expired bash event', error);
+      }
+    }
+    return count;
+  }
+
+  async runRetentionCleanupLoop(retentionSeconds: number, intervalSeconds = Math.max(60, retentionSeconds / 2), signal?: AbortSignal): Promise<void> {
+    while (signal?.aborted !== true) {
+      try {
+        await this.deleteEventsOlderThan(new Date(Date.now() - retentionSeconds * 1000));
+      } catch (error) {
+        console.error('Bash event retention cleanup failed', error);
+        await abortableDelay(Math.min(intervalSeconds, 60) * 1000, signal);
+      }
+      await abortableDelay(intervalSeconds * 1000, signal);
+    }
+  }
+
   async subscribeToEvents(subscriber: Subscriber<BashEvent>): Promise<string> {
     return this.pubSub.subscribe(subscriber);
   }
@@ -185,3 +212,17 @@ function isErrno(error: unknown, code: string): error is { readonly code: string
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
+function abortableDelay(timeoutMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted === true) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, timeoutMs);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
