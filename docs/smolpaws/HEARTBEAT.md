@@ -157,6 +157,8 @@ Inspired by Letta's sleep-time compute concept and their Context Constitution (s
 
 5. **Learning generalizes, not memorizes.** Updates to your memory should capture patterns, not transcripts. "Engel prefers direct answers over explanations" is a learning. "On May 3 Engel said 'just tell me the answer'" is a log entry. Prefer the former in durable memory.
 
+6. **Scope each promoted memory to the weakest sufficient explanation** — use the `weakest-hypothesis` skill (`.agents/skills/weakest-hypothesis/`, from Bennett's "weakest, not shortest"). When turning a daily-memory incident into a durable learning, don't encode the incident (file names, dates, thresholds) and don't over-generalize into a strong rule that contradicts future valid behavior. Keep the *least-committal* statement that still explains every observation: delete any attribute that, once removed, still explains what happened. Example: the incident "on Aug 5 Vasco asked me to accept his PRs" → the weakest sufficient learning "when asked to accept/merge, that's Engel's call." **Read that skill during dreaming** before promoting/pruning; it is the operational form of principle 5.
+
 **Quality bar:**
 - Every fact in `MEMORY.md` should earn its place. If it wouldn't help a future conversation, remove it.
 - Prefer concise bullets over paragraphs.
