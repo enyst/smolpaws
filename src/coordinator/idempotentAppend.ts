@@ -1,9 +1,15 @@
 /**
- * Option-2 idempotent intake append — closes the append-response-loss window WITHOUT changing
- * agent-server (no ADR §8 `event_id` delta).
+ * FALLBACK idempotent intake append — closes the append-response-loss window WITHOUT changing
+ * agent-server (no `event_id` delta).
  *
- * Why this exists
- * ---------------
+ * NOTE (Decision D3): this is NOT the primary mechanism. The primary path is the server-side
+ * `event_id` idempotency key on `POST /events` (ADR §8, delivered in PR #140), which the coordinator's
+ * `integrateNextIntake` uses directly via `AgentServerClient.appendEvent`. This module is retained as a
+ * documented, UNWIRED fallback for talking to a server that predates the `event_id` delta. It is fully
+ * tested (`idempotentAppend.test.ts`) so it can be wired without a server change if ever needed.
+ *
+ * Why it exists
+ * -------------
  * The ADR's crash matrix has one gap that needs a server change *only if* we insist on a
  * caller-supplied event id: "agent event appended; HTTP response lost". The coordinator appended a
  * user event, the response was lost, it restarts, and it cannot tell "append happened" from "append
