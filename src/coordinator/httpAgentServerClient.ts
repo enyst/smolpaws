@@ -120,27 +120,6 @@ export class HttpAgentServerClient implements AgentServerClient {
     };
   }
 
-  /**
-   * Option-2 crash-window reconcile (no ADR §8 delta): true iff a durable user MessageEvent already
-   * carries this idempotency marker. Uses the upstream `body` substring filter, which matches only
-   * MessageEvent text content — scoped to `source=user` so agent echoes never false-positive.
-   */
-  async hasUserMessageWithMarker(conversationId: string, marker: string): Promise<boolean> {
-    const params = new URLSearchParams({
-      kind: 'MessageEvent',
-      source: 'user',
-      body: marker,
-      limit: '1',
-    });
-    const res = await this.doFetch(
-      `${this.baseUrl}/api/conversations/${encodeURIComponent(conversationId)}/events/search?${params}`,
-      { method: 'GET', headers: this.headers(false) },
-    );
-    if (!res.ok) await this.raise('hasUserMessageWithMarker', res);
-    const body = (await this.json(res)) as { items?: unknown[] } | null;
-    return Array.isArray(body?.items) && body!.items.length > 0;
-  }
-
   /** Optional convenience: request a run (idempotent; 409 "already running" is not an error here). */
   async run(conversationId: string): Promise<void> {
     const res = await this.doFetch(
