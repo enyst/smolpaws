@@ -203,22 +203,22 @@ content, run})`, `searchEvents(convId, pageId, limit)`.
    compare-and-set, claim expiry, exponential backoff → failed, `delivery_unknown` vs safe retry,
    operator skip/requeue/confirm, projector replay + pagination + cursor, and the append-response-loss
    window (deterministic event id → idempotent re-append).
-2. ✅ **DONE — Idempotent event append on `packages/openhands-agent-server` (`event_id`) — the PRIMARY
-   mechanism (ADR §8).** Delivered in **PR #140** (`agent-server/idempotent-event-id`, pending review/merge):
-   `POST /events` accepts an optional caller-supplied `event_id` (uuid), persists the event **once** under
-   that id (durable across restart via `syncFromDisk`), and returns `{success, event_id, created}` —
-   `created:false` on a replay. It is additive and upstream-compatible: omit `event_id` and behavior is
-   unchanged; no queue/ordering/delivery state enters the package (`TRANSPILE_RULES.md` respected). The
-   coordinator's `integrateNextIntake` already sends the deterministic `event_id` and reads `created`
-   (`coordinator.ts`, `httpAgentServerClient.ts`), so a lost append response is safe: the queue's claim
-   fence re-appends the SAME id and the server replies `created:false` — no duplicate user turn. Proven by
-   an in-process `createAgentServerApp` + `TestLLM` integration test (append → lost response / restart →
-   re-append same id → `created:false`, no duplicate). **Effectively-once intake is live once PR #140 merges.**
+2. ✅ **DONE — Idempotent event append on `packages/openhands-agent-server` (`event_id`), shipped and wired
+   end-to-end (ADR §8).** Delivered in **PR #140**, squash-merged to `main` as **`f6b1b275b`** (branch
+   deleted): `POST /events` accepts an optional caller-supplied `event_id` (uuid), persists the event
+   **once** under that id (durable across restart via `syncFromDisk`; idempotent under concurrent same-id
+   appends via a `DuplicateEventError` catch), and returns `{success, event_id, created}` — `created:false`
+   on a replay. Additive and upstream-compatible: omit `event_id` and behavior is unchanged; no
+   queue/ordering/delivery state enters the package (`TRANSPILE_RULES.md` respected). The coordinator's
+   `integrateNextIntake` sends the deterministic `event_id` and reads `created` (`coordinator.ts`,
+   `httpAgentServerClient.ts`), so a lost append response is safe end-to-end: the queue's claim fence
+   re-appends the SAME id and the server replies `created:false` — **no duplicate user turn**. Proven by
+   in-process `createAgentServerApp` + `TestLLM` integration tests (append → lost response / restart /
+   concurrent → `created:false`, no duplicate). **The append-response-loss window is now closed end-to-end.**
 
-   > The client-side **marker reconcile** (`idempotentAppend.ts` + `hasUserMessageWithMarker`) is
-   > **retained as a documented fallback**, not the primary path — see Decision D3 and the header of
-   > `idempotentAppend.ts`. It closes the same window without any server change, for talking to a server
-   > that predates the `event_id` delta.
+   > The client-side **marker reconcile** (`idempotentAppend.ts` + `hasUserMessageWithMarker`) was
+   > **dropped** in favor of `event_id` — see Decision D3. It is now dead code (unreferenced by any
+   > production path) pending removal; the design is preserved in git history if the fallback is ever needed.
 3. Intake-only shadow path on one non-critical channel; delivery unchanged.
 4. Event projection + delivery work (already implemented behind the projector interface) wired to a
    recording adapter; prove projector crash cases before real sends.
@@ -236,13 +236,15 @@ content, run})`, `searchEvents(convId, pageId, limit)`.
   with today's behavior. Reversible behind the projector.
 - **D2 — Location `src/coordinator/`** in the host process (vs a new package). Chosen for convention fit;
   can be promoted to a package later.
-- **D3 — Idempotency mechanism: server-side `event_id` is PRIMARY; the marker reconcile is the fallback.**
-  Engel's call (reversing an earlier lean toward the marker): a caller-supplied `event_id` on `POST /events`
-  is a **compatible, additive** extension of the agent-server protocol, not a harmful divergence — so we
-  adopt it as the mechanism (PR #140). It is atomic at the server, needs no content marker, and keeps the
-  intake path a plain `append(event_id) → {created}`. The marker approach (embed `oh-idem:…` in the user
-  message, search `body=` before re-appending) is kept as a **documented, unwired fallback** for servers
-  predating the delta; it costs a visible comment per turn, which `event_id` avoids. If `event_id` support
-  is ever absent, the fallback can be wired without a server change.
+- **D3 — Idempotency mechanism: server-side `event_id` is the SOLE mechanism; the marker reconcile was
+  DROPPED.** Engel's call (reversing an earlier lean toward the marker): a caller-supplied `event_id` on
+  `POST /events` is a **compatible, additive** extension of the agent-server protocol, not a harmful
+  divergence — so we adopted it as the ADR §8 delta (shipped in PR #140, `f6b1b275b`). It is atomic at the
+  server, needs no content marker, and keeps the intake path a plain `append(event_id) → {created}`. The
+  marker approach (embed `oh-idem:…` in the user message, search `body=` before re-appending) is
+  **dropped**, not kept as a fallback: it cost a visible comment in every user turn, and a search-then-append
+  that was only race-safe by the coordinator's claim fence — both moot now that the server is atomically
+  idempotent. `idempotentAppend.ts` + `hasUserMessageWithMarker` are now dead code slated for removal
+  (design preserved in git history should a pre-`event_id` server ever need it).
 
 None of these block Phase 1.

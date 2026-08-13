@@ -1,12 +1,11 @@
 /**
- * FALLBACK idempotent intake append — closes the append-response-loss window WITHOUT changing
- * agent-server (no `event_id` delta).
+ * ⚠️ DROPPED / DEAD CODE (Decision D3) — superseded by the server-side `event_id` idempotency key on
+ * `POST /events` (ADR §8, shipped in PR #140 / `f6b1b275b`). The coordinator's `integrateNextIntake` uses
+ * that directly via `AgentServerClient.appendEvent`; NOTHING in a production path imports this module. It
+ * is kept only transiently and is slated for removal — the design is preserved in git history should a
+ * pre-`event_id` server ever need this client-side reconcile. Do not wire it back without reviving D3.
  *
- * NOTE (Decision D3): this is NOT the primary mechanism. The primary path is the server-side
- * `event_id` idempotency key on `POST /events` (ADR §8, delivered in PR #140), which the coordinator's
- * `integrateNextIntake` uses directly via `AgentServerClient.appendEvent`. This module is retained as a
- * documented, UNWIRED fallback for talking to a server that predates the `event_id` delta. It is fully
- * tested (`idempotentAppend.test.ts`) so it can be wired without a server change if ever needed.
+ * (Historical) marker reconcile — closed the append-response-loss window WITHOUT changing agent-server:
  *
  * Why it exists
  * -------------
