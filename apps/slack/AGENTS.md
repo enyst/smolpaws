@@ -33,9 +33,20 @@ The shared `BaseBridgeAdapter` is retained only for bridge-loader lifecycle comp
 
 ## Delivery rule
 
-The canary projects the normal terminal `finish` observation as a Slack reply. Slack does not require an agent-specific `send_message` tool merely to produce a normal chat response.
+The canary synchronizes the normal terminal `finish` observation into the Slack delivery outbox. Slack does not require an agent-specific `send_message` tool merely to produce a normal chat response.
 
 Once a delivery row has been durably marked `send_attempted`, an exception is treated as `delivery_unknown`; the dispatcher does not blindly retry an external effect that may already have landed.
+
+## Canary identity
+
+The first authoritative Slack relay generation deliberately uses:
+
+```text
+~/.smolpaws/coordinator/slack-relay-v1.db
+conversation namespace: slack-relay:v1
+```
+
+Do not point it at the old `shadow.db` or the earlier unversioned conversation IDs. Reusing those identities could make the first outbox catch-up rediscover historical shadow responses and send them to Slack.
 
 ## Local canary
 
@@ -66,7 +77,7 @@ Relevant environment variables in `~/.smolpaws/.env`:
 - `SMOLPAWS_COORD_SERVER_URL` (default `http://127.0.0.1:8790`)
 - `SMOLPAWS_COORD_SERVER_API_KEY` when agent-server auth is enabled
 - optional Slack team/channel/user allowlists
-- optional `SMOLPAWS_COORD_DB` is no longer used by this Slack canary; its current durable DB is `~/.smolpaws/coordinator/slack.db`
+- optional `SMOLPAWS_COORD_DB` is no longer used by this Slack canary
 
 The new server must also have a usable active LLM profile/credential in its server state/keychain.
 
@@ -77,20 +88,22 @@ npm run typecheck --prefix apps/slack
 npm run test --prefix apps/slack
 ```
 
-The delivery-pipeline tests cover durable outbox sync, fenced dispatch, `delivery_unknown`, Slack channel/thread routing, and terminal-response relay behavior with real SQLite.
+The delivery-pipeline suite includes a deterministic end-to-end test with the real in-process TypeScript agent-server, a fake LLM that calls `finish`, real SQLite, the Outbound Relay, Delivery Dispatcher, and Slack Delivery Target.
 
 ## Liberty Labs canary
 
 The Slack app identity is `paws`. Use the Liberty Labs workspace as the non-critical live canary. Verify one message by checking all of:
 
 1. Slack ingress event is accepted.
-2. an `intake` row exists in `~/.smolpaws/coordinator/slack.db`;
+2. an `intake` row exists in `~/.smolpaws/coordinator/slack-relay-v1.db`;
 3. the new agent-server contains the deterministic user event and a completed agent run;
 4. `syncDeliveryOutbox()` creates the corresponding `delivery` row;
 5. Delivery Dispatcher settles it `done` with the Slack message timestamp as `external_message_id`;
 6. the reply appears in the correct Slack DM/thread.
 
 Do not infer success merely because Slack shows a reply; the durable work rows and new agent-server EventLog are part of the end-to-end contract.
+
+A reply containing the old `🐾 Done — nothing to report back.` fallback proves an older `/turns` process is still running. It is not a successful relay canary.
 
 ## Thread follow-ups
 
