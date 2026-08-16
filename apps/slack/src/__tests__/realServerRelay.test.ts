@@ -45,6 +45,7 @@ function agentFactory() {
         tool_calls: [
           {
             id: 'finish-call-slack-relay',
+            responses_item_id: null,
             name: 'finish',
             arguments: JSON.stringify({ message: EXPECTED_REPLY }),
             origin: 'completion',
