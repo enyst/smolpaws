@@ -3,7 +3,7 @@
  *
  * Ties the durable {@link MessageWorkStore} to agent-server through a narrow injected
  * {@link AgentServerClient}. It keeps agent-server upstream-shaped: intake becomes a deterministic
- * `append + run`, and delivery work is *projected* from the durable EventLog (never invented here).
+ * `append + run`, and outbound work is synced from the durable EventLog into a delivery outbox.
  *
  * Responsibilities that stay OUT of agent-server (ADR §2): external dedup, lane↔conversation directory,
  * per-lane order, claims/retries/backoff, delivery outcome, reconciliation, audit.
@@ -34,15 +34,17 @@ export interface CoordinatorOptions {
   extractor?: DeliverableExtractor;
   /** Classify an append error as retryable. Defaults to retryable unless `err.nonRetryable`. */
   isRetryable?: (error: unknown) => boolean;
-  /** Page size for the delivery projector's event catch-up. */
+  /** Page size when syncing agent events into the delivery outbox. */
+  outboxSyncPageSize?: number;
+  /** @deprecated Use `outboxSyncPageSize`. */
   projectionPageSize?: number;
 }
 
 /**
- * Default extractor: project one delivery per explicit outbound-intent action the agent emitted
+ * Default extractor: create one delivery per explicit outbound-intent action the agent emitted
  * (`send_message` / `current_thread_message`). This matches the runner's tool-driven outbound while
- * keeping the projection sourced from durable events. Terminal-response projection is available via
- * {@link finalResponseExtractor} for the ADR step-4 first cut.
+ * keeping the outbox sourced from durable events. Normal terminal responses are available through
+ * {@link finalResponseExtractor}.
  */
 export const sendMessageExtractor: DeliverableExtractor = (event: AgentEvent) => {
   if (event.kind !== 'ActionEvent') return null;
@@ -63,8 +65,13 @@ export const sendMessageExtractor: DeliverableExtractor = (event: AgentEvent) =>
 export const finalResponseExtractor: DeliverableExtractor = (event: AgentEvent) => {
   if (event.kind !== 'ObservationEvent') return null;
   if (event.tool_name !== 'finish') return null;
-  const obs = (event.observation ?? {}) as Record<string, unknown>;
-  const text = typeof obs.message === 'string' ? obs.message : typeof obs.text === 'string' ? obs.text : undefined;
+  const observation = (event.observation ?? {}) as Record<string, unknown>;
+  const text =
+    typeof observation.message === 'string'
+      ? observation.message
+      : typeof observation.text === 'string'
+        ? observation.text
+        : undefined;
   if (text === undefined) return null;
   return { payload: { kind: 'current_thread_message', text } };
 };
@@ -73,25 +80,28 @@ export class MessageWorkCoordinator {
   private readonly store: MessageWorkStore;
   private readonly agent: AgentServerClient;
   private readonly now: () => number;
-  private readonly deriveConversationId: (d: LaneDescriptor) => string;
+  private readonly deriveConversationId: (descriptor: LaneDescriptor) => string;
   private readonly deriveEventId: (platform: string, id: string) => string;
-  private readonly buildIntakeSourceKey: (d: LaneDescriptor, id: string) => string;
+  private readonly buildIntakeSourceKey: (descriptor: LaneDescriptor, id: string) => string;
   private readonly extractor: DeliverableExtractor;
   private readonly isRetryable: (error: unknown) => boolean;
-  private readonly projectionPageSize: number;
+  private readonly outboxSyncPageSize: number;
 
   constructor(store: MessageWorkStore, agent: AgentServerClient, options: CoordinatorOptions = {}) {
     this.store = store;
     this.agent = agent;
     this.now = options.now ?? (() => Date.now());
-    this.deriveConversationId = options.deriveConversationId ?? ((d) => deterministicConversationId(d.laneKey));
+    this.deriveConversationId =
+      options.deriveConversationId ?? ((descriptor) => deterministicConversationId(descriptor.laneKey));
     this.deriveEventId = options.deriveEventId ?? deterministicEventId;
     this.buildIntakeSourceKey =
       options.buildIntakeSourceKey ??
-      ((d, id) => `${d.platform}:${d.accountId ?? ''}:${id}`);
+      ((descriptor, id) => `${descriptor.platform}:${descriptor.accountId ?? ''}:${id}`);
     this.extractor = options.extractor ?? sendMessageExtractor;
-    this.isRetryable = options.isRetryable ?? ((e) => !(e as { nonRetryable?: boolean } | null)?.nonRetryable);
-    this.projectionPageSize = options.projectionPageSize ?? 100;
+    this.isRetryable =
+      options.isRetryable ??
+      ((error) => !(error as { nonRetryable?: boolean } | null)?.nonRetryable);
+    this.outboxSyncPageSize = options.outboxSyncPageSize ?? options.projectionPageSize ?? 100;
   }
 
   /**
@@ -159,25 +169,32 @@ export class MessageWorkCoordinator {
   }
 
   /**
-   * Project deliverable agent events for a conversation into durable delivery work. Resumable via the
-   * per-conversation cursor; deliveries are inserted before the cursor advances so a crash replays and
-   * the unique (kind, source_key) index makes re-insertion a no-op. Returns the number of new rows.
+   * Bring one conversation's durable delivery outbox up to date from its agent EventLog. Resumable via
+   * the per-conversation cursor; deliveries are inserted before the cursor advances so a crash replays
+   * safely and the unique `(kind, source_key)` index makes re-insertion a no-op.
    */
-  async projectDeliveries(conversationId: string): Promise<number> {
+  async syncDeliveryOutbox(conversationId: string): Promise<number> {
     const lane = this.store.getLaneByConversationId(conversationId);
-    if (!lane) return 0; // unknown conversation → nothing to route
+    if (!lane) return 0;
+
     let offset = Number.parseInt(this.store.getProjectionCursor(conversationId) ?? '0', 10);
     if (Number.isNaN(offset)) offset = 0;
     let created = 0;
+
     for (;;) {
-      const page = await this.agent.searchEvents(conversationId, String(offset), this.projectionPageSize);
+      const page = await this.agent.searchEvents(
+        conversationId,
+        String(offset),
+        this.outboxSyncPageSize,
+      );
       for (const event of page.items) {
         const intent = this.extractor(event);
         if (!intent) continue;
-        const before = this.store.getWorkBySourceKey('delivery', `${event.id}:${lane.laneKey}`);
+        const sourceKey = `${event.id}:${lane.laneKey}`;
+        const before = this.store.getWorkBySourceKey('delivery', sourceKey);
         this.store.insertDelivery(
           {
-            sourceKey: `${event.id}:${lane.laneKey}`,
+            sourceKey,
             laneKey: lane.laneKey,
             conversationId,
             agentEventId: event.id,
@@ -187,12 +204,19 @@ export class MessageWorkCoordinator {
         );
         if (!before) created += 1;
       }
+
       offset += page.items.length;
-      // Advance the cursor AFTER inserts (crash-safe: replay re-inserts as no-ops).
+      // Advance only after outbox inserts. A crash before this line replays idempotently.
       this.store.setProjectionCursor(conversationId, String(offset), this.now());
       if (page.nextPageId === null) break;
     }
+
     return created;
+  }
+
+  /** @deprecated Use {@link syncDeliveryOutbox}. */
+  async projectDeliveries(conversationId: string): Promise<number> {
+    return this.syncDeliveryOutbox(conversationId);
   }
 
   /** Expose the store for worker/claim/settle/reconcile access and audit reads. */
