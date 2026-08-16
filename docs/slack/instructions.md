@@ -70,11 +70,14 @@ SLACK_ALLOWED_USER_IDS=U12345
 
 Never commit token values. The coordinator database must contain message/work metadata only, not provider or Slack credentials.
 
-The Slack coordinator database is currently fixed at:
+The first authoritative Slack relay generation uses:
 
 ```text
-~/.smolpaws/coordinator/slack.db
+coordinator database: ~/.smolpaws/coordinator/slack-relay-v1.db
+conversation namespace: slack-relay:v1
 ```
+
+Those identities are deliberately separate from the old shadow experiment. Do not rename the old shadow database into this path or reuse its lane bindings: the first outbox catch-up could otherwise rediscover historical shadow responses and send them to Slack.
 
 ## Start the TypeScript agent-server
 
@@ -158,9 +161,10 @@ import Database from 'better-sqlite3';
 import os from 'node:os';
 import path from 'node:path';
 
-const db = new Database(path.join(os.homedir(), '.smolpaws/coordinator/slack.db'), {
-  readonly: true,
-});
+const db = new Database(
+  path.join(os.homedir(), '.smolpaws/coordinator/slack-relay-v1.db'),
+  { readonly: true },
+);
 
 console.log('lanes');
 console.table(db.prepare(`
