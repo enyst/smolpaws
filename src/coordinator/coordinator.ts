@@ -59,54 +59,15 @@ export const sendMessageExtractor: DeliverableExtractor = (event: AgentEvent) =>
   return { payload: { kind: 'current_thread_message', text } };
 };
 
-/**
- * Terminal chat-response extractor.
- *
- * The transpiled agent has two valid ways to finish a run:
- *
- * - return ordinary assistant content, which is persisted as an agent `MessageEvent`;
- * - invoke the profile's `finish` tool, which is persisted as an `ObservationEvent`.
- *
- * Both are user-visible terminal replies and therefore become one durable delivery row. Reasoning-only
- * or non-text assistant messages do not create an empty delivery.
- */
+/** Terminal-response extractor: one delivery from a successful `finish` observation. */
 export const finalResponseExtractor: DeliverableExtractor = (event: AgentEvent) => {
-  if (event.kind === 'MessageEvent') {
-    const llmMessage = asRecord(event.llm_message);
-    if (llmMessage?.role !== 'assistant') return null;
-    const text = textFromContent(llmMessage.content);
-    return text === null ? null : { payload: { kind: 'current_thread_message', text } };
-  }
-
-  if (event.kind !== 'ObservationEvent' || event.tool_name !== 'finish') return null;
-  const observation = asRecord(event.observation) ?? {};
-  const text =
-    typeof observation.message === 'string'
-      ? observation.message
-      : typeof observation.text === 'string'
-        ? observation.text
-        : null;
-  if (text === null || text.trim().length === 0) return null;
+  if (event.kind !== 'ObservationEvent') return null;
+  if (event.tool_name !== 'finish') return null;
+  const obs = (event.observation ?? {}) as Record<string, unknown>;
+  const text = typeof obs.message === 'string' ? obs.message : typeof obs.text === 'string' ? obs.text : undefined;
+  if (text === undefined) return null;
   return { payload: { kind: 'current_thread_message', text } };
 };
-
-function textFromContent(content: unknown): string | null {
-  if (!Array.isArray(content)) return null;
-  const text = content
-    .flatMap((item): string[] => {
-      if (typeof item === 'string') return [item];
-      const record = asRecord(item);
-      return record?.type === 'text' && typeof record.text === 'string' ? [record.text] : [];
-    })
-    .join('');
-  return text.trim().length === 0 ? null : text;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
 
 export class MessageWorkCoordinator {
   private readonly store: MessageWorkStore;
