@@ -2,13 +2,13 @@
 
 Slack is the first greenfield bridge for SmolPaws' durable message-work path.
 
-It intentionally does **not** preserve the unused legacy Slack implementation or route messages through the old `/turns` runner. The reusable Slack policy pieces remain, but execution and delivery now go through the coordinator, the upstream-shaped TypeScript agent-server, the Outbound Relay, and the Delivery Dispatcher.
+It intentionally does **not** preserve the unused legacy Slack implementation, inherit the shared bridge adapter, or route messages through the old `/turns` runner. Slack runs as its own Socket Mode process beside the upstream-shaped TypeScript agent-server.
 
 ## Current flow
 
 ```text
 Slack Socket Mode
-  -> SlackAdapter / slackHandler
+  -> SlackBridge / slackHandler
   -> SlackCoordinatorRuntime.accept()
   -> durable coordinator intake in SQLite
   -> TypeScript OpenHands agent-server on :8790
@@ -20,29 +20,29 @@ Slack Socket Mode
   -> chat.postMessage
 ```
 
-The bridge's success boundary is durable acceptance, not an in-memory request finishing. The reply may be produced later by the relay after a process delay or restart.
+The ingress success boundary is durable acceptance, not an in-memory request finishing. A reply may be produced later by the Relay after a process delay or restart.
 
 ## Component boundaries
 
 ### `apps/slack/src/adapter.ts`
 
-Owns Slack Socket Mode lifecycle, event subscriptions, bot-loop guards, and wiring. It extends `BaseBridgeAdapter` only so the existing bridge loader can start and stop it. Slack overrides the inherited dispatch path completely.
+`SlackBridge` owns the Bolt Socket Mode lifecycle, event subscriptions, bot-loop guards, and Slack API wiring. It is standalone and cannot silently fall back to `/turns`.
 
-Do not reintroduce `turnClient`, `/turns`, delivery-owner polling, or the old final-reply fallback into `apps/slack`.
+`apps/slack/plugin.json` is marked `kind: "standalone"`, so the old shared bridge loader deliberately ignores it. Discord and other existing bridges remain on their current shared lifecycle until reviewed separately.
 
 ### `apps/slack/src/slackHandler.ts`
 
 Owns Slack-specific ingress policy:
 
-- message deduplication;
 - workspace/channel/user allowlists;
 - guest limits;
 - mention stripping;
 - bounded thread context;
 - Slack conversation identity;
-- acknowledgement reactions.
+- acknowledgement reactions;
+- a short-lived process-local duplicate gate.
 
-It normalizes an accepted event into the shared incoming-message shape and hands it to the Slack coordinator runtime.
+The duplicate gate is not the durable idempotency authority. It reserves an event only while acceptance is in flight, commits it after SQLite acceptance, and releases it on failure so Slack retries remain useful.
 
 ### `apps/slack/src/coordinatorRuntime.ts`
 
@@ -54,13 +54,13 @@ Hosts the current Slack canary workers:
 4. calls `syncDeliveryOutbox()` for known Slack conversations;
 5. asks the Delivery Dispatcher to perform bounded external sends.
 
-The first authoritative relay generation persists its state at:
+The first authoritative Relay generation persists state at:
 
 ```text
 ~/.smolpaws/coordinator/slack-relay-v1.db
 ```
 
-It also derives agent-server conversation IDs from the versioned namespace `slack-relay:v1`. The database and conversation namespace are deliberately distinct from the earlier shadow experiment. Reusing the shadow conversation IDs could cause initial outbox catch-up to rediscover and send old shadow responses.
+It derives agent-server conversation IDs from the versioned namespace `slack-relay:v1`. Both identities are intentionally separate from the earlier shadow experiment, preventing initial catch-up from rediscovering and sending old shadow responses.
 
 ### `src/coordinator/outboundRelay.ts`
 
@@ -72,7 +72,9 @@ Its public catch-up operation is:
 syncDeliveryOutbox(conversationId)
 ```
 
-That operation reads new durable agent events and brings the delivery outbox up to date. It is cursor-based, replay-safe, and may be called repeatedly.
+The coordinator exposes the same name. The older `projectDeliveries()` method remains only as a deprecated compatibility alias for code outside the Slack canary.
+
+The sync reads new durable agent events and brings the delivery outbox up to date. It is cursor-based, replay-safe, and safe to call repeatedly.
 
 ### `src/coordinator/deliveryDispatcher.ts`
 
@@ -96,17 +98,15 @@ Validation happens before `send_attempted`. Once sending may have begun, an exce
 
 The new TypeScript agent-server remains the source of truth for conversations, durable events, and agent execution. Queue, retry, platform delivery, and lane semantics stay outside it.
 
-## Inbound identity
+## Identity and idempotency
 
-Slack events use a stable source-message identity:
+A Slack event uses the stable source-message identity:
 
 ```text
 {channel_id}:{message_ts}
 ```
 
-The coordinator combines it with the Slack account/workspace when constructing the durable intake source key and derives a deterministic agent event ID. Replaying the same Slack event therefore returns the existing intake work and existing agent event instead of creating another turn.
-
-## Lane identity
+The coordinator combines it with the Slack workspace when constructing the durable intake source key and derives a deterministic agent event ID. Replaying the same Slack event therefore converges on the existing intake work and existing agent event rather than creating another turn.
 
 One external Slack conversation maps to one durable coordinator lane:
 
@@ -123,7 +123,7 @@ channel:slack:{team_id}:{channel_id}:{thread_ts-or-root}
 
 The first authoritative Slack canary delivers the normal terminal `finish` observation as the chat reply. A normal Slack answer does not require the agent to call a Slack-specific `send_message` tool.
 
-The extractor policy remains replaceable. Explicit outbound-intent events can be supported for richer multi-message behavior without changing the durable dispatcher.
+The extractor policy remains replaceable. Explicit outbound-intent events can later support richer multi-message behavior without changing the durable dispatcher.
 
 ## Slack behavior retained
 
@@ -134,15 +134,14 @@ The redesign keeps the parts that are genuinely Slack concerns:
 - thread replies after a thread has mentioned paws;
 - bounded `conversations.replies` context;
 - access controls and guest limits;
-- duplicate-event suppression;
 - acknowledgement reactions;
 - long-message splitting.
 
-The mentioned-thread tracker is currently in memory and resets when the process restarts. Durable message execution and delivery do not depend on that tracker after intake has been accepted.
+The mentioned-thread tracker is currently in memory and resets when the process restarts. It is updated only after durable intake acceptance. Durable execution and delivery do not depend on it after a message has crossed the SQLite boundary.
 
 ## Configuration
 
-The common local configuration lives in `~/.smolpaws/.env`:
+The local configuration lives in `~/.smolpaws/.env`:
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-...
@@ -157,6 +156,30 @@ SLACK_ALLOWED_USER_IDS=U12345
 ```
 
 The agent-server must have a usable active LLM profile and credential in its own state/keychain. Raw provider credentials do not belong in coordinator SQLite or Slack delivery rows.
+
+## Running the canary
+
+Install dependencies:
+
+```bash
+npm ci
+npm ci --prefix packages/openhands-agent-server
+npm ci --prefix apps/slack
+```
+
+Start the new server:
+
+```bash
+./scripts/run-local-smolpaws.sh npm --prefix packages/openhands-agent-server run dev:server
+```
+
+Then start paws as a separate process:
+
+```bash
+./scripts/run-local-smolpaws.sh npm --prefix apps/slack run start
+```
+
+Do not rely on the old `apps/agent-server` process to host Slack. The standalone process boundary is part of the canary architecture.
 
 ## Verification
 
@@ -174,8 +197,9 @@ The tests cover:
 - outbox catch-up and replay behavior;
 - successful delivery settlement;
 - `delivery_unknown` after an ambiguous external failure;
-- the complete relay sequence with real SQLite and a deterministic fake agent-server;
-- a deterministic end-to-end run through the real in-process TypeScript agent-server, a fake LLM `finish` call, the Outbound Relay, Delivery Dispatcher, and Slack Delivery Target.
+- failed durable acceptance followed by a successful Slack retry;
+- concurrent duplicate suppression while acceptance is in flight;
+- a deterministic end-to-end run through the real in-process TypeScript agent-server, fake LLM `finish`, real SQLite, Outbound Relay, Delivery Dispatcher, and Slack Delivery Target.
 
 A real live canary requires evidence from every boundary:
 
@@ -186,10 +210,10 @@ A real live canary requires evidence from every boundary:
 5. Delivery Dispatcher settles it with Slack's timestamp as `external_message_id`;
 6. the reply appears in the correct Slack thread or DM.
 
-A visible Slack reply alone is not enough proof because an older local process may still be running legacy code. In particular, `🐾 Done — nothing to report back.` is the old `/turns` fallback and is evidence that the relay canary has **not** handled that message.
+A visible Slack reply alone is not enough proof because an older local process may still be running legacy code. In particular, `🐾 Done — nothing to report back.` is the old `/turns` fallback and proves that the Relay canary did **not** handle that message.
 
 ## Rollout boundary
 
-Slack is the non-critical canary for the full coordinator path. The old Slack implementation had no production compatibility obligation, so this app is free to establish the clean interface the other bridges can later adopt.
+Slack is the non-critical canary for the full coordinator path. The old Slack implementation had no production compatibility obligation, so this app establishes the clean interface other bridges may later adopt.
 
 Do not migrate WhatsApp, Discord, or other bridge behavior merely by copying Slack. Their existing usage and platform semantics must be reviewed separately before cutover.
