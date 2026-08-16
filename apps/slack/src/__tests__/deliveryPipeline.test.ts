@@ -9,6 +9,7 @@ import Database from 'better-sqlite3';
 import pino from 'pino';
 
 import { createAgentServerApp } from '../../../../packages/openhands-agent-server/src/app.js';
+import type { LLMClient } from '../../../../packages/openhands-agent-server/vendor/openhands-agent/dist/llm/client.js';
 import { MessageWorkCoordinator, finalResponseExtractor } from '../../../../src/coordinator/coordinator.js';
 import {
   DeliveryDispatcher,
@@ -216,7 +217,7 @@ test(
     const sessionApiKey = 'slack-relay-real-server-test';
     const server = await createAgentServerApp({
       secretStore: memorySecretStore(),
-      llmClientFactory: async (profile) => ({
+      llmClientFactory: async (profile): Promise<LLMClient> => ({
         profile,
         complete: async () => ({
           message: {
