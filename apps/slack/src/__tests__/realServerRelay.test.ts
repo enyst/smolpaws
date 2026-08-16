@@ -87,8 +87,8 @@ async function waitFor(
 
 test('Slack ingress reaches the real TypeScript agent-server and returns through the durable relay', async () => {
   const conversationsPath = tempDir('slack-relay-conversations-');
-  const coordinatorDir = tempDir('slack-relay-coordinator-');
-  const dbPath = path.join(coordinatorDir, 'slack.db');
+  const relayDir = tempDir('slack-relay-state-');
+  const dbPath = path.join(relayDir, 'slack.db');
 
   const server = await createAgentServerApp({
     agentFactory,
@@ -176,6 +176,6 @@ test('Slack ingress reaches the real TypeScript agent-server and returns through
   } finally {
     db.close();
     rmSync(conversationsPath, { recursive: true, force: true });
-    rmSync(coordinatorDir, { recursive: true, force: true });
+    rmSync(relayDir, { recursive: true, force: true });
   }
 });
