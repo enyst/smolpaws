@@ -1,15 +1,15 @@
 /**
  * Integration proof: the coordinator driving the REAL upstream-shaped agent-server, not a fake.
  *
- * This is the bridge from "unit-green" to "works against the real server". It starts an in-process
- * `@smolpaws/openhands-agent-server` (the actual Fastify app, listening on an ephemeral port), points the
- * real {@link HttpAgentServerClient} at it, and runs `resolveLane → acceptInbound → integrateNextIntake`
- * end-to-end. It asserts the append-response-loss guarantee at the real seam: the intake lands with
- * `created:true`, and an idempotent replay of the same deterministic `event_id` returns `created:false`
- * with no duplicate user turn — the `event_id` delta shipped in PR #140 (`f6b1b275b`).
+ * This is the bridge from "unit-green" to "works against the real server". It starts the actual
+ * TypeScript Fastify app on an ephemeral port, points the real {@link HttpAgentServerClient} at it, and
+ * runs `resolveLane → acceptInbound → integrateNextIntake` end-to-end. It asserts the
+ * append-response-loss guarantee at the real seam: the intake lands with `created:true`, and an
+ * idempotent replay of the same deterministic `event_id` returns `created:false` with no duplicate user
+ * turn.
  *
- * Isolated and additive: temp SQLite + temp conversations dir, no production delivery path, no worker
- * loop. Requires `@smolpaws/openhands-agent-server` (dev dependency, `file:` link to the built package).
+ * Isolated and additive: temp SQLite + server state + conversations, no production delivery path or
+ * machine profiles/keychain. Full run-to-delivery behavior is covered by the Slack real-server relay test.
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -17,16 +17,21 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createAgentServerApp } from '@smolpaws/openhands-agent-server';
 import Database from 'better-sqlite3';
 
+import { createAgentServerApp } from '../../packages/openhands-agent-server/src/app.js';
 import { MessageWorkCoordinator } from './coordinator.js';
 import { HttpAgentServerClient } from './httpAgentServerClient.js';
 import { deterministicConversationId, deterministicEventId } from './ids.js';
 import { MessageWorkStore } from './store.js';
 import type { LaneDescriptor, RetryPolicy } from './types.js';
 
-const POLICY: RetryPolicy = { maxAttempts: 3, baseBackoffMs: 1_000, capBackoffMs: 8_000, claimTtlMs: 60_000 };
+const POLICY: RetryPolicy = {
+  maxAttempts: 3,
+  baseBackoffMs: 1_000,
+  capBackoffMs: 8_000,
+  claimTtlMs: 60_000,
+};
 const SESSION_KEY = 'integration-slice';
 
 /** Minimal structural view of the returned app — avoids depending on Fastify types from the host. */
@@ -48,88 +53,134 @@ async function listen(app: AppLike): Promise<string> {
 }
 
 async function userMessageIds(baseUrl: string, conversationId: string): Promise<string[]> {
-  const res = await fetch(
+  const response = await fetch(
     `${baseUrl}/api/conversations/${conversationId}/events/search?kind=MessageEvent&source=user&sort_order=TIMESTAMP`,
     { headers: { 'x-session-api-key': SESSION_KEY } },
   );
-  assert.equal(res.status, 200, 'events/search should return 200');
-  const body = (await res.json()) as { items?: Array<{ id: string; kind: string; source: string }> };
+  assert.equal(response.status, 200, 'events/search should return 200');
+  const body = (await response.json()) as {
+    items?: Array<{ id: string; kind: string; source: string }>;
+  };
   return (body.items ?? []).map((event) => event.id);
 }
 
-test('coordinator drives the REAL agent-server: intake lands created:true, event_id replay is created:false', async () => {
-  const conversationsPath = tempDir('mwc-int-conv-');
-  const dbDir = tempDir('mwc-int-db-');
-  const server = await createAgentServerApp({
-    // This test verifies the coordinator↔HTTP contract, not profile selection or LLM execution. Supplying
-    // an explicit factory disables the product profile preparer so conversation creation is isolated from
-    // whatever profiles happen to exist on the machine running the test. A requested run may fail in the
-    // background, which is acceptable here; the append and replay semantics remain the subject under test.
-    agentFactory: async () => {
-      throw new Error('integration_test_agent_not_configured');
-    },
-    config: { conversationsPath, sessionApiKey: SESSION_KEY },
-  });
-  const app = server.app as unknown as AppLike;
-  const baseUrl = await listen(app);
-  try {
-    const client = new HttpAgentServerClient({ baseUrl, sessionApiKey: SESSION_KEY });
-    const store = new MessageWorkStore(new Database(path.join(dbDir, 'coordinator.db')), POLICY);
-    const coord = new MessageWorkCoordinator(store, client);
-
-    const descriptor: LaneDescriptor = {
-      laneKey: 'channel:slack:T1:C1:root',
-      platform: 'slack',
-      accountId: 'T1',
-      chatId: 'C1',
-      threadId: null,
-    };
-    const sourceMessageId = 'm-int-1';
-    const expectedConversationId = deterministicConversationId(descriptor.laneKey);
-    const expectedEventId = deterministicEventId(descriptor.platform, sourceMessageId);
-
-    // 1. resolveLane must create the conversation on the REAL server (ensureConversation → POST /api/conversations).
-    const binding = await coord.resolveLane(descriptor);
-    assert.equal(binding.conversationId, expectedConversationId);
-    assert.equal(binding.conversationReady, true);
-    const created = await fetch(`${baseUrl}/api/conversations/${expectedConversationId}`, {
-      headers: { 'x-session-api-key': SESSION_KEY },
+test(
+  'coordinator drives the REAL agent-server: intake lands created:true, event_id replay is created:false',
+  async () => {
+    const conversationsPath = tempDir('mwc-int-conv-');
+    const runtimeRoot = tempDir('mwc-int-runtime-');
+    const server = await createAgentServerApp({
+      // This test verifies the coordinator↔HTTP contract, not profile selection or LLM execution.
+      // Supplying an explicit factory disables the product profile preparer. A requested run may fail in
+      // the background, which is acceptable here; append and replay semantics are the subject under test.
+      agentFactory: async () => {
+        throw new Error('integration_test_agent_not_configured');
+      },
+      secretStore: memorySecretStore(),
+      config: {
+        conversationsPath,
+        bashEventsPath: path.join(runtimeRoot, 'bash-events'),
+        statePath: path.join(runtimeRoot, 'server-state'),
+        workspaceRoot: runtimeRoot,
+        allowedFileRoots: [runtimeRoot],
+        sessionApiKey: SESSION_KEY,
+      },
     });
-    assert.equal(created.status, 200, 'the conversation should now exist on the server');
+    const app = server.app as unknown as AppLike;
+    const baseUrl = await listen(app);
+    try {
+      const client = new HttpAgentServerClient({
+        baseUrl,
+        sessionApiKey: SESSION_KEY,
+        createDefaults: {
+          workspace: { kind: 'LocalWorkspace', working_dir: runtimeRoot },
+          tags: { ingress: 'coordinator-integration-test' },
+        },
+      });
+      const store = new MessageWorkStore(
+        new Database(path.join(runtimeRoot, 'coordinator.db')),
+        POLICY,
+      );
+      const coordinator = new MessageWorkCoordinator(store, client);
 
-    // 2. acceptInbound (durable intake) then integrate: appends the deterministic user event with run=true.
-    await coord.acceptInbound(descriptor, { sourceMessageId, content: 'hello from the integration slice' });
-    const outcome = await coord.integrateNextIntake('w-int');
-    assert.equal(outcome.kind, 'integrated');
-    assert.equal((outcome as { eventCreated: boolean }).eventCreated, true, 'first append is created:true');
+      const descriptor: LaneDescriptor = {
+        laneKey: 'channel:slack:T1:C1:root',
+        platform: 'slack',
+        accountId: 'T1',
+        chatId: 'C1',
+        threadId: null,
+      };
+      const sourceMessageId = 'm-int-1';
+      const expectedConversationId = deterministicConversationId(descriptor.laneKey);
+      const expectedEventId = deterministicEventId(descriptor.platform, sourceMessageId);
 
-    // 3. The event landed on the real server: exactly one user MessageEvent with the deterministic id.
-    const afterFirst = await userMessageIds(baseUrl, expectedConversationId);
-    assert.deepEqual(afterFirst, [expectedEventId], 'one user event, under the coordinator-supplied id');
+      const binding = await coordinator.resolveLane(descriptor);
+      assert.equal(binding.conversationId, expectedConversationId);
+      assert.equal(binding.conversationReady, true);
+      const created = await fetch(`${baseUrl}/api/conversations/${expectedConversationId}`, {
+        headers: { 'x-session-api-key': SESSION_KEY },
+      });
+      assert.equal(created.status, 200, 'the conversation should now exist on the server');
 
-    // 4. Idempotent replay through the SAME real client + SAME deterministic id → created:false, no duplicate.
-    const replay = await client.appendEvent(expectedConversationId, {
-      eventId: expectedEventId,
-      role: 'user',
-      content: 'hello from the integration slice',
-      run: true,
-    });
-    assert.equal(replay.created, false, 'replay of the same event_id is created:false');
-    assert.equal(replay.eventId, expectedEventId);
-    const afterReplay = await userMessageIds(baseUrl, expectedConversationId);
-    assert.deepEqual(afterReplay, [expectedEventId], 'still exactly one user event — no duplicate turn');
+      await coordinator.acceptInbound(descriptor, {
+        sourceMessageId,
+        content: 'hello from the integration slice',
+      });
+      const outcome = await coordinator.integrateNextIntake('w-int');
+      assert.equal(outcome.kind, 'integrated');
+      assert.equal(
+        (outcome as { eventCreated: boolean }).eventCreated,
+        true,
+        'first append is created:true',
+      );
 
-    // 5. A run was requested (append carried run=true): the server processed it and the conversation is live
-    //    with a defined execution status. (Full run-to-finish is covered by the agent-server's own TestLLM
-    //    tests; this slice proves the coordinator↔server intake contract, not agent execution.)
-    const convRes = await fetch(`${baseUrl}/api/conversations/${expectedConversationId}`, {
-      headers: { 'x-session-api-key': SESSION_KEY },
-    });
-    const conv = (await convRes.json()) as { execution_status?: unknown };
-    assert.equal(typeof conv.execution_status, 'string', 'run request left a defined execution status');
-  } finally {
-    await app.close();
-    rmSync(conversationsPath, { recursive: true, force: true });
-    rmSync(dbDir, { recursive: true, force: true });
-  }
-});
+      const afterFirst = await userMessageIds(baseUrl, expectedConversationId);
+      assert.deepEqual(
+        afterFirst,
+        [expectedEventId],
+        'one user event, under the coordinator-supplied id',
+      );
+
+      const replay = await client.appendEvent(expectedConversationId, {
+        eventId: expectedEventId,
+        role: 'user',
+        content: 'hello from the integration slice',
+        run: true,
+      });
+      assert.equal(replay.created, false, 'replay of the same event_id is created:false');
+      assert.equal(replay.eventId, expectedEventId);
+      const afterReplay = await userMessageIds(baseUrl, expectedConversationId);
+      assert.deepEqual(
+        afterReplay,
+        [expectedEventId],
+        'still exactly one user event — no duplicate turn',
+      );
+
+      const conversationResponse = await fetch(
+        `${baseUrl}/api/conversations/${expectedConversationId}`,
+        { headers: { 'x-session-api-key': SESSION_KEY } },
+      );
+      const conversation = (await conversationResponse.json()) as {
+        execution_status?: unknown;
+      };
+      assert.equal(
+        typeof conversation.execution_status,
+        'string',
+        'run request left a defined execution status',
+      );
+    } finally {
+      await app.close();
+      rmSync(conversationsPath, { recursive: true, force: true });
+      rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  },
+);
+
+function memorySecretStore() {
+  return {
+    get: async () => null,
+    set: async () => undefined,
+    delete: async () => undefined,
+    has: async () => false,
+  };
+}
