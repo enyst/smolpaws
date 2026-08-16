@@ -7,6 +7,29 @@ on:
     branches: [main]
 
 jobs:
+  slack-coordinator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install Slack bridge dependencies
+        run: npm ci --prefix apps/slack
+
+      - name: Typecheck Slack coordinator bridge
+        run: npm run typecheck --prefix apps/slack
+
+      - name: Run Slack coordinator bridge tests
+        run: npm run test --prefix apps/slack
+
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -30,9 +53,6 @@ jobs:
       - name: Install GitHub ingress dependencies
         run: npm ci --prefix apps/github
 
-      - name: Install Slack bridge dependencies
-        run: npm ci --prefix apps/slack
-
       - name: Build OpenHands agent-server package for root typecheck
         run: npm run build --prefix packages/openhands-agent-server
 
@@ -44,9 +64,6 @@ jobs:
 
       - name: Typecheck GitHub ingress
         run: npm run typecheck --prefix apps/github
-
-      - name: Typecheck Slack coordinator bridge
-        run: npm run typecheck --prefix apps/slack
 
       - name: Run agent-server runtime tests
         run: npm run agent-server:test
@@ -65,9 +82,6 @@ jobs:
 
       - name: Run GitHub ingress tests
         run: npm run github:test
-
-      - name: Run Slack coordinator bridge tests
-        run: npm run test --prefix apps/slack
 
       - name: Start agent-server and verify health
         run: |
