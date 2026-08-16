@@ -17,9 +17,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { createAgentServerApp } from '@smolpaws/openhands-agent-server';
 import Database from 'better-sqlite3';
 
-import { createAgentServerApp } from '../../packages/openhands-agent-server/src/app.js';
 import { MessageWorkCoordinator } from './coordinator.js';
 import { HttpAgentServerClient } from './httpAgentServerClient.js';
 import { deterministicConversationId, deterministicEventId } from './ids.js';
