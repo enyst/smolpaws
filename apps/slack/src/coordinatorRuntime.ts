@@ -20,6 +20,8 @@ export interface SlackCoordinatorRuntimeOptions {
   sendChunk: SlackChunkSender;
   dbPath?: string;
   tickMs?: number;
+  /** Extra fields used only when the coordinator creates a new agent-server conversation. */
+  createConversationDefaults?: Record<string, unknown>;
 }
 
 /**
@@ -54,6 +56,9 @@ export class SlackCoordinatorRuntime {
     const agent = new HttpAgentServerClient({
       baseUrl: options.serverUrl,
       sessionApiKey: options.sessionApiKey,
+      ...(options.createConversationDefaults === undefined
+        ? {}
+        : { createDefaults: options.createConversationDefaults }),
     });
     // Slack's first authoritative canary delivers the normal terminal response. The default agent profile
     // already includes FinishTool, so this preserves ordinary chat semantics without inventing a

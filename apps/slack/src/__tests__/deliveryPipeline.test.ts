@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import Database from 'better-sqlite3';
 import pino from 'pino';
 
+import { createAgentServerApp } from '../../../../packages/openhands-agent-server/src/app.js';
 import { MessageWorkCoordinator, finalResponseExtractor } from '../../../../src/coordinator/coordinator.js';
 import {
   DeliveryDispatcher,
@@ -18,7 +23,7 @@ import type {
   LaneDescriptor,
   LaneRow,
 } from '../../../../src/coordinator/types.js';
-import { slackLaneDescriptor } from '../coordinatorRuntime.js';
+import { SlackCoordinatorRuntime, slackLaneDescriptor } from '../coordinatorRuntime.js';
 import { SlackDeliveryTarget } from '../deliveryTarget.js';
 
 const NOW = Date.UTC(2026, 7, 16, 20, 0, 0);
@@ -199,6 +204,162 @@ test('OutboundRelay syncDeliveryOutbox + DeliveryDispatcher completes the new ou
   assert.equal(store.listLaneWork(binding.laneKey, 'delivery')[0]?.state, 'done');
 });
 
+test(
+  'SlackCoordinatorRuntime drives the real transpiled agent-server through finish to durable Slack delivery',
+  { timeout: 20_000 },
+  async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'slack-relay-real-server-'));
+    const workspace = path.join(root, 'workspace');
+    const dbPath = path.join(root, 'coordinator', 'slack.db');
+    mkdirSync(workspace, { recursive: true });
+
+    const sessionApiKey = 'slack-relay-real-server-test';
+    const server = await createAgentServerApp({
+      secretStore: memorySecretStore(),
+      llmClientFactory: async (profile) => ({
+        profile,
+        complete: async () => ({
+          message: {
+            role: 'assistant',
+            content: [],
+            tool_calls: [
+              {
+                id: 'finish-slack-relay-e2e',
+                responses_item_id: null,
+                name: 'finish',
+                arguments: JSON.stringify({ message: 'CAPYBARA-REAL-SERVER' }),
+                origin: 'completion',
+              },
+            ],
+          },
+          usage: null,
+        }),
+      }),
+      config: {
+        conversationsPath: path.join(root, 'conversations'),
+        bashEventsPath: path.join(root, 'bash-events'),
+        statePath: path.join(root, 'server-state'),
+        workspaceRoot: workspace,
+        allowedFileRoots: [workspace],
+        sessionApiKey,
+      },
+    });
+
+    let runtime: SlackCoordinatorRuntime | null = null;
+    try {
+      await server.app.listen({ host: '127.0.0.1', port: 0 });
+      const serverUrl = localHost(server.app.server.address());
+      const sent: Array<{ channel: string; text: string; threadTs?: string }> = [];
+
+      runtime = new SlackCoordinatorRuntime({
+        logger: pino({ level: 'silent' }),
+        serverUrl,
+        sessionApiKey,
+        dbPath,
+        tickMs: 60_000,
+        createConversationDefaults: {
+          workspace: { kind: 'LocalWorkspace', working_dir: workspace },
+          tags: { ingress: 'slack' },
+        },
+        sendChunk: async (channel, text, threadTs) => {
+          sent.push({ channel, text, threadTs });
+          return '400.123';
+        },
+      });
+      await runtime.start();
+      await runtime.accept({
+        conversationId: 'slack-thread-T1-C1-100.001',
+        prompt: 'Return the deterministic relay answer.',
+        messageId: '100.002',
+        platformContext: {
+          team_id: 'T1',
+          channel_id: 'C1',
+          thread_ts: '100.001',
+        },
+      });
+
+      for (let attempt = 0; attempt < 20 && sent.length === 0; attempt += 1) {
+        await runtime.runOnce();
+        if (sent.length === 0) await delay(10);
+      }
+
+      assert.deepEqual(sent, [
+        {
+          channel: 'C1',
+          text: 'CAPYBARA-REAL-SERVER',
+          threadTs: '100.001',
+        },
+      ]);
+
+      await runtime.stop();
+      runtime = null;
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const lane = db
+          .prepare(
+            `SELECT lane_key, conversation_id, platform, chat_id, thread_id
+             FROM lanes WHERE lane_key = ?`,
+          )
+          .get('channel:slack:T1:C1:100.001') as
+          | {
+              lane_key: string;
+              conversation_id: string;
+              platform: string;
+              chat_id: string;
+              thread_id: string | null;
+            }
+          | undefined;
+        assert.ok(lane);
+        assert.equal(lane.platform, 'slack');
+        assert.equal(lane.chat_id, 'C1');
+        assert.equal(lane.thread_id, '100.001');
+
+        const intake = db
+          .prepare(`SELECT state FROM work WHERE kind = 'intake' ORDER BY sequence DESC LIMIT 1`)
+          .get() as { state: string } | undefined;
+        const delivery = db
+          .prepare(
+            `SELECT state, send_attempted, external_message_id
+             FROM work WHERE kind = 'delivery' ORDER BY sequence DESC LIMIT 1`,
+          )
+          .get() as
+          | { state: string; send_attempted: number; external_message_id: string | null }
+          | undefined;
+        assert.deepEqual(intake, { state: 'done' });
+        assert.deepEqual(delivery, {
+          state: 'done',
+          send_attempted: 1,
+          external_message_id: '400.123',
+        });
+
+        const events = await fetch(
+          `${serverUrl}/api/conversations/${lane.conversation_id}/events/search?sort_order=TIMESTAMP&limit=100`,
+          { headers: { 'x-session-api-key': sessionApiKey } },
+        );
+        assert.equal(events.status, 200);
+        const eventPage = (await events.json()) as {
+          items?: Array<{
+            kind?: string;
+            tool_name?: string;
+            observation?: { text?: string };
+          }>;
+        };
+        const finish = (eventPage.items ?? []).find(
+          (event) => event.kind === 'ObservationEvent' && event.tool_name === 'finish',
+        );
+        assert.equal(finish?.observation?.text, 'CAPYBARA-REAL-SERVER');
+      } finally {
+        db.close();
+      }
+    } finally {
+      await runtime?.stop().catch(() => undefined);
+      await server.app.close().catch(() => undefined);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
 test('slackLaneDescriptor derives durable DM and thread lanes from normalized ingress', () => {
   const base = {
     prompt: 'hello',
@@ -222,5 +383,22 @@ test('slackLaneDescriptor derives durable DM and thread lanes from normalized in
   );
 });
 
-// Silence unused pino import regressions if logger wiring changes in runtime tests later.
-void pino;
+function memorySecretStore() {
+  return {
+    get: async () => null,
+    set: async () => undefined,
+    delete: async () => undefined,
+    has: async () => false,
+  };
+}
+
+function localHost(address: string | AddressInfo | null): string {
+  if (address === null || typeof address === 'string') {
+    throw new Error('Expected agent-server TCP address');
+  }
+  return `http://127.0.0.1:${address.port}`;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
