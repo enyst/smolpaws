@@ -23,6 +23,7 @@
     "build": "npm run build:bundle && npm run build:types",
     "build:bundle": "tsup --config tsup.config.ts",
     "build:types": "tsc -p tsconfig.json",
+    "dev:server": "tsx src/cli.ts",
     "lint": "eslint ./src ./examples",
     "manual:llm": "tsx examples/manual-llm-smoke.ts",
     "manual:llm:gemini": "tsx examples/manual-llm-smoke-gemini.ts",
