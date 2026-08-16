@@ -8,10 +8,19 @@ import type { Logger } from 'pino';
 import { MessageWorkCoordinator, finalResponseExtractor } from '../../../src/coordinator/coordinator.js';
 import { DeliveryDispatcher, DeliveryTargetRegistry } from '../../../src/coordinator/deliveryDispatcher.js';
 import { HttpAgentServerClient } from '../../../src/coordinator/httpAgentServerClient.js';
+import { deterministicConversationId } from '../../../src/coordinator/ids.js';
 import { OutboundRelay } from '../../../src/coordinator/outboundRelay.js';
 import { MessageWorkStore } from '../../../src/coordinator/store.js';
 import type { IncomingMessage } from '../../../src/shared/bridgeAdapter.js';
 import { SlackDeliveryTarget, type SlackChunkSender } from './deliveryTarget.js';
+
+const SLACK_RELAY_ID_NAMESPACE = 'slack-relay:v1';
+const DEFAULT_SLACK_RELAY_DB = join(
+  homedir(),
+  '.smolpaws',
+  'coordinator',
+  'slack-relay-v1.db',
+);
 
 export interface SlackCoordinatorRuntimeOptions {
   logger: Logger;
@@ -48,7 +57,11 @@ export class SlackCoordinatorRuntime {
     this.logger = options.logger.child({ component: 'slack-coordinator-runtime' });
     this.tickMs = options.tickMs ?? 500;
 
-    const dbPath = options.dbPath ?? join(homedir(), '.smolpaws', 'coordinator', 'slack.db');
+    // The authoritative relay canary deliberately owns a new database and a versioned conversation-id
+    // namespace. Earlier shadow experiments used a separate database but the unversioned deterministic
+    // conversation id; reusing that id could replay historical shadow responses into Slack on first
+    // cutover. Versioning both identities makes the greenfield boundary explicit and safe.
+    const dbPath = options.dbPath ?? DEFAULT_SLACK_RELAY_DB;
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.store = new MessageWorkStore(this.db);
@@ -65,6 +78,7 @@ export class SlackCoordinatorRuntime {
     // Slack-specific send_message tool contract.
     this.coordinator = new MessageWorkCoordinator(this.store, agent, {
       extractor: finalResponseExtractor,
+      deriveConversationId: (descriptor) => slackRelayConversationId(descriptor.laneKey),
     });
 
     const targets = new DeliveryTargetRegistry();
@@ -185,6 +199,11 @@ export class SlackCoordinatorRuntime {
       .all() as Array<{ conversation_id: string }>;
     return rows.map((row) => row.conversation_id);
   }
+}
+
+/** Stable conversation identity for the first authoritative Slack relay generation. */
+export function slackRelayConversationId(laneKey: string): string {
+  return deterministicConversationId(`${SLACK_RELAY_ID_NAMESPACE}:${laneKey}`);
 }
 
 export function slackLaneDescriptor(message: IncomingMessage) {
