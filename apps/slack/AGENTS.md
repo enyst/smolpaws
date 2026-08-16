@@ -1,14 +1,14 @@
 # Slack App
 
-Local Socket Mode canary for the durable SmolPaws message-work architecture.
+Standalone Socket Mode canary for the durable SmolPaws message-work architecture.
 
 ## Current architecture
 
-Slack is deliberately greenfield. It does **not** use the legacy `/turns` runner path.
+Slack is deliberately greenfield. It does **not** use the legacy `/turns` runner and is not started by the shared bridge loader.
 
 ```text
 Slack Socket Mode
-  -> SlackAdapter / slackHandler
+  -> SlackBridge / slackHandler
   -> SlackCoordinatorRuntime.accept()
   -> coordinator durable intake (SQLite)
   -> TypeScript OpenHands agent-server (:8790)
@@ -20,16 +20,23 @@ Slack Socket Mode
   -> chat.postMessage
 ```
 
-The shared `BaseBridgeAdapter` is retained only for bridge-loader lifecycle compatibility. `SlackAdapter.dispatch()` overrides its legacy dispatch behavior completely; do not reintroduce `turnClient` or `/turns` into `apps/slack`.
+Run `apps/slack` as its own process. Do not reintroduce `BaseBridgeAdapter`, `bridgeRegistry`, `turnClient`, or `/turns` into this app.
 
 ## Ownership
 
-- `slackHandler.ts`: Slack ingress policy, normalization, access control, thread context and dedup.
-- `coordinatorRuntime.ts`: Slack-hosted coordinator workers for the current canary; durable acceptance is the ingress success boundary.
+- `adapter.ts`: standalone Bolt/Socket Mode lifecycle and Slack API wiring.
+- `slackHandler.ts`: Slack ingress policy, normalization, access control, thread context, and the short-lived in-process event gate.
+- `coordinatorRuntime.ts`: Slack-hosted coordinator workers; durable SQLite acceptance is the ingress success boundary.
 - `src/coordinator/outboundRelay.ts`: catches durable agent events up into the delivery outbox through `syncDeliveryOutbox()`.
 - `src/coordinator/deliveryDispatcher.ts`: claims delivery work, marks the external-send fence, invokes the target, and settles the durable outcome.
 - `deliveryTarget.ts`: Slack-specific `chat.postMessage` side effect using the lane's durable channel/thread coordinates.
 - `packages/openhands-agent-server`: source of truth for conversation events and agent execution.
+
+## Idempotency rule
+
+Coordinator SQLite, keyed by the stable Slack message identity, is the durable idempotency authority.
+
+`MessageDeduplicator` is only a short-lived process-local gate. It reserves an event while acceptance is in flight, commits it after durable acceptance, and releases it on failure so a Slack retry can try again. Never move the durable boundary back into RAM.
 
 ## Delivery rule
 
@@ -64,7 +71,7 @@ Start the TypeScript agent-server:
 ./scripts/run-local-smolpaws.sh npm --prefix packages/openhands-agent-server run dev:server
 ```
 
-It listens on `127.0.0.1:8790` by default. Then start paws:
+It listens on `127.0.0.1:8790` by default. Then start paws as a separate process:
 
 ```bash
 ./scripts/run-local-smolpaws.sh npm --prefix apps/slack run start
@@ -77,7 +84,6 @@ Relevant environment variables in `~/.smolpaws/.env`:
 - `SMOLPAWS_COORD_SERVER_URL` (default `http://127.0.0.1:8790`)
 - `SMOLPAWS_COORD_SERVER_API_KEY` when agent-server auth is enabled
 - optional Slack team/channel/user allowlists
-- optional `SMOLPAWS_COORD_DB` is no longer used by this Slack canary
 
 The new server must also have a usable active LLM profile/credential in its server state/keychain.
 
@@ -88,7 +94,11 @@ npm run typecheck --prefix apps/slack
 npm run test --prefix apps/slack
 ```
 
-The delivery-pipeline suite includes a deterministic end-to-end test with the real in-process TypeScript agent-server, a fake LLM that calls `finish`, real SQLite, the Outbound Relay, Delivery Dispatcher, and Slack Delivery Target.
+The focused suite includes:
+
+- red/green coverage proving a failed durable acceptance can be retried;
+- concurrent duplicate suppression while acceptance is in flight;
+- deterministic end-to-end delivery through the real in-process TypeScript agent-server, fake LLM `finish`, real SQLite, Outbound Relay, Delivery Dispatcher, and Slack Delivery Target.
 
 ## Liberty Labs canary
 
@@ -103,8 +113,8 @@ The Slack app identity is `paws`. Use the Liberty Labs workspace as the non-crit
 
 Do not infer success merely because Slack shows a reply; the durable work rows and new agent-server EventLog are part of the end-to-end contract.
 
-A reply containing the old `🐾 Done — nothing to report back.` fallback proves an older `/turns` process is still running. It is not a successful relay canary.
+A reply containing the old `🐾 Done — nothing to report back.` fallback proves an older `/turns` process is still running. It is not a successful Relay canary.
 
 ## Thread follow-ups
 
-Once paws is mentioned in a thread, subsequent replies in that thread are accepted without another mention. The tracker is currently in-memory and resets on process restart.
+Once paws is mentioned in a thread, subsequent replies in that thread are accepted without another mention. The tracker is currently in-memory and resets on process restart. It is committed only after durable intake acceptance.
