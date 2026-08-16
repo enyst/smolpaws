@@ -60,7 +60,16 @@ async function userMessageIds(baseUrl: string, conversationId: string): Promise<
 test('coordinator drives the REAL agent-server: intake lands created:true, event_id replay is created:false', async () => {
   const conversationsPath = tempDir('mwc-int-conv-');
   const dbDir = tempDir('mwc-int-db-');
-  const server = await createAgentServerApp({ config: { conversationsPath, sessionApiKey: SESSION_KEY } });
+  const server = await createAgentServerApp({
+    // This test verifies the coordinator↔HTTP contract, not profile selection or LLM execution. Supplying
+    // an explicit factory disables the product profile preparer so conversation creation is isolated from
+    // whatever profiles happen to exist on the machine running the test. A requested run may fail in the
+    // background, which is acceptable here; the append and replay semantics remain the subject under test.
+    agentFactory: async () => {
+      throw new Error('integration_test_agent_not_configured');
+    },
+    config: { conversationsPath, sessionApiKey: SESSION_KEY },
+  });
   const app = server.app as unknown as AppLike;
   const baseUrl = await listen(app);
   try {
