@@ -62,6 +62,13 @@ export async function handleSlackEvent(ctx: SlackEventContext, deps: SlackDeps):
   }
 
   let completed = false;
+  let reservationHeld = true;
+  const releaseReservation = (): void => {
+    if (!reservationHeld) return;
+    deps.dedup.release(dedupKey);
+    reservationHeld = false;
+  };
+
   try {
     const access = checkAccess(ctx, deps.config);
     if (access === 'denied') {
@@ -152,6 +159,10 @@ export async function handleSlackEvent(ctx: SlackEventContext, deps: SlackDeps):
     if (isGuest) deps.guestLimiter.record(ctx.userId);
     completed = true;
   } catch (error) {
+    // A rejected dispatch means the durable intake boundary was not crossed. Release immediately,
+    // before the best-effort Slack error reply, so a platform retry cannot be suppressed by slow or
+    // failing chat.postMessage I/O.
+    releaseReservation();
     deps.logger.error({ err: error }, 'Error processing Slack message');
     await deps
       .postMessage(
@@ -161,6 +172,7 @@ export async function handleSlackEvent(ctx: SlackEventContext, deps: SlackDeps):
       )
       .catch(() => {});
   } finally {
+    if (!reservationHeld) return;
     if (completed) deps.dedup.commit(dedupKey);
     else deps.dedup.release(dedupKey);
   }
