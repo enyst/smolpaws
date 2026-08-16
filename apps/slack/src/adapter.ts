@@ -1,13 +1,11 @@
 /**
- * Slack channel adapter.
+ * Slack canary bridge for the new durable message-work architecture.
  *
- * Connects to Slack via @slack/bolt Socket Mode, listens for events, and
- * dispatches to the agent server. Unlike the Discord adapter, Slack has
- * richer ingress logic (thread context, dedup, guest rate limiting,
- * reactions) which lives in slackHandler.ts and is injected via SlackDeps.
- * This adapter owns the platform connection lifecycle and wires the handler.
+ * Slack is intentionally greenfield here: it does NOT use the legacy `/turns` dispatch path. Socket
+ * Mode ingress is normalized by slackHandler, accepted by SlackCoordinatorRuntime, integrated into the
+ * upstream-shaped TypeScript agent-server, synced into the durable delivery outbox, then sent back to
+ * Slack by DeliveryDispatcher through SlackDeliveryTarget.
  */
-
 import { App } from '@slack/bolt';
 import type { GenericMessageEvent } from '@slack/types';
 import {
@@ -18,6 +16,7 @@ import {
   type ReplyContext,
 } from '../../../src/shared/bridgeAdapter.js';
 import { loadConfig, type SlackConfig } from './config.js';
+import { SlackCoordinatorRuntime } from './coordinatorRuntime.js';
 import {
   GuestRateLimiter,
   MentionedThreadTracker,
@@ -35,6 +34,7 @@ export type SlackAdapterConfig = BridgeAdapterConfig & {
 
 export class SlackAdapter extends BaseBridgeAdapter {
   private app?: App;
+  private runtime?: SlackCoordinatorRuntime;
   private botUserId = '';
   private readonly slackConfig: SlackConfig;
   private readonly dedup = new MessageDeduplicator();
@@ -45,8 +45,6 @@ export class SlackAdapter extends BaseBridgeAdapter {
     super(config);
     this.slackConfig = config.slackConfig;
   }
-
-  // ── Lifecycle ────────────────────────────────────────────────────
 
   protected async connect(): Promise<void> {
     const app = new App({
@@ -64,13 +62,9 @@ export class SlackAdapter extends BaseBridgeAdapter {
 
     app.event('message', async ({ event, context }) => {
       const msg = event as GenericMessageEvent;
-
-      // Skip edits and other message subtypes
       if (msg.subtype) return;
 
       const isDm = msg.channel_type === 'im';
-
-      // For channel messages: only process thread replies in mentioned threads
       if (!isDm) {
         if (!msg.thread_ts || !this.mentionedThreads.isTracked(msg.thread_ts)) return;
       }
@@ -78,53 +72,93 @@ export class SlackAdapter extends BaseBridgeAdapter {
       await this.processEvent(msg, context.teamId, isDm, deps);
     });
 
-    // Resolve bot identity before starting Socket Mode so event handlers
-    // have botUserId available from the first event. Fail fast if it's
-    // missing — otherwise every handler silently no-ops on the empty id.
     const auth = await app.client.auth.test();
     if (!auth.user_id) {
       throw new Error('Slack auth.test succeeded but returned no user_id');
     }
     this.botUserId = auth.user_id;
 
+    this.runtime = new SlackCoordinatorRuntime({
+      logger: this.logger,
+      serverUrl: this.runnerUrl,
+      sessionApiKey: this.runnerToken,
+      sendChunk: async (channel, text, threadTs) => {
+        const result = await app.client.chat.postMessage({
+          channel,
+          text,
+          thread_ts: threadTs,
+          unfurl_links: false,
+          unfurl_media: false,
+        });
+        return result.ts ?? null;
+      },
+    });
+    await this.runtime.start();
     await app.start();
 
     this.logger.info(
-      { botUserId: this.botUserId, team: auth.team },
-      'SmolPaws Slack bot is ready 🐾',
+      { botUserId: this.botUserId, team: auth.team, agentServer: this.runnerUrl },
+      'SmolPaws Slack bot is ready on coordinator path 🐾',
     );
   }
 
   protected async disconnect(): Promise<void> {
+    // Stop ingress first, then let any currently running coordinator tick settle before closing SQLite.
     try {
       await this.app?.stop();
-    } catch (err) {
-      this.logger.warn({ err }, 'Failed to stop Slack Socket Mode app cleanly');
+    } catch (error) {
+      this.logger.warn({ err: error }, 'Failed to stop Slack Socket Mode app cleanly');
+    }
+    try {
+      await this.runtime?.stop();
+    } catch (error) {
+      this.logger.warn({ err: error }, 'Failed to stop Slack coordinator runtime cleanly');
     } finally {
+      this.runtime = undefined;
       this.app = undefined;
     }
   }
 
   /**
-   * Shared event pipeline for app_mention and message events: applies the
-   * common bot-loop guards, builds the SlackEventContext, and dispatches
-   * through handleSlackEvent with structured error logging. Each event
-   * handler keeps its own type-specific pre-filters before calling this.
+   * Slack deliberately overrides the shared legacy bridge dispatch. Its success boundary is durable
+   * coordinator acceptance; the background relay owns the eventual reply.
    */
+  protected override async dispatch(
+    message: IncomingMessage,
+    _replyContext: ReplyContext,
+  ): Promise<void> {
+    const runtime = this.runtime;
+    if (runtime === undefined) {
+      throw new Error('Slack coordinator runtime is not started');
+    }
+    await runtime.accept(message);
+  }
+
+  // Required by BaseBridgeAdapter but not used by Slack's authoritative coordinator path. Keeping this
+  // implementation makes the inherited lifecycle/registry contract harmless for existing bridge loader
+  // callers without coupling Slack delivery back to that old dispatch mechanism.
+  protected async sendReply(ctx: ReplyContext, text: string): Promise<void> {
+    const event = ctx.original as SlackEventContext | undefined;
+    if (!event?.channelId || !event.ts) {
+      this.logger.error(
+        { conversationId: ctx.conversationId },
+        'Cannot send Slack reply: missing event context',
+      );
+      return;
+    }
+    await this.postMessage(event.channelId, text, replyThreadTs(event));
+  }
+
   private async processEvent(
     event: SlackEventLike,
     teamId: string | undefined,
     isDm: boolean,
     deps: SlackDeps,
   ): Promise<void> {
-    if (!this.botUserId) return;
-    if (!event.user) return;
-    // Prevent bot loops: ignore bot messages and self-mentions
-    if (event.bot_id) return;
-    if (event.user === this.botUserId) return;
+    if (!this.botUserId || !event.user) return;
+    if (event.bot_id || event.user === this.botUserId) return;
 
     if (!teamId) {
-      // Log only safe metadata — never the raw event (contains message text).
       this.logger.warn(
         { channel: event.channel, ts: event.ts, user: event.user },
         'Slack event missing team context',
@@ -145,41 +179,13 @@ export class SlackAdapter extends BaseBridgeAdapter {
 
     try {
       await handleSlackEvent(ctx, deps);
-    } catch (err) {
-      // Log only safe metadata — never the raw event (contains message text).
+    } catch (error) {
       this.logger.error(
-        { err, channel: event.channel, ts: event.ts, user: event.user },
+        { err: error, channel: event.channel, ts: event.ts, user: event.user },
         'Failed to handle Slack event',
       );
     }
   }
-
-  // ── Platform I/O ─────────────────────────────────────────────────
-
-  protected async sendReply(ctx: ReplyContext, text: string): Promise<void> {
-    const event = ctx.original as SlackEventContext | undefined;
-    if (!event?.channelId || !event.ts) {
-      this.logger.error(
-        { conversationId: ctx.conversationId },
-        'Cannot send Slack reply: missing event context',
-      );
-      return;
-    }
-    await this.postMessage(event.channelId, text, replyThreadTs(event));
-  }
-
-  protected override buildCreateConversation(msg: IncomingMessage) {
-    const base = super.buildCreateConversation({ ...msg, platformContext: undefined });
-    return {
-      ...base,
-      smolpaws: {
-        ...base.smolpaws,
-        slack: msg.platformContext,
-      },
-    };
-  }
-
-  // ── Handler wiring ───────────────────────────────────────────────
 
   private buildDeps(): SlackDeps {
     return {
@@ -196,7 +202,6 @@ export class SlackAdapter extends BaseBridgeAdapter {
   }
 
   private async postMessage(channel: string, text: string, threadTs?: string): Promise<void> {
-    // Capture a local reference: disconnect() may null this.app mid-loop.
     const app = this.app;
     if (!app) return;
     for (const chunk of splitMessage(text)) {
@@ -219,21 +224,19 @@ export class SlackAdapter extends BaseBridgeAdapter {
   private async fetchThreadMessages(channel: string, threadTs: string): Promise<ThreadMessage[]> {
     const app = this.app;
     if (!app) return [];
-    const result = await app.client.conversations.replies({
-      channel,
-      ts: threadTs,
-      limit: 50,
-    });
+    const result = await app.client.conversations.replies({ channel, ts: threadTs, limit: 50 });
     if (!result.messages) return [];
-    // Slack's MessageElement union doesn't surface username/subtype on the
-    // top-level type; narrow to the fields we read. A for...of keeps the
-    // value extraction type-safe without non-null assertions.
     const messages = result.messages as ReadonlyArray<SlackThreadReply>;
     const threadMessages: ThreadMessage[] = [];
-    for (const m of messages) {
-      const user = m.user ?? m.bot_id ?? m.username;
-      if (user && m.text && m.ts && isThreadContextMessageSubtype(m.subtype)) {
-        threadMessages.push({ user, text: m.text, ts: m.ts });
+    for (const message of messages) {
+      const user = message.user ?? message.bot_id ?? message.username;
+      if (
+        user &&
+        message.text &&
+        message.ts &&
+        isThreadContextMessageSubtype(message.subtype)
+      ) {
+        threadMessages.push({ user, text: message.text, ts: message.ts });
       }
     }
     return threadMessages;
@@ -249,10 +252,6 @@ type SlackThreadReply = {
   subtype?: string;
 };
 
-/**
- * Common shape across app_mention and message events for the fields the
- * shared pipeline reads. Both Bolt event types are structurally assignable.
- */
 type SlackEventLike = {
   user?: string;
   bot_id?: string;
@@ -262,9 +261,17 @@ type SlackEventLike = {
   text?: string;
 };
 
-// ── Register with the bridge registry ─────────────────────────────
-
 bridgeRegistry.register('slack', (config) => {
   const slackConfig = loadConfig();
-  return new SlackAdapter({ ...config, slackConfig });
+  const serverUrl = (
+    process.env.SMOLPAWS_COORD_SERVER_URL ?? 'http://127.0.0.1:8790'
+  ).replace(/\/+$/, '');
+  const sessionApiKey =
+    process.env.SMOLPAWS_COORD_SERVER_API_KEY?.trim() || config.runnerToken;
+  return new SlackAdapter({
+    ...config,
+    runnerUrl: serverUrl,
+    runnerToken: sessionApiKey,
+    slackConfig,
+  });
 });

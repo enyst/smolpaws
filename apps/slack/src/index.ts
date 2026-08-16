@@ -1,15 +1,6 @@
-/**
- * Slack ingress — thin entry point that starts the Slack channel adapter.
- *
- * All platform logic lives in adapter.ts (lifecycle) and slackHandler.ts
- * (ingress logic). This file just wires config and handles process
- * lifecycle, matching the apps/discord pattern.
- */
-
+/** Slack Socket Mode entrypoint for the coordinator/new-agent-server canary path. */
 import pino from 'pino';
 import { bridgeRegistry } from '../../../src/shared/bridgeAdapter.js';
-
-// Import the adapter module to trigger registration with bridgeRegistry
 import './adapter.js';
 
 const logger = pino({
@@ -17,20 +8,20 @@ const logger = pino({
   transport: { target: 'pino-pretty', options: { colorize: true } },
 });
 
-const RUNNER_URL = (
-  process.env.SMOLPAWS_RUNNER_URL || 'http://127.0.0.1:8788'
+const AGENT_SERVER_URL = (
+  process.env.SMOLPAWS_COORD_SERVER_URL || 'http://127.0.0.1:8790'
 ).replace(/\/+$/, '');
-const RUNNER_TOKEN = process.env.SMOLPAWS_RUNNER_TOKEN?.trim();
+const AGENT_SERVER_API_KEY = process.env.SMOLPAWS_COORD_SERVER_API_KEY?.trim();
 
 async function main() {
   try {
     await bridgeRegistry.startAdapter('slack', {
-      runnerUrl: RUNNER_URL,
-      runnerToken: RUNNER_TOKEN,
+      runnerUrl: AGENT_SERVER_URL,
+      runnerToken: AGENT_SERVER_API_KEY,
       logger,
     });
   } catch (error) {
-    logger.fatal({ error }, 'Failed to start Slack adapter');
+    logger.fatal({ error }, 'Failed to start Slack coordinator bridge');
     process.exit(1);
   }
 }
@@ -42,4 +33,4 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   });
 }
 
-main();
+void main();
