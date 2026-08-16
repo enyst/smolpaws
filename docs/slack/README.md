@@ -54,11 +54,13 @@ Hosts the current Slack canary workers:
 4. calls `syncDeliveryOutbox()` for known Slack conversations;
 5. asks the Delivery Dispatcher to perform bounded external sends.
 
-The runtime persists its state at:
+The first authoritative relay generation persists its state at:
 
 ```text
-~/.smolpaws/coordinator/slack.db
+~/.smolpaws/coordinator/slack-relay-v1.db
 ```
+
+It also derives agent-server conversation IDs from the versioned namespace `slack-relay:v1`. The database and conversation namespace are deliberately distinct from the earlier shadow experiment. Reusing the shadow conversation IDs could cause initial outbox catch-up to rediscover and send old shadow responses.
 
 ### `src/coordinator/outboundRelay.ts`
 
@@ -102,7 +104,7 @@ Slack events use a stable source-message identity:
 {channel_id}:{message_ts}
 ```
 
-The coordinator derives a deterministic agent event ID from the platform and source message ID. Replaying the same Slack event therefore returns the existing intake work and existing agent event instead of creating another turn.
+The coordinator combines it with the Slack account/workspace when constructing the durable intake source key and derives a deterministic agent event ID. Replaying the same Slack event therefore returns the existing intake work and existing agent event instead of creating another turn.
 
 ## Lane identity
 
@@ -115,7 +117,7 @@ channel:slack:{team_id}:{channel_id}:{thread_ts-or-root}
 - DMs use `root`.
 - A channel mention starts or joins a Slack thread.
 - Replies in a tracked thread reuse its root `thread_ts`.
-- The lane directory persists the mapping to one agent-server conversation ID.
+- The lane directory persists the mapping to one versioned agent-server conversation ID.
 
 ## Outbound policy
 
@@ -172,18 +174,19 @@ The tests cover:
 - outbox catch-up and replay behavior;
 - successful delivery settlement;
 - `delivery_unknown` after an ambiguous external failure;
-- the complete relay sequence with real SQLite and a deterministic fake agent-server.
+- the complete relay sequence with real SQLite and a deterministic fake agent-server;
+- a deterministic end-to-end run through the real in-process TypeScript agent-server, a fake LLM `finish` call, the Outbound Relay, Delivery Dispatcher, and Slack Delivery Target.
 
 A real live canary requires evidence from every boundary:
 
 1. the Slack event is accepted;
-2. the intake row exists in `slack.db`;
+2. the intake row exists in `slack-relay-v1.db`;
 3. the new agent-server contains the deterministic user event and completed run;
 4. `syncDeliveryOutbox()` creates delivery work;
 5. Delivery Dispatcher settles it with Slack's timestamp as `external_message_id`;
 6. the reply appears in the correct Slack thread or DM.
 
-A visible Slack reply alone is not enough proof because an older local process may still be running legacy code.
+A visible Slack reply alone is not enough proof because an older local process may still be running legacy code. In particular, `🐾 Done — nothing to report back.` is the old `/turns` fallback and is evidence that the relay canary has **not** handled that message.
 
 ## Rollout boundary
 
