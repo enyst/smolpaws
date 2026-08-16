@@ -7,8 +7,8 @@ Its job is to make external message intake and delivery durable without pushing 
 ## Ownership
 
 - **Agent-server EventLog:** source of truth for conversations, events, and agent execution state.
-- **Coordinator SQLite store:** source of truth for external work: intake deduplication, lane→conversation mapping, ordering, claims, retries/backoff, delivery outcomes, projection cursors, and audit state.
-- **Channel adapter:** canonical lane identity, platform formatting, actual platform send, and platform-specific reconciliation when available.
+- **Coordinator SQLite store:** source of truth for external work: intake deduplication, lane→conversation mapping, ordering, claims, retries/backoff, delivery outcomes, outbox catch-up cursors, and audit state.
+- **Channel adapter / Delivery Target:** canonical lane identity, platform formatting, the actual platform send, and platform-specific reconciliation when available.
 
 One fact should have one owner. The coordinator must not duplicate the agent-server execution state machine.
 
@@ -26,13 +26,11 @@ The SQLite store keeps:
 - a unified `work` table for `intake` and `delivery` rows;
 - monotonically increasing per-lane/per-kind sequence numbers;
 - state, availability time, claim owner/expiry, generation fence, attempts, send-attempt fence, errors, external message IDs, and immutable payloads;
-- per-conversation delivery projection cursors.
+- per-conversation cursors used by `syncDeliveryOutbox()`.
 
 ## Intake invariant
 
 A platform message has a stable `source_key` and deterministic agent event ID.
-
-Flow:
 
 ```text
 adapter input
@@ -45,11 +43,39 @@ adapter input
 
 If the append succeeds but the response is lost, retrying the same deterministic `event_id` is safe: agent-server returns the existing event instead of creating another user turn.
 
-## Delivery invariant
+## Outbound Relay
 
-Delivery work is projected from durable agent events, not invented as ephemeral bridge state.
+The outbound half has two explicit responsibilities:
 
-Only the unresolved lane head is claimable, so later work cannot silently overtake earlier work in the same lane/kind.
+```text
+agent-server EventLog
+  -> OutboundRelay.syncDeliveryOutbox()
+  -> durable delivery outbox
+  -> DeliveryDispatcher
+  -> platform DeliveryTarget
+```
+
+### `syncDeliveryOutbox()`
+
+`OutboundRelay.syncDeliveryOutbox(conversationId)` reads new durable agent events and inserts corresponding delivery rows with a unique source identity based on agent event plus destination lane.
+
+Delivery rows are inserted before the catch-up cursor advances. If the process crashes between those operations, replay is safe because the unique work identity makes re-insertion a no-op.
+
+The extraction policy is explicit. The reusable coordinator supports explicit outbound-intent events, while the first Slack canary uses the normal terminal `finish` observation as its chat reply.
+
+### Delivery Dispatcher
+
+The Delivery Dispatcher owns the external side-effect boundary:
+
+```text
+claim delivery lane-head
+  -> validate target and payload
+  -> durably mark send_attempted
+  -> invoke platform DeliveryTarget
+  -> settle done / failed / delivery_unknown
+```
+
+Only the unresolved lane head is claimable, so later work cannot silently overtake earlier work in the same lane.
 
 A delivery worker must durably mark `send_attempted` immediately before invoking the external platform:
 
@@ -64,14 +90,6 @@ Claims are fenced by generation plus claim expiry. Stale workers cannot settle w
 
 Retryable failures use durable backoff and eventually become `failed` after the configured attempt budget. Non-retryable failures fail directly.
 
-## Projection invariant
-
-`projectDeliveries(conversationId)` reads durable agent events in pages and inserts delivery work with a unique source identity based on agent event + destination lane.
-
-Delivery rows are inserted before the projection cursor advances. If the process crashes between those operations, replay is safe because the unique work identity makes re-insertion a no-op.
-
-The default extractor currently projects explicit outbound-intent action events (`send_message` / `current_thread_message`). Alternative extractors, including terminal/final-response projection, remain an explicit policy seam rather than hidden behavior.
-
 ## Testing
 
 The coordinator core is covered with deterministic real-SQLite tests for:
@@ -83,20 +101,32 @@ The coordinator core is covered with deterministic real-SQLite tests for:
 - retries/backoff/exhaustion;
 - `delivery_unknown` versus safe retry;
 - operator resolution paths;
-- projector replay/pagination/cursor behavior.
+- delivery-outbox catch-up, replay, pagination, and cursor behavior.
 
-There is also an integration test against the real in-process `@smolpaws/openhands-agent-server` proving deterministic `event_id` append and replay without duplicate user events.
+Slack adds a deterministic end-to-end test that runs the real in-process TypeScript agent-server with a fake LLM, executes a `finish` tool call, synchronizes the delivery outbox, dispatches through a Slack Delivery Target, and verifies the durable intake/delivery rows.
 
-## Rollout status and remaining product work
+## Slack canary
 
-The durable coordinator core and real agent-server intake integration exist. Bridge adoption is the remaining product rollout boundary.
+`apps/slack` is the first authoritative bridge implementation of the complete path. It is greenfield and deliberately does not preserve its unused legacy `/turns` dispatch shape.
+
+The first canary generation uses:
+
+- database `~/.smolpaws/coordinator/slack-relay-v1.db`;
+- a versioned deterministic conversation namespace, separate from earlier shadow experiments;
+- the TypeScript agent-server on port `8790` by default;
+- `OutboundRelay.syncDeliveryOutbox()`;
+- `DeliveryDispatcher` plus `SlackDeliveryTarget`.
+
+The code path and deterministic end-to-end test are implemented. Live deployment and soak in the Liberty Labs workspace remain the operational rollout boundary.
+
+## Remaining product rollout
 
 Proceed incrementally:
 
-1. shadow/intake path on a non-critical bridge;
-2. recording-only delivery projection;
-3. canary the primary WhatsApp path with rollback;
-4. migrate the remaining bridges onto the same coordinator interface;
-5. remove the old `/turns` runner only after a clean soak on the new path.
+1. deploy/restart the Slack canary from the reviewed checkout and verify its durable rows plus EventLog, not merely a visible reply;
+2. soak Slack and exercise restart/reconciliation behavior;
+3. design a rollback-safe canary for the primary WhatsApp path;
+4. migrate other bridges only after reviewing their existing behavior and delivery semantics;
+5. remove the old `/turns` runner only after every in-use bridge has a clean soak on the new path.
 
-This section may be updated as rollout progresses. Historical implementation experiments do not belong here; git history already preserves them.
+This document records current invariants and boundaries. Historical implementation experiments belong in git history, not here.
