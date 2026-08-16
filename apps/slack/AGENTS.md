@@ -1,68 +1,97 @@
 # Slack App
 
-Local Slack ingress app for SmolPaws using Socket Mode.
+Local Socket Mode canary for the durable SmolPaws message-work architecture.
 
-## Status
+## Current architecture
 
-Phase 1 implementation: DMs (`message.im`) and channel mentions (`app_mention`) dispatched to the agent server via the shared turn API.
-
-## How It Works
+Slack is deliberately greenfield. It does **not** use the legacy `/turns` runner path.
 
 ```text
-Slack Socket Mode (WebSocket)
-  → apps/slack (Bolt) — SlackAdapter (bridge)
-  → src/shared/turnClient.ts
-  → agent-server (127.0.0.1:8788)
-  → outbound messages claimed by delivery owner
-  → chat.postMessage with thread_ts
+Slack Socket Mode
+  -> SlackAdapter / slackHandler
+  -> SlackCoordinatorRuntime.accept()
+  -> coordinator durable intake (SQLite)
+  -> TypeScript OpenHands agent-server (:8790)
+  -> agent EventLog
+  -> OutboundRelay.syncDeliveryOutbox()
+  -> durable delivery outbox
+  -> DeliveryDispatcher
+  -> SlackDeliveryTarget
+  -> chat.postMessage
 ```
 
-Same bridge pattern as `apps/discord`. The adapter self-registers with
-`bridgeRegistry` and is discovered by the bridge loader via `plugin.json`.
-When `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are present, the agent-server
-starts it automatically at startup; `npm start` also runs it standalone.
+The shared `BaseBridgeAdapter` is retained only for bridge-loader lifecycle compatibility. `SlackAdapter.dispatch()` overrides its legacy dispatch behavior completely; do not reintroduce `turnClient` or `/turns` into `apps/slack`.
 
-## Files
+## Ownership
 
-| File | Purpose |
-|------|---------|
-| `plugin.json` | Bridge manifest — `kind: "bridge"`, requiredEnv, discovered by the loader |
-| `src/adapter.ts` | `SlackAdapter extends BaseBridgeAdapter` — lifecycle, shared dispatch, delivery, registry registration |
-| `src/index.ts` | Thin entry point — starts the adapter via `bridgeRegistry.startAdapter('slack', ...)` |
-| `src/config.ts` | Env parsing and allowlists |
-| `src/slackHandler.ts` | Ingress policy — access checks, dedup, thread context, normalization |
-| `src/slackContext.ts` | Conversation ID generation, mention stripping, dedup |
-| `src/__tests__/slackContext.test.ts` | Context helper tests |
-| `src/__tests__/slackHandler.test.ts` | Ingress policy and normalization tests |
-| `src/__tests__/slackAdapter.test.ts` | Shared dispatch and delivery integration tests |
+- `slackHandler.ts`: Slack ingress policy, normalization, access control, thread context and dedup.
+- `coordinatorRuntime.ts`: Slack-hosted coordinator workers for the current canary; durable acceptance is the ingress success boundary.
+- `src/coordinator/outboundRelay.ts`: catches durable agent events up into the delivery outbox through `syncDeliveryOutbox()`.
+- `src/coordinator/deliveryDispatcher.ts`: claims delivery work, marks the external-send fence, invokes the target, and settles the durable outcome.
+- `deliveryTarget.ts`: Slack-specific `chat.postMessage` side effect using the lane's durable channel/thread coordinates.
+- `packages/openhands-agent-server`: source of truth for conversation events and agent execution.
 
-## Local Dev
+## Delivery rule
+
+The canary projects the normal terminal `finish` observation as a Slack reply. Slack does not require an agent-specific `send_message` tool merely to produce a normal chat response.
+
+Once a delivery row has been durably marked `send_attempted`, an exception is treated as `delivery_unknown`; the dispatcher does not blindly retry an external effect that may already have landed.
+
+## Local canary
+
+Install the root, new agent-server package, and Slack dependencies:
 
 ```bash
-npm --prefix apps/slack install
-npm --prefix apps/slack run dev    # watch mode
-npm --prefix apps/slack run test   # unit tests
+npm ci
+npm ci --prefix packages/openhands-agent-server
+npm ci --prefix apps/slack
 ```
 
-Requires `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` in `~/.smolpaws/.env`.
+Start the TypeScript agent-server:
 
-## Thread Follow-ups
+```bash
+./scripts/run-local-smolpaws.sh npm --prefix packages/openhands-agent-server run dev:server
+```
 
-Once the bot is @mentioned in a thread, it responds to all subsequent replies in that thread without requiring another @mention. Tracked in-memory (resets on restart). Requires `channels:history` scope and `message.channels` event subscription.
+It listens on `127.0.0.1:8790` by default. Then start paws:
 
-## Identity
+```bash
+./scripts/run-local-smolpaws.sh npm --prefix apps/slack run start
+```
 
-The Slack app is named "paws" — it's smolpaws' Slack bot identity. Same cat, thinner surface: dispatches through the turn API without the full heartbeat/Chrome/memory stack. For the operational details (allowlist, known users, tokens), see `~/.smolpaws/slack/` and `~/.smolpaws/.env`.
+Relevant environment variables in `~/.smolpaws/.env`:
 
-## Access Control
+- `SLACK_BOT_TOKEN`
+- `SLACK_APP_TOKEN`
+- `SMOLPAWS_COORD_SERVER_URL` (default `http://127.0.0.1:8790`)
+- `SMOLPAWS_COORD_SERVER_API_KEY` when agent-server auth is enabled
+- optional Slack team/channel/user allowlists
+- optional `SMOLPAWS_COORD_DB` is no longer used by this Slack canary; its current durable DB is `~/.smolpaws/coordinator/slack.db`
 
-- Allowlisted users (in `SLACK_ALLOWED_USER_IDS`): unlimited access
-- Non-allowlisted users (when allowlist is active): 5 conversations max, tracked in `~/.smolpaws/slack/guest-usage.json`
-- User ID → name mapping: `~/.smolpaws/slack/known-users.json`
-- Note: Slack user IDs are per-workspace, not global. Same person has different IDs across workspaces.
+The new server must also have a usable active LLM profile/credential in its server state/keychain.
 
-## Documentation
+## Tests
 
-- Architecture plan: [`../../docs/slack/README.md`](../../docs/slack/README.md)
-- Setup notes: [`../../docs/slack/instructions.md`](../../docs/slack/instructions.md)
-- Public arch page: [enyst.github.io/smolpaws-slack.html](https://enyst.github.io/smolpaws-slack.html)
+```bash
+npm run typecheck --prefix apps/slack
+npm run test --prefix apps/slack
+```
+
+The delivery-pipeline tests cover durable outbox sync, fenced dispatch, `delivery_unknown`, Slack channel/thread routing, and terminal-response relay behavior with real SQLite.
+
+## Liberty Labs canary
+
+The Slack app identity is `paws`. Use the Liberty Labs workspace as the non-critical live canary. Verify one message by checking all of:
+
+1. Slack ingress event is accepted.
+2. an `intake` row exists in `~/.smolpaws/coordinator/slack.db`;
+3. the new agent-server contains the deterministic user event and a completed agent run;
+4. `syncDeliveryOutbox()` creates the corresponding `delivery` row;
+5. Delivery Dispatcher settles it `done` with the Slack message timestamp as `external_message_id`;
+6. the reply appears in the correct Slack DM/thread.
+
+Do not infer success merely because Slack shows a reply; the durable work rows and new agent-server EventLog are part of the end-to-end contract.
+
+## Thread follow-ups
+
+Once paws is mentioned in a thread, subsequent replies in that thread are accepted without another mention. The tracker is currently in-memory and resets on process restart.
