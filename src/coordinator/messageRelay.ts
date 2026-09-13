@@ -159,7 +159,7 @@ export class MessageRelay {
     const candidate = this.deriveConversationId(descriptor);
     const binding = this.store.resolveLane(descriptor, candidate, now);
     if (!binding.conversationReady) {
-      await this.agent.ensureConversation(binding.conversationId);
+      await this.agent.ensureConversation(binding.conversationId, descriptor);
       this.store.markLaneConversationReady(binding.laneKey, this.now());
       return { ...binding, conversationReady: true };
     }

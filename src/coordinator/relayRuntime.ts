@@ -42,6 +42,8 @@ export interface RelayRuntimeOptions {
   tickMs?: number;
   /** Extra fields used only when the relay creates a new agent-server conversation. */
   createConversationDefaults?: Record<string, unknown>;
+  /** Per-lane creation fields merged over the shared defaults (for example a per-scope workspace). */
+  createConversationDefaultsFor?: (lane: LaneDescriptor) => Record<string, unknown>;
   /** What counts as deliverable. Defaults to finish observation OR end-of-turn assistant text. */
   extractor?: DeliverableExtractor;
   maxDispatchPerTick?: number;
@@ -88,6 +90,9 @@ export class RelayRuntime {
       ...(options.createConversationDefaults === undefined
         ? {}
         : { createDefaults: options.createConversationDefaults }),
+      ...(options.createConversationDefaultsFor === undefined
+        ? {}
+        : { createDefaultsFor: options.createConversationDefaultsFor }),
     });
     const namespace = options.idNamespace;
     this.messageRelay = new MessageRelay(this.store, agent, {
