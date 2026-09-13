@@ -3963,8 +3963,8 @@ async function getGitDiff(filePath, ref) {
   }
   const validRepo = await validateGitRepository(repo);
   const base = await getValidRef(validRepo, ref, "display");
-  const relative2 = toPosixPath2(path3.slice(validRepo.length + 1));
-  const original = await runGitCommand(["git", "show", `${base}:${relative2}`], { cwd: validRepo }).catch(() => "");
+  const relative3 = toPosixPath2(path3.slice(validRepo.length + 1));
+  const original = await runGitCommand(["git", "show", `${base}:${relative3}`], { cwd: validRepo }).catch(() => "");
   const modified = (await readFile(path3, "utf8")).split(/\r?\n/u).join("\n").replace(/\n$/u, "");
   return { modified, original };
 }
@@ -4167,10 +4167,8 @@ function getCachePath(source, cacheDir) {
 async function fetchWithResolution(source, cacheDir, options = {}) {
   const parsed = parseExtensionSource(source);
   if (parsed.type === "local") {
-    if (options.repoPath !== void 0 && options.repoPath !== null) {
-      throw new ExtensionFetchError("repoPath is not supported for local extension sources. Specify the full path directly.");
-    }
-    return { path: await resolveLocalSource(parsed.url), resolvedRef: null };
+    const basePath = await resolveLocalSource(parsed.url);
+    return { path: await applySubpath(basePath, options.repoPath ?? null, `local source '${source}'`), resolvedRef: null };
   }
   if (options.gitFetcher === void 0) {
     throw new ExtensionFetchError("Git extension fetching requires an explicit gitFetcher in the TypeScript package");
@@ -4178,7 +4176,7 @@ async function fetchWithResolution(source, cacheDir, options = {}) {
   await mkdir(cacheDir, { recursive: true });
   const cachePath = getCachePath(source, cacheDir);
   const resolvedRef = await options.gitFetcher(parsed.url, cachePath, { ref: options.ref ?? null, update: options.update ?? true });
-  return { path: await applySubpath(cachePath, options.repoPath ?? null), resolvedRef };
+  return { path: await applySubpath(cachePath, options.repoPath ?? null, "extension repository"), resolvedRef };
 }
 async function fetchExtension(source, cacheDir, options = {}) {
   return (await fetchWithResolution(source, cacheDir, options)).path;
@@ -4312,13 +4310,18 @@ async function resolveLocalSource(source) {
   }
   return path3;
 }
-async function applySubpath(basePath, subpath) {
+async function applySubpath(basePath, subpath, context) {
   if (subpath === null || subpath.length === 0) {
     return basePath;
   }
   const finalPath = resolve(basePath, subpath.replace(/^\/+|\/+$/gu, ""));
+  const resolvedBase = resolve(basePath);
+  const rel = relative(resolvedBase, finalPath);
+  if (rel === ".." || rel.startsWith(`..${sep}`)) {
+    throw new ExtensionFetchError(`Subdirectory '${subpath}' escapes ${context}`);
+  }
   if (!await exists2(finalPath)) {
-    throw new ExtensionFetchError(`Subdirectory '${subpath}' not found in extension repository`);
+    throw new ExtensionFetchError(`Subdirectory '${subpath}' not found in ${context}`);
   }
   return finalPath;
 }
@@ -6683,12 +6686,12 @@ async function loadProjectAgents(projectDir) {
 async function loadUserAgents() {
   return loadAgentsFromDirs(agentDirectories.map((dir) => userAgentsDir(dir)));
 }
-function userAgentsDir(relative2) {
-  const [base, ...rest] = relative2.split("/");
+function userAgentsDir(relative3) {
+  const [base, ...rest] = relative3.split("/");
   if (base === ".openhands") {
     return join(getUserPersistenceDir(), rest.join("/"));
   }
-  return join(homedir(), relative2);
+  return join(homedir(), relative3);
 }
 async function discoverAgents(options = {}) {
   const includeProject = options.includeProject ?? true;
@@ -7370,27 +7373,43 @@ var execAsync = promisify(exec);
 var baseToolObservationSchema = z.object({ text: z.string(), is_error: z.boolean().default(false) }).strict();
 var terminalActionSchema = z.object({ command: z.string(), is_input: z.boolean().default(false), timeout: z.number().nonnegative().nullable().default(null), reset: z.boolean().default(false) }).strict();
 var terminalObservationSchema = baseToolObservationSchema.extend({ command: z.string().nullable().default(null), exit_code: z.number().nullable().default(null), timeout: z.boolean().default(false) }).strict();
+var DEFAULT_TERMINAL_TIMEOUT_SECONDS = 300;
+var TERMINAL_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 var TerminalExecutor = class {
   workingDir;
+  defaultTimeoutSeconds;
   constructor(options) {
     this.workingDir = options.workingDir;
+    this.defaultTimeoutSeconds = options.defaultTimeoutSeconds ?? DEFAULT_TERMINAL_TIMEOUT_SECONDS;
   }
   async execute(action) {
     const parsed = terminalActionSchema.parse(action);
     if (parsed.is_input) return { text: "Interactive input is not supported by this executor.", is_error: true, command: parsed.command, exit_code: null, timeout: false };
     try {
-      const { stdout, stderr } = await execAsync(parsed.command, { cwd: this.workingDir, timeout: parsed.timeout === null ? void 0 : parsed.timeout * 1e3 });
+      const cwd = await stat(this.workingDir);
+      if (!cwd.isDirectory()) throw new Error("not a directory");
+    } catch {
+      return { text: `Working directory does not exist: ${this.workingDir}`, is_error: true, command: parsed.command, exit_code: -1, timeout: false };
+    }
+    const timeoutSeconds = parsed.timeout === null ? this.defaultTimeoutSeconds : parsed.timeout;
+    try {
+      const { stdout, stderr } = await execAsync(parsed.command, { cwd: this.workingDir, timeout: timeoutSeconds * 1e3, maxBuffer: TERMINAL_MAX_BUFFER_BYTES });
       return { text: `${stdout}${stderr}`, is_error: false, command: parsed.command, exit_code: 0, timeout: false };
     } catch (error) {
       const err = error;
-      return { text: `${err.stdout ?? ""}${err.stderr ?? String(error)}`, is_error: true, command: parsed.command, exit_code: typeof err.code === "number" ? err.code : -1, timeout: err.killed ?? false };
+      const timedOut = err.killed === true || err.signal === "SIGTERM";
+      const output = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+      const detail = timedOut ? `Command timed out after ${timeoutSeconds}s and was killed. Pass a larger \`timeout\` for long-running commands, or run servers in the background.` : output.length > 0 ? "" : err.message ?? String(error);
+      const text = output.length > 0 && detail.length > 0 ? `${output}
+${detail}` : output.length > 0 ? output : detail;
+      return { text, is_error: true, command: parsed.command, exit_code: typeof err.code === "number" ? err.code : -1, timeout: timedOut };
     }
   }
 };
 var TerminalTool = class {
   static create(options) {
     const executor = new TerminalExecutor(options);
-    return new ToolDefinition({ name: "terminal", description: "Execute a shell command in the project workspace.", inputSchema: terminalActionSchema, outputSchema: terminalObservationSchema, annotations: toolAnnotationsSchema.parse({ title: "terminal", openWorldHint: false }), executor: (action) => executor.execute(action) });
+    return new ToolDefinition({ name: "terminal", description: `Execute a shell command in the project workspace. Commands are killed after \`timeout\` seconds (default ${DEFAULT_TERMINAL_TIMEOUT_SECONDS}); pass a larger timeout for installs or test suites, and start long-lived servers in the background.`, inputSchema: terminalActionSchema, outputSchema: terminalObservationSchema, annotations: toolAnnotationsSchema.parse({ title: "terminal", openWorldHint: false }), executor: (action) => executor.execute(action) });
   }
 };
 var fileEditorActionSchema = z.object({ command: z.enum(["view", "create", "str_replace", "insert", "undo_edit"]), path: z.string(), file_text: z.string().nullable().default(null), old_str: z.string().nullable().default(null), new_str: z.string().nullable().default(null), insert_line: z.number().int().nonnegative().nullable().default(null), view_range: z.array(z.number().int()).nullable().default(null) }).strict();
@@ -7985,6 +8004,6 @@ function isExecError3(error) {
 // src/index.ts
 var VERSION = "0.2.0";
 
-export { AGENT_OUTCOME, AGENT_PROFILE_SCHEMA_VERSION, AGENT_SETTINGS_SCHEMA_VERSION, Agent, AgentContext, AgentDefinition, AgentFinishedCritic, AnthropicMessagesClient, AsyncCallbackWrapper, AsyncProcessManager, BROWSER_TOOL_NAME, BUILT_IN_TOOLS, BUILT_IN_TOOL_FACTORIES, BrowserTool, CANCEL_TASK_TOOL_NAME, CONTENT_POLICY_NUDGE, CONVERSATION_SETTINGS_SCHEMA_VERSION, CORRECTIVE_NUDGE, CancelTaskTool, ConversationState, CriticBase, CriticResult, DEFAULT_EXEC_TOOL_NAMES, DEFAULT_TEXT_CONTENT_LIMIT, DEFAULT_TRUNCATE_NOTICE, DEFAULT_TRUNCATE_NOTICE_WITH_PERSIST, DuplicateEventError, EVENTS_DIR, EVENT_FILE_PATTERN, EmptyPatchCritic, EventLog, ExtensionFetchError, FULL_STATE_KEY, FileEditorExecutor, FileEditorTool, FinishTool, GIT_EMPTY_TREE_HASH, GeminiClient, GitChangeStatus, GitCommandError, GitError, GitPathError, GitRepositoryError, GlobExecutor, GlobTool, GrepExecutor, GrepTool, HookConfig, HookDecision, HookDefinition, HookExecutor, HookManager, HookMatcher, HookResult, HookEventType as HookTriggerEventType, HookType, InMemoryFileStore, InMemorySecretStore, InstallationInfo, InstallationMetadata, LIST_TASKS_TOOL_NAME, LLMContentPolicyViolationError, LLM_PROFILE_ID_PATTERN, LOCK_FILE_NAME, LOCK_TIMEOUT_SECONDS, ListTasksTool, LocalConversation, LocalFileStore, LocalWorkspace, LogLevel, MAX_FILE_SIZE_FOR_GIT_DIFF, MCPError, MCPTimeoutError, MCPToolAction, MCPToolDefinition, MCPToolExecutor, MCPToolObservation, MacOSKeychainSecretStore, MemoryLRUCache, N_CHAR_PREVIEW, NoCondensationAvailableError, NoOpCondenser, OPENHANDS_KEYRING_SERVICE, OpenAIChatClient, OpenAIResponsesClient, PAUSE_TASK_TOOL_NAME, ParallelToolExecutor, PassCritic, PauseTaskTool, PendingActionsQueue, PipelineCondenser, RAW_LLM_FIELDS_IGNORED_WHEN_PROFILE_SELECTED, RESUME_TASK_TOOL_NAME, ROOT_PARENT_ID, RemoteConversation, RemoteWorkspace, RepoSource, ResumeTaskTool, RollingCondenser, RootSpan, SCHEDULE_TASK_TOOL_NAME, SECRET_KEY_PATTERNS, SEND_MESSAGE_TOOL_NAME, SENSITIVE_URL_PARAMS, SUB_AGENT_TOOL_NAME, ScheduleTaskTool, SendMessageTool, Skill, StuckDetector, TASK_SCHEDULER_TOOL_FACTORIES, TaskTrackerExecutor, TaskTrackerTool, TerminalExecutor, TerminalTool, TestLLM, TestLLMExhaustedError, ThinkTool, ToolDefinition, ToolRegistry, VERSION, ValueError, View, acpAgentProfileSchema, acpAgentSettingsSchema, acpServerKindSchema, acpToolCallEventSchema, actionEventSchema, actionEventsFromMessage, agentErrorEventSchema, agentProfileSchema, agentSettingsSchema, baseObservationSchema, baseToolObservationSchema, browserActionSchema, browserObservationSchema, buildAnthropicMessagesBody, buildChatCompletionsBody, buildCloneUrl, buildGeminiInteractionsBody, buildOpenAIResponsesBody, cancellationToken, checkScheduleValue, classifyError, classifyResponse, clearRawLlmFieldsWhenProfileSelected, condensationRequestSchema, condensationRequirement, condensationSchema, condensationSummaryEventSchema, contentSchema, contentToString, conversationErrorEventSchema, conversationExecutionStatus, conversationSettingsSchema, conversationStateUpdateEventSchema, createAnthropicClientFromProfile, createClientFromProfile, createGeminiClientFromProfile, createMcpTools, createOpenAIChatClientFromProfile, createOpenAIResponsesClientFromProfile, criticModeSchema, defaultAgentSettings, defaultToolSpecs, detectProviderFromBaseUrl, disableLogger, discoverAgents, dispatchLlmResponse, displayJson, dumps, endRootSpan, errorClassificationSchema, eventSchema, eventsToMessages, executeCommand, extractActionName, extractRepoName, failureActionSchema, failureKindSchema, fetchExtension, fetchWithResolution, fileEditorActionSchema, fileEditorObservationSchema, finishActionSchema, getAgentFactory, getCachePath, getChangesInRepo, getClosestGitRepo, getCommitChanges, getCommitFileDiff, getDisplayBaseRef, getEnv, getFactoryInfo, getGitCommits, getGitDiff, getGitRepositoryMetadata, getLlmApiKey, getLogger, getRegisteredAgentDefinitions, getReposContext, getUserPersistenceDir, getValidRef, globActionSchema, globObservationSchema, globalToolRegistry, grepActionSchema, grepMatchSchema, grepObservationSchema, handleDeprecatedModelFields, hookEventSchema, hookEventTypeSchema, hookExecutionEventSchema, imageContent, imageContentSchema, inputMetadataSchema, interruptEventSchema, isAbsolutePathSource, isAcpPatchEdit, isContentPolicyViolation, isConversationStateUpdateEvent, isEnabledFor, isGitUrl, isHostAbsolutePath, isLocalPathSource, isMessageEvent, isSecretKey, keywordTriggerSchema, listRegisteredTools, listTasksActionSchema, listUsableTools, llmCompletionLogEventSchema, llmCompletionResponseSchema, llmConvertibleEventSchema, llmProfileIdSchema, llmProfileSchema, llmProfileSecretRef, llmProviderIdSchema, llmProviderSecretRef, llmResponseType, llmUsageSchema, loadAgentsFromDir, loadAgentsFromDirs, loadProjectAgents, loadSkillsFromDir, loadUserAgents, loads, maybeInitLaminar, maybeTruncate, mergeSkillsByName, messageEventSchema, messageSchema, messageToolCallSchema, normalizeGitUrl, observabilityEnvKeys, observabilityMetadataSchema, observabilitySpanNameSchema, observabilityTagsSchema, observationEventSchema, observe, openAiApiModeSchema, openHandsAgentProfileSchema, openHandsAgentSettingsSchema, pageIterator, parseExtensionSource, pathMatchesGlob, pathTriggerSchema, pauseEventSchema, posixPathName, profileVerificationSettingsSchema, promptCacheRetentionSchema, reasoningEffortSchema, reasoningItemSchema, reasoningSummarySchema, redactTextSecrets, redactUrlCredentials, redactUrlCredentialsInText, redactUrlParams, redactedThinkingBlockSchema, reduceTextContent, registerAgent, registerAgentIfAbsent, registerBuiltinResolver, registerTool, registerToolFactory, resetAgentRegistryForTests, resolveLlmApiKeyRef, resolveLlmProfileApiKeyRef, resolveProviderFromProfile, resolveTool, restoreConversationState, resumeTranscriptEventSchema, runGitCommand, sanitizeOpenHandsMentions, sanitizedEnv, scheduleTaskActionSchema, secretRefSchema, sendMessageActionSchema, sendMessageObservationSchema, setupLogging, shouldEnableObservability, skillResourcesSchema, skillSchema, skillsToPrompt, sourceTypeSchema, startChildSpan, startRootSpan, streamingDeltaEventSchema, systemPromptEventSchema, taskItemSchema, taskMutationActionSchema, taskTrackerActionSchema, taskTrackerObservationSchema, taskTriggerSchema, terminalActionSchema, terminalObservationSchema, textContent, textContentSchema, thinkActionSchema, thinkingBlockSchema, toCamelCase, toLLMMessage, toPosixPath, tokenEventSchema, toolAnnotationsSchema, toolSpecSchema, triggerSchema, userRejectObservationSchema, utcNow, validateAgentProfile, validateAgentSettings, validateConversationSettings, validateExtensionName, validateGitRepository, workspace };
+export { AGENT_OUTCOME, AGENT_PROFILE_SCHEMA_VERSION, AGENT_SETTINGS_SCHEMA_VERSION, Agent, AgentContext, AgentDefinition, AgentFinishedCritic, AnthropicMessagesClient, AsyncCallbackWrapper, AsyncProcessManager, BROWSER_TOOL_NAME, BUILT_IN_TOOLS, BUILT_IN_TOOL_FACTORIES, BrowserTool, CANCEL_TASK_TOOL_NAME, CONTENT_POLICY_NUDGE, CONVERSATION_SETTINGS_SCHEMA_VERSION, CORRECTIVE_NUDGE, CancelTaskTool, ConversationState, CriticBase, CriticResult, DEFAULT_EXEC_TOOL_NAMES, DEFAULT_TERMINAL_TIMEOUT_SECONDS, DEFAULT_TEXT_CONTENT_LIMIT, DEFAULT_TRUNCATE_NOTICE, DEFAULT_TRUNCATE_NOTICE_WITH_PERSIST, DuplicateEventError, EVENTS_DIR, EVENT_FILE_PATTERN, EmptyPatchCritic, EventLog, ExtensionFetchError, FULL_STATE_KEY, FileEditorExecutor, FileEditorTool, FinishTool, GIT_EMPTY_TREE_HASH, GeminiClient, GitChangeStatus, GitCommandError, GitError, GitPathError, GitRepositoryError, GlobExecutor, GlobTool, GrepExecutor, GrepTool, HookConfig, HookDecision, HookDefinition, HookExecutor, HookManager, HookMatcher, HookResult, HookEventType as HookTriggerEventType, HookType, InMemoryFileStore, InMemorySecretStore, InstallationInfo, InstallationMetadata, LIST_TASKS_TOOL_NAME, LLMContentPolicyViolationError, LLM_PROFILE_ID_PATTERN, LOCK_FILE_NAME, LOCK_TIMEOUT_SECONDS, ListTasksTool, LocalConversation, LocalFileStore, LocalWorkspace, LogLevel, MAX_FILE_SIZE_FOR_GIT_DIFF, MCPError, MCPTimeoutError, MCPToolAction, MCPToolDefinition, MCPToolExecutor, MCPToolObservation, MacOSKeychainSecretStore, MemoryLRUCache, N_CHAR_PREVIEW, NoCondensationAvailableError, NoOpCondenser, OPENHANDS_KEYRING_SERVICE, OpenAIChatClient, OpenAIResponsesClient, PAUSE_TASK_TOOL_NAME, ParallelToolExecutor, PassCritic, PauseTaskTool, PendingActionsQueue, PipelineCondenser, RAW_LLM_FIELDS_IGNORED_WHEN_PROFILE_SELECTED, RESUME_TASK_TOOL_NAME, ROOT_PARENT_ID, RemoteConversation, RemoteWorkspace, RepoSource, ResumeTaskTool, RollingCondenser, RootSpan, SCHEDULE_TASK_TOOL_NAME, SECRET_KEY_PATTERNS, SEND_MESSAGE_TOOL_NAME, SENSITIVE_URL_PARAMS, SUB_AGENT_TOOL_NAME, ScheduleTaskTool, SendMessageTool, Skill, StuckDetector, TASK_SCHEDULER_TOOL_FACTORIES, TaskTrackerExecutor, TaskTrackerTool, TerminalExecutor, TerminalTool, TestLLM, TestLLMExhaustedError, ThinkTool, ToolDefinition, ToolRegistry, VERSION, ValueError, View, acpAgentProfileSchema, acpAgentSettingsSchema, acpServerKindSchema, acpToolCallEventSchema, actionEventSchema, actionEventsFromMessage, agentErrorEventSchema, agentProfileSchema, agentSettingsSchema, baseObservationSchema, baseToolObservationSchema, browserActionSchema, browserObservationSchema, buildAnthropicMessagesBody, buildChatCompletionsBody, buildCloneUrl, buildGeminiInteractionsBody, buildOpenAIResponsesBody, cancellationToken, checkScheduleValue, classifyError, classifyResponse, clearRawLlmFieldsWhenProfileSelected, condensationRequestSchema, condensationRequirement, condensationSchema, condensationSummaryEventSchema, contentSchema, contentToString, conversationErrorEventSchema, conversationExecutionStatus, conversationSettingsSchema, conversationStateUpdateEventSchema, createAnthropicClientFromProfile, createClientFromProfile, createGeminiClientFromProfile, createMcpTools, createOpenAIChatClientFromProfile, createOpenAIResponsesClientFromProfile, criticModeSchema, defaultAgentSettings, defaultToolSpecs, detectProviderFromBaseUrl, disableLogger, discoverAgents, dispatchLlmResponse, displayJson, dumps, endRootSpan, errorClassificationSchema, eventSchema, eventsToMessages, executeCommand, extractActionName, extractRepoName, failureActionSchema, failureKindSchema, fetchExtension, fetchWithResolution, fileEditorActionSchema, fileEditorObservationSchema, finishActionSchema, getAgentFactory, getCachePath, getChangesInRepo, getClosestGitRepo, getCommitChanges, getCommitFileDiff, getDisplayBaseRef, getEnv, getFactoryInfo, getGitCommits, getGitDiff, getGitRepositoryMetadata, getLlmApiKey, getLogger, getRegisteredAgentDefinitions, getReposContext, getUserPersistenceDir, getValidRef, globActionSchema, globObservationSchema, globalToolRegistry, grepActionSchema, grepMatchSchema, grepObservationSchema, handleDeprecatedModelFields, hookEventSchema, hookEventTypeSchema, hookExecutionEventSchema, imageContent, imageContentSchema, inputMetadataSchema, interruptEventSchema, isAbsolutePathSource, isAcpPatchEdit, isContentPolicyViolation, isConversationStateUpdateEvent, isEnabledFor, isGitUrl, isHostAbsolutePath, isLocalPathSource, isMessageEvent, isSecretKey, keywordTriggerSchema, listRegisteredTools, listTasksActionSchema, listUsableTools, llmCompletionLogEventSchema, llmCompletionResponseSchema, llmConvertibleEventSchema, llmProfileIdSchema, llmProfileSchema, llmProfileSecretRef, llmProviderIdSchema, llmProviderSecretRef, llmResponseType, llmUsageSchema, loadAgentsFromDir, loadAgentsFromDirs, loadProjectAgents, loadSkillsFromDir, loadUserAgents, loads, maybeInitLaminar, maybeTruncate, mergeSkillsByName, messageEventSchema, messageSchema, messageToolCallSchema, normalizeGitUrl, observabilityEnvKeys, observabilityMetadataSchema, observabilitySpanNameSchema, observabilityTagsSchema, observationEventSchema, observe, openAiApiModeSchema, openHandsAgentProfileSchema, openHandsAgentSettingsSchema, pageIterator, parseExtensionSource, pathMatchesGlob, pathTriggerSchema, pauseEventSchema, posixPathName, profileVerificationSettingsSchema, promptCacheRetentionSchema, reasoningEffortSchema, reasoningItemSchema, reasoningSummarySchema, redactTextSecrets, redactUrlCredentials, redactUrlCredentialsInText, redactUrlParams, redactedThinkingBlockSchema, reduceTextContent, registerAgent, registerAgentIfAbsent, registerBuiltinResolver, registerTool, registerToolFactory, resetAgentRegistryForTests, resolveLlmApiKeyRef, resolveLlmProfileApiKeyRef, resolveProviderFromProfile, resolveTool, restoreConversationState, resumeTranscriptEventSchema, runGitCommand, sanitizeOpenHandsMentions, sanitizedEnv, scheduleTaskActionSchema, secretRefSchema, sendMessageActionSchema, sendMessageObservationSchema, setupLogging, shouldEnableObservability, skillResourcesSchema, skillSchema, skillsToPrompt, sourceTypeSchema, startChildSpan, startRootSpan, streamingDeltaEventSchema, systemPromptEventSchema, taskItemSchema, taskMutationActionSchema, taskTrackerActionSchema, taskTrackerObservationSchema, taskTriggerSchema, terminalActionSchema, terminalObservationSchema, textContent, textContentSchema, thinkActionSchema, thinkingBlockSchema, toCamelCase, toLLMMessage, toPosixPath, tokenEventSchema, toolAnnotationsSchema, toolSpecSchema, triggerSchema, userRejectObservationSchema, utcNow, validateAgentProfile, validateAgentSettings, validateConversationSettings, validateExtensionName, validateGitRepository, workspace };
 //# sourceMappingURL=index.mjs.map
 //# sourceMappingURL=index.mjs.map

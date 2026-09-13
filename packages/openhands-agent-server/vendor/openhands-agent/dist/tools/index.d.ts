@@ -19,10 +19,19 @@ export declare const terminalObservationSchema: z.ZodObject<{
 }, z.core.$strict>;
 export type TerminalAction = z.infer<typeof terminalActionSchema>;
 export type TerminalObservation = z.infer<typeof terminalObservationSchema>;
+/**
+ * Hard cap applied when the model does not pass an explicit `timeout`. Upstream never blocks the agent
+ * loop forever: its tmux executor returns to the model after 30s without output (soft timeout, exit code
+ * -1). This executor cannot resume a still-running process, so it enforces a bounded hard timeout instead
+ * and reports it as `timeout: true`. The model can raise the limit per command.
+ */
+export declare const DEFAULT_TERMINAL_TIMEOUT_SECONDS = 300;
 export declare class TerminalExecutor {
     readonly workingDir: string;
+    readonly defaultTimeoutSeconds: number;
     constructor(options: {
         readonly workingDir: string;
+        readonly defaultTimeoutSeconds?: number;
     });
     execute(action: TerminalAction): Promise<TerminalObservation>;
 }

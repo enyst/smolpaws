@@ -127,6 +127,20 @@ Every update is a finite `OLD_PIN..NEW_PIN` interval prepared and checked by the
 
 Credential-gated live LLM workflows prove external provider viability; they are not substitutes for Python/TypeScript parity tests.
 
+The unattended weekly procedure that performs steps 1–7 is written out in [`docs/REVENDOR_AUTOMATION.md`](docs/REVENDOR_AUTOMATION.md).
+
+## Server review records
+
+The SDK repository generates the interval inventory for both targets, but its review files annotate `:server` units only as "transpiled separately". The server-side decisions live here:
+
+```text
+transpile/updates/<OLD8>..<NEW8>.md
+```
+
+One file per vendored interval, frozen once the interval's PR merges. It lists every upstream first-parent commit that touched `openhands-agent-server/`, `tests/agent_server/`, `tests/cross/`, or `examples/02_remote_agent_server/`, with exactly one disposition each (`PORT`, `NO_TARGET_CHANGE`, `DEVIATION`, `EXCLUDED`, `DEFERRED`), the policy ID where required, a concrete reason, and the TypeScript test evidence for every `PORT`. It also summarizes the pinned Python OpenAPI delta and any `transpile/openapi-policy.json` changes made for that interval.
+
+These records are review evidence, not a parity ledger. Compatibility is still proven by tests and the generated OpenAPI comparison.
+
 ## Validation
 
 ```sh
