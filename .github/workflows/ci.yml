@@ -77,6 +77,15 @@ jobs:
       - name: Run WhatsApp relay bridge tests
         run: npm run test --prefix apps/whatsapp
 
+      - name: Install Discord bridge dependencies
+        run: npm ci --prefix apps/discord
+
+      - name: Typecheck Discord relay bridge
+        run: npm run typecheck --prefix apps/discord
+
+      - name: Run Discord relay bridge tests
+        run: npm run test --prefix apps/discord
+
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 15

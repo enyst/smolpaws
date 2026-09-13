@@ -86,6 +86,6 @@ settings; the LLM profile stays the server's choice.
 |---|---|---|
 | Slack (`paws`) | standalone relay | live in Liberty Labs; identity context + workspace fix landed with this change |
 | WhatsApp | standalone relay | implemented (`apps/whatsapp`), deterministic end-to-end test green; needs the live six-point canary on the Mac, then cutover; scheduler and voice outbox still on the legacy path |
-| Discord | legacy `BaseBridgeAdapter` on `:8788` | works only while the legacy runner is up; move to the relay shape (`apps/discord` rewrite mirroring WhatsApp: gateway socket → handler → `RelayRuntime` → `DiscordDeliveryTarget`) |
+| Discord | standalone relay | rewritten on the relay (`apps/discord`: Gateway → handler → `RelayRuntime` → `DiscordDeliveryTarget`), deterministic end-to-end test green; needs a live check in the test server |
 | GitHub, email | Cloudflare Workers → `/turns` on the legacy runner | unchanged; migrate to relay intake after WhatsApp soaks |
 | Heartbeat | LaunchAgent → `:8790` | already on the new server |

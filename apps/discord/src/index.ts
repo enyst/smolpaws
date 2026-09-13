@@ -1,44 +1,53 @@
-/**
- * Discord ingress — thin entry point that starts the Discord channel adapter.
- *
- * All platform logic lives in adapter.ts. This file just wires config
- * and handles process lifecycle.
- */
-
+/** Standalone Discord entrypoint for the Message Relay / new-agent-server path. */
 import pino from 'pino';
-import { bridgeRegistry } from '../../../src/shared/bridgeAdapter.js';
 
-// Import the adapter module to trigger registration with bridgeRegistry
-import './adapter.js';
+import {
+  buildRelayConversationDefaults,
+  privateMemoryFiles,
+} from '../../../src/shared/relayConversationDefaults.js';
+import { DiscordBridge } from './adapter.js';
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
   transport: { target: 'pino-pretty', options: { colorize: true } },
 });
 
-const RUNNER_URL = (
-  process.env.SMOLPAWS_RUNNER_URL || 'http://127.0.0.1:8788'
+const agentServerUrl = (
+  process.env.SMOLPAWS_RELAY_SERVER_URL ||
+  process.env.SMOLPAWS_COORD_SERVER_URL ||
+  'http://127.0.0.1:8790'
 ).replace(/\/+$/, '');
-const RUNNER_TOKEN = process.env.SMOLPAWS_RUNNER_TOKEN?.trim();
+const sessionApiKey =
+  process.env.SMOLPAWS_RELAY_SERVER_API_KEY?.trim() ||
+  process.env.SMOLPAWS_COORD_SERVER_API_KEY?.trim();
 
-async function main() {
+const createConversationDefaults = buildRelayConversationDefaults({
+  ingress: 'discord',
+  extraContextFiles: privateMemoryFiles(),
+});
+const bridge = new DiscordBridge({ logger, serverUrl: agentServerUrl, sessionApiKey, createConversationDefaults });
+let stopping = false;
+
+async function main(): Promise<void> {
   try {
-    await bridgeRegistry.startAdapter('discord', {
-      runnerUrl: RUNNER_URL,
-      runnerToken: RUNNER_TOKEN,
-      logger,
-    });
+    await bridge.start();
   } catch (error) {
-    logger.fatal({ error }, 'Failed to start Discord adapter');
-    process.exit(1);
+    logger.fatal({ error }, 'Failed to start standalone Discord Message Relay bridge');
+    process.exitCode = 1;
   }
 }
 
+async function stop(signal: NodeJS.Signals): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  logger.info({ signal }, 'Shutting down standalone Discord Message Relay bridge');
+  await bridge.stop();
+}
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => {
-    logger.info({ signal }, 'Shutting down');
-    void bridgeRegistry.stopAll().finally(() => process.exit(0));
+  process.once(signal, () => {
+    void stop(signal).finally(() => process.exit(process.exitCode ?? 0));
   });
 }
 
-main();
+void main();
