@@ -2082,7 +2082,7 @@
           "hooks": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/HookConfig-Input"
+                "$ref": "#/components/schemas/HookConfig"
               },
               {
                 "type": "null"
@@ -5809,7 +5809,7 @@
           "hook_config": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/HookConfig-Output"
+                "$ref": "#/components/schemas/HookConfig"
               },
               {
                 "type": "null"
@@ -8031,14 +8031,14 @@
         "title": "HomeResponse",
         "type": "object"
       },
-      "HookConfig-Input": {
+      "HookConfig": {
         "additionalProperties": false,
         "description": "Configuration for all hooks.\n\nHooks can be configured either by loading from `.openhands/hooks.json` or\nby directly instantiating with typed fields:\n\n    # Direct instantiation with typed fields (recommended):\n    config = HookConfig(\n        pre_tool_use=[\n            HookMatcher(\n                matcher=\"terminal\",\n                hooks=[HookDefinition(command=\"block_dangerous.sh\")]\n            )\n        ]\n    )\n\n    # Load from JSON file:\n    config = HookConfig.load(\".openhands/hooks.json\")",
         "properties": {
           "post_tool_use": {
             "description": "Hooks that run after tool execution",
             "items": {
-              "$ref": "#/components/schemas/HookMatcher-Input"
+              "$ref": "#/components/schemas/HookMatcher"
             },
             "title": "Post Tool Use",
             "type": "array"
@@ -8046,7 +8046,7 @@
           "pre_tool_use": {
             "description": "Hooks that run before tool execution",
             "items": {
-              "$ref": "#/components/schemas/HookMatcher-Input"
+              "$ref": "#/components/schemas/HookMatcher"
             },
             "title": "Pre Tool Use",
             "type": "array"
@@ -8054,7 +8054,7 @@
           "session_end": {
             "description": "Hooks that run when a session ends",
             "items": {
-              "$ref": "#/components/schemas/HookMatcher-Input"
+              "$ref": "#/components/schemas/HookMatcher"
             },
             "title": "Session End",
             "type": "array"
@@ -8062,7 +8062,7 @@
           "session_start": {
             "description": "Hooks that run when a session starts",
             "items": {
-              "$ref": "#/components/schemas/HookMatcher-Input"
+              "$ref": "#/components/schemas/HookMatcher"
             },
             "title": "Session Start",
             "type": "array"
@@ -8070,7 +8070,7 @@
           "stop": {
             "description": "Hooks that run when the agent attempts to stop",
             "items": {
-              "$ref": "#/components/schemas/HookMatcher-Input"
+              "$ref": "#/components/schemas/HookMatcher"
             },
             "title": "Stop",
             "type": "array"
@@ -8078,63 +8078,7 @@
           "user_prompt_submit": {
             "description": "Hooks that run when user submits a prompt",
             "items": {
-              "$ref": "#/components/schemas/HookMatcher-Input"
-            },
-            "title": "User Prompt Submit",
-            "type": "array"
-          }
-        },
-        "title": "HookConfig",
-        "type": "object"
-      },
-      "HookConfig-Output": {
-        "additionalProperties": false,
-        "description": "Configuration for all hooks.\n\nHooks can be configured either by loading from `.openhands/hooks.json` or\nby directly instantiating with typed fields:\n\n    # Direct instantiation with typed fields (recommended):\n    config = HookConfig(\n        pre_tool_use=[\n            HookMatcher(\n                matcher=\"terminal\",\n                hooks=[HookDefinition(command=\"block_dangerous.sh\")]\n            )\n        ]\n    )\n\n    # Load from JSON file:\n    config = HookConfig.load(\".openhands/hooks.json\")",
-        "properties": {
-          "post_tool_use": {
-            "description": "Hooks that run after tool execution",
-            "items": {
-              "$ref": "#/components/schemas/HookMatcher-Output"
-            },
-            "title": "Post Tool Use",
-            "type": "array"
-          },
-          "pre_tool_use": {
-            "description": "Hooks that run before tool execution",
-            "items": {
-              "$ref": "#/components/schemas/HookMatcher-Output"
-            },
-            "title": "Pre Tool Use",
-            "type": "array"
-          },
-          "session_end": {
-            "description": "Hooks that run when a session ends",
-            "items": {
-              "$ref": "#/components/schemas/HookMatcher-Output"
-            },
-            "title": "Session End",
-            "type": "array"
-          },
-          "session_start": {
-            "description": "Hooks that run when a session starts",
-            "items": {
-              "$ref": "#/components/schemas/HookMatcher-Output"
-            },
-            "title": "Session Start",
-            "type": "array"
-          },
-          "stop": {
-            "description": "Hooks that run when the agent attempts to stop",
-            "items": {
-              "$ref": "#/components/schemas/HookMatcher-Output"
-            },
-            "title": "Stop",
-            "type": "array"
-          },
-          "user_prompt_submit": {
-            "description": "Hooks that run when user submits a prompt",
-            "items": {
-              "$ref": "#/components/schemas/HookMatcher-Output"
+              "$ref": "#/components/schemas/HookMatcher"
             },
             "title": "User Prompt Submit",
             "type": "array"
@@ -8401,26 +8345,7 @@
         "title": "HookExecutionEvent",
         "type": "object"
       },
-      "HookMatcher-Input": {
-        "description": "Matches events to hooks based on patterns.\n\nSupports exact match, wildcard (*), and regex (auto-detected or /pattern/).",
-        "properties": {
-          "hooks": {
-            "items": {
-              "$ref": "#/components/schemas/HookDefinition"
-            },
-            "title": "Hooks",
-            "type": "array"
-          },
-          "matcher": {
-            "default": "*",
-            "title": "Matcher",
-            "type": "string"
-          }
-        },
-        "title": "HookMatcher",
-        "type": "object"
-      },
-      "HookMatcher-Output": {
+      "HookMatcher": {
         "description": "Matches events to hooks based on patterns.\n\nSupports exact match, wildcard (*), and regex (auto-detected or /pattern/).",
         "properties": {
           "hooks": {
@@ -8464,7 +8389,7 @@
           "hook_config": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/HookConfig-Output"
+                "$ref": "#/components/schemas/HookConfig"
               },
               {
                 "type": "null"
@@ -8500,8 +8425,7 @@
         "type": "object"
       },
       "Icon": {
-        "additionalProperties": true,
-        "description": "An icon for display in user interfaces.",
+        "description": "An optionally-sized icon for display in a user interface (2025-11-25+).",
         "properties": {
           "mimeType": {
             "anyOf": [
@@ -8531,6 +8455,21 @@
           "src": {
             "title": "Src",
             "type": "string"
+          },
+          "theme": {
+            "anyOf": [
+              {
+                "enum": [
+                  "light",
+                  "dark"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Theme"
           }
         },
         "required": [
@@ -11836,8 +11775,7 @@
         "title": "MarketplaceSkillInfo",
         "type": "object"
       },
-      "mcp__types__Tool": {
-        "additionalProperties": true,
+      "mcp_types___types__Tool": {
         "description": "Definition for a tool the client can call.",
         "properties": {
           "_meta": {
@@ -11855,7 +11793,7 @@
           "annotations": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/mcp__types__ToolAnnotations"
+                "$ref": "#/components/schemas/mcp_types___types__ToolAnnotations"
               },
               {
                 "type": "null"
@@ -11937,8 +11875,7 @@
         "title": "Tool",
         "type": "object"
       },
-      "mcp__types__ToolAnnotations": {
-        "additionalProperties": true,
+      "mcp_types___types__ToolAnnotations": {
         "description": "Additional properties describing a Tool to clients.\n\nNOTE: all properties in ToolAnnotations are **hints**.\nThey are not guaranteed to provide a faithful description of\ntool behavior (including descriptive properties like `title`).\n\nClients should never make tool use decisions based on ToolAnnotations\nreceived from untrusted servers.",
         "properties": {
           "destructiveHint": {
@@ -13220,8 +13157,8 @@
                 "enum": [
                   "stdio",
                   "http",
-                  "sse",
-                  "streamable-http"
+                  "streamable-http",
+                  "sse"
                 ],
                 "type": "string"
               },
@@ -13428,8 +13365,8 @@
                 "enum": [
                   "stdio",
                   "http",
-                  "sse",
-                  "streamable-http"
+                  "streamable-http",
+                  "sse"
                 ],
                 "type": "string"
               },
@@ -13646,8 +13583,8 @@
                 "enum": [
                   "stdio",
                   "http",
-                  "sse",
-                  "streamable-http"
+                  "streamable-http",
+                  "sse"
                 ],
                 "type": "string"
               },
@@ -13874,8 +13811,8 @@
                 "enum": [
                   "stdio",
                   "http",
-                  "sse",
-                  "streamable-http"
+                  "streamable-http",
+                  "sse"
                 ],
                 "type": "string"
               },
@@ -14161,7 +14098,7 @@
             "type": "string"
           },
           "mcp_tool": {
-            "$ref": "#/components/schemas/mcp__types__Tool",
+            "$ref": "#/components/schemas/mcp_types___types__Tool",
             "description": "The MCP tool definition."
           },
           "meta": {
@@ -17945,7 +17882,7 @@
           "hook_config": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/HookConfig-Input"
+                "$ref": "#/components/schemas/HookConfig"
               },
               {
                 "type": "null"
@@ -18358,7 +18295,7 @@
           "hooks": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/HookConfig-Output"
+                "$ref": "#/components/schemas/HookConfig"
               },
               {
                 "type": "null"
@@ -20315,8 +20252,7 @@
         ]
       },
       "ToolExecution": {
-        "additionalProperties": true,
-        "description": "Execution-related properties for a tool.",
+        "description": "Execution-related properties for a tool (2025-11-25 only).",
         "properties": {
           "taskSupport": {
             "anyOf": [
@@ -21665,7 +21601,7 @@
   "info": {
     "description": "OpenHands Agent Server - REST/WebSocket interface for OpenHands AI Agent",
     "title": "OpenHands Agent Server",
-    "version": "1.45.0"
+    "version": "1.47.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -22489,7 +22425,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "Failed to fetch canvas extension source"
+            "description": "Could not read canvas extension source"
           },
           "409": {
             "description": "Canvas extension already installed (use force=true)"
