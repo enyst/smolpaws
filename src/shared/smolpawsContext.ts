@@ -3,8 +3,8 @@
  *
  * `docs/smolpaws/*.md` is the canonical, public source of the cat's identity, soul, user notes, tool
  * layout, and memory pointers. The legacy runner injected these files as repo skills; the upstream-shaped
- * agent-server does not know about SmolPaws, so each bridge attaches them to a new conversation as the
- * SDK `agent_context.system_message_suffix` (see packages/openhands-agent-server profileAgentFactory).
+ * agent-server does not know about SmolPaws, so each bridge attaches them to a new conversation through the
+ * upstream `agent_launch_additions.system_message_suffix_append` request field.
  *
  * The rendering mirrors the SDK's own `<REPO_CONTEXT>` framing so the model sees one consistent style.
  */

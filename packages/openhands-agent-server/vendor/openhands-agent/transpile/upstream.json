@@ -160,6 +160,16 @@
       ]
     },
     {
+      "id": "DEV-SDK-006",
+      "kind": "DEVIATION",
+      "target": "sdk",
+      "prefixes": [
+        "openhands-tools/openhands/tools/terminal/",
+        "tests/tools/terminal/"
+      ],
+      "paths": []
+    },
+    {
       "id": "EXC-SDK-001",
       "kind": "EXCLUDED",
       "target": "sdk",

@@ -156,6 +156,13 @@ export class WhatsAppBridge {
   private polling: Promise<void> | null = null;
   private stopping = false;
   private startupNotified = false;
+  /** True between Baileys `open` and `close`; gates outbound dispatch (DeliveryTarget.isReady). */
+  private socketConnected = false;
+  private runtimeStarted: Promise<void> | null = null;
+  private resolveReady: (() => void) | null = null;
+  private readonly readyPromise = new Promise<void>((resolve) => {
+    this.resolveReady = resolve;
+  });
   private registeredGroups: Record<string, RegisteredGroup>;
   private registeredGroupsMtime = 0;
   private lastGroupSync = 0;
@@ -186,16 +193,41 @@ export class WhatsAppBridge {
     return id ? id.split(':')[0]?.split('@')[0] ?? id : 'unknown';
   }
 
+  /**
+   * Connect the transport and register handlers. The relay worker (intake integration, outbox sync,
+   * delivery dispatch) starts only once WhatsApp reports the socket open, so queued deliveries from a
+   * previous run are never attempted against a socket that does not exist yet. `whenReady()` resolves
+   * at that point.
+   */
   async start(): Promise<void> {
-    if (this.connected) return;
+    if (this.socket !== undefined) return;
     this.stopping = false;
     this.ledger = new WhatsAppLedger(this.ledgerPath);
+    await this.connect();
+    this.logger.info(
+      {
+        agentServer: this.serverUrl,
+        registeredChats: Object.keys(this.registeredGroups).length,
+        buildSha: process.env.SMOLPAWS_BUILD_SHA?.trim() || undefined,
+      },
+      'SmolPaws WhatsApp bridge is connecting; the relay starts once the socket is open 🐾',
+    );
+  }
+
+  /** Resolves once the socket has opened and the relay worker is running. */
+  whenReady(): Promise<void> {
+    return this.readyPromise;
+  }
+
+  private startRuntime(): Promise<void> {
+    if (this.runtimeStarted !== null) return this.runtimeStarted;
     const runtime = new WhatsAppRelayRuntime({
       logger: this.logger,
       serverUrl: this.serverUrl,
       sessionApiKey: this.sessionApiKey,
       assistantName: this.config.assistantName,
       sendText: (jid, text) => this.sendText(jid, text),
+      isConnected: () => this.socketConnected,
       createConversationDefaults: this.sharedDefaults,
       createConversationDefaultsFor: (lane) => {
         const group = this.registeredGroups[lane.chatId];
@@ -205,22 +237,17 @@ export class WhatsAppBridge {
       ...(this.tickMs === undefined ? {} : { tickMs: this.tickMs }),
     });
     this.runtime = runtime;
-    await runtime.start();
-    await this.connect();
-    this.pollTimer = setInterval(() => {
-      void this.pollOnce().catch((error: unknown) => {
-        this.logger.error({ err: error }, 'WhatsApp poll failed');
-      });
-    }, this.config.pollIntervalMs);
-    this.pollTimer.unref?.();
-    this.logger.info(
-      {
-        agentServer: this.serverUrl,
-        registeredChats: Object.keys(this.registeredGroups).length,
-        buildSha: process.env.SMOLPAWS_BUILD_SHA?.trim() || undefined,
-      },
-      'SmolPaws WhatsApp bridge is ready on Message Relay path 🐾',
-    );
+    this.runtimeStarted = runtime.start().then(() => {
+      this.pollTimer = setInterval(() => {
+        void this.pollOnce().catch((error: unknown) => {
+          this.logger.error({ err: error }, 'WhatsApp poll failed');
+        });
+      }, this.config.pollIntervalMs);
+      this.pollTimer.unref?.();
+      this.logger.info({ agentServer: this.serverUrl }, 'SmolPaws WhatsApp bridge is ready on Message Relay path 🐾');
+      this.resolveReady?.();
+    });
+    return this.runtimeStarted;
   }
 
   async stop(): Promise<void> {
@@ -245,7 +272,9 @@ export class WhatsAppBridge {
     }
     this.ledger?.close();
     this.socket = undefined;
+    this.socketConnected = false;
     this.runtime = undefined;
+    this.runtimeStarted = null;
     this.ledger = undefined;
   }
 
@@ -275,6 +304,7 @@ export class WhatsAppBridge {
         return;
       }
       if (update.connection === 'close') {
+        this.socketConnected = false;
         const reason = (update.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode;
         const loggedOut = reason === DisconnectReason.loggedOut;
         this.logger.info({ reason, loggedOut, stopping: this.stopping }, 'WhatsApp connection closed');
@@ -292,7 +322,11 @@ export class WhatsAppBridge {
         return;
       }
       if (update.connection === 'open') {
+        this.socketConnected = true;
         this.logger.info({ selfJid: this.selfJid }, 'Connected to WhatsApp');
+        void this.startRuntime().catch((error: unknown) => {
+          this.logger.error({ err: error }, 'Failed to start the WhatsApp relay runtime');
+        });
         void this.syncGroupMetadata().catch((error: unknown) => {
           this.logger.error({ err: error }, 'Initial group sync failed');
         });
@@ -402,8 +436,7 @@ export class WhatsAppBridge {
   }
 
   private async pollChat(chatJid: string, group: RegisteredGroup, ledger: WhatsAppLedger, runtime: WhatsAppRelayRuntime): Promise<void> {
-    const cursorKey = `dispatch_cursor:${chatJid}`;
-    const cursor = ledger.getState(cursorKey) ?? ledger.getDispatchCursor();
+    const cursor = ledger.getDispatchSeq(chatJid);
     const fresh = ledger.getNewMessages([chatJid], cursor, this.config.assistantName);
     if (fresh.length === 0) return;
     const [latest] = collapseToLatestPerChat(fresh);
@@ -414,11 +447,11 @@ export class WhatsAppBridge {
 
     const addressed = fresh.some((message) => shouldRespond(group, message.content.trim(), this.config.triggerPattern));
     if (!addressed) {
-      ledger.setState(cursorKey, latest.timestamp);
+      ledger.setDispatchSeq(chatJid, latest.seq);
       return;
     }
 
-    const since = ledger.getLastAgentTimestamp(chatJid);
+    const since = ledger.getLastAgentSeq(chatJid);
     const transcript = ledger.getMessagesSince(chatJid, since, this.config.assistantName);
     const batch: LedgerMessage[] = transcript.length > 0 ? transcript : fresh;
     const prompt = await buildPrompt(batch, { maxImageBytes: this.config.maxImageBytes });
@@ -438,8 +471,8 @@ export class WhatsAppBridge {
       await this.setTyping(chatJid, false);
     }
     // Only after durable acceptance: this is the ingress success boundary.
-    ledger.setLastAgentTimestamp(chatJid, latest.timestamp);
-    ledger.setState(cursorKey, latest.timestamp);
+    ledger.setLastAgentSeq(chatJid, latest.seq);
+    ledger.setDispatchSeq(chatJid, latest.seq);
   }
 
   /** Conversation defaults are per scope: the shared identity/context plus this chat's workspace. */

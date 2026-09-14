@@ -40,7 +40,7 @@ async function main(): Promise<void> {
       {
         registeredGroupsPath: config.registeredGroupsPath,
         registeredChats: Object.keys(config.registeredGroups).length,
-        hasContext: createConversationDefaults.agent !== undefined,
+        hasContext: createConversationDefaults.agent_launch_additions !== undefined,
       },
       'WhatsApp bridge configuration resolved',
     );

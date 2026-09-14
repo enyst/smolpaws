@@ -49,7 +49,7 @@ export class SlackRelayRuntime {
     // Slack-specific send tool.
     this.runtime = new RelayRuntime({
       platform: 'slack',
-      idNamespace: SLACK_RELAY_ID_NAMESPACE,
+      deriveConversationId: (lane) => slackRelayConversationId(lane.laneKey),
       logger: options.logger,
       serverUrl: options.serverUrl,
       sessionApiKey: options.sessionApiKey,

@@ -35,8 +35,15 @@ Rules:
 - **Bridges restart independently.** `KeepAlive` on each LaunchAgent restarts a crashed bridge without
   touching the server or the other bridges.
 - **One durable store per bridge.** `~/.smolpaws/coordinator/<platform>-relay-v1.db` holds that
-  platform's lanes, intake, and delivery rows. Conversation ids live in a versioned per-platform
-  namespace (`slack-relay:v1`, `whatsapp-relay:v1`), so an old EventLog can never be re-delivered.
+  platform's lanes, intake, and delivery rows. Lane keys are `<platform>:<account>:<chat>` and the
+  conversation id is derived deterministically from the lane key, so a lane always finds the same
+  conversation again and an old EventLog from a different id space is never re-delivered. (Slack keeps
+  its earlier `channel:slack:…` keys and `slack-relay:v1` ids so lanes already on disk stay bound.)
+- **Deliveries wait for the transport.** A bridge starts its relay worker only once its platform
+  client is usable (WhatsApp socket open, Discord `clientReady`, Slack Socket Mode connected), and
+  the dispatcher never claims a delivery while the transport is down. A reply queued when the process
+  died stays `ready` until the next connection and then goes out once; it is never marked
+  `delivery_unknown` because of a send that could not start.
 - **The server knows nothing about channels.** Delivery, ordering, retries, and idempotency stay in the
   relay; the server stays upstream-shaped.
 
@@ -72,13 +79,14 @@ When a lane is first seen, the bridge creates the agent-server conversation with
   `SMOLPAWS_WORKSPACE_ROOT/SMOLPAWS_DEFAULT_WORKING_DIR` (default `~/repos/smolpaws`), else this
   checkout. WhatsApp uses `groups/<scope>` under the checkout, per registered chat.
 - `tags.ingress`: the bridge name (WhatsApp adds `tags.scope`).
-- `agent.agent_context.system_message_suffix`: the SmolPaws identity docs (`docs/smolpaws/*.md`
-  except README/HEARTBEAT, plus `~/.smolpaws/memory/MEMORY.md` when present) framed as
-  `<SMOLPAWS_CONTEXT>`. The server applies it as the SDK `AgentContext`, so the cat is paws in every
-  channel. Without it the model answers as a generic assistant.
+- `agent_launch_additions.system_message_suffix_append`: the SmolPaws identity docs
+  (`docs/smolpaws/*.md` except README/HEARTBEAT, plus `~/.smolpaws/memory/MEMORY.md` when present)
+  framed as `<SMOLPAWS_CONTEXT>`. This is the upstream agent-server field for deployment context: the
+  server resolves the agent from its profile first and only then appends the suffix as the SDK
+  `AgentContext.system_message_suffix`, so the cat is paws in every channel without any bridge
+  overriding agent settings. Without it the model answers as a generic assistant.
 
-Anything a bridge passes in `agent` other than `agent_context` overlays the server's active agent
-settings; the LLM profile stays the server's choice.
+Bridges do not send `agent` at all; the agent and its LLM profile stay the server's choice.
 
 ## Status per channel
 

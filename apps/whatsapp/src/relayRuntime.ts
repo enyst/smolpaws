@@ -5,7 +5,6 @@ import { RelayRuntime, defaultRelayDbPath } from '../../../src/coordinator/relay
 import type { MessageWorkStore } from '../../../src/coordinator/store.js';
 import type { AgentEvent, DeliverableExtractor, LaneDescriptor } from '../../../src/coordinator/types.js';
 import { WhatsAppDeliveryTarget, type WhatsAppTextSender } from './deliveryTarget.js';
-import { WHATSAPP_RELAY_ID_NAMESPACE } from './handler.js';
 
 export interface WhatsAppRelayRuntimeOptions {
   logger: Logger;
@@ -13,6 +12,8 @@ export interface WhatsAppRelayRuntimeOptions {
   sessionApiKey?: string;
   assistantName: string;
   sendText: WhatsAppTextSender;
+  /** Transport readiness; while false no delivery is claimed (see DeliveryTarget.isReady). */
+  isConnected: () => boolean;
   dbPath?: string;
   tickMs?: number;
   createConversationDefaults?: Record<string, unknown>;
@@ -27,18 +28,17 @@ export interface WhatsAppRelayRuntimeOptions {
 export const whatsappExtractor: DeliverableExtractor = (event: AgentEvent) =>
   sendMessageExtractor(event) ?? terminalResponseExtractor(event);
 
-/** One relay per WhatsApp account/process: its own SQLite store and versioned conversation namespace. */
+/** One relay per WhatsApp account/process with its own SQLite store. */
 export class WhatsAppRelayRuntime {
   private readonly runtime: RelayRuntime;
 
   constructor(options: WhatsAppRelayRuntimeOptions) {
     this.runtime = new RelayRuntime({
       platform: 'whatsapp',
-      idNamespace: WHATSAPP_RELAY_ID_NAMESPACE,
       logger: options.logger,
       serverUrl: options.serverUrl,
       sessionApiKey: options.sessionApiKey,
-      target: new WhatsAppDeliveryTarget(options.sendText, options.assistantName),
+      target: new WhatsAppDeliveryTarget(options.sendText, options.assistantName, options.isConnected),
       dbPath: options.dbPath ?? defaultRelayDbPath('whatsapp'),
       extractor: whatsappExtractor,
       ...(options.tickMs === undefined ? {} : { tickMs: options.tickMs }),

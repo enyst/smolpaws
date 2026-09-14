@@ -7,8 +7,8 @@
  * the bridge's {@link DeliveryTarget}. Slack pioneered this shape (`apps/slack/src/relayRuntime.ts`);
  * WhatsApp and Discord reuse it here instead of copying it.
  *
- * Bridge-specific knowledge is injected: the platform name, the versioned conversation-id namespace, the
- * lane derivation, the delivery target, and optional conversation-creation defaults.
+ * Bridge-specific knowledge is injected: the platform name, the delivery target (with its transport
+ * readiness), lane derivation, and optional conversation-creation defaults.
  */
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -29,10 +29,10 @@ export interface RelayRuntimeOptions {
   /** Platform key stored on lanes and used to look up the delivery target, e.g. `slack`. */
   platform: string;
   /**
-   * Versioned conversation-id namespace, e.g. `slack-relay:v1`. Bumping it starts a fresh generation of
-   * agent-server conversations so an old EventLog can never be rediscovered and re-delivered.
+   * Agent-server conversation id for a new lane. Defaults to a deterministic UUIDv5 of the lane key.
+   * Existing lanes keep the id stored in the relay database whatever this returns.
    */
-  idNamespace: string;
+  deriveConversationId?: (lane: LaneDescriptor) => string;
   logger: Logger;
   serverUrl: string;
   sessionApiKey?: string;
@@ -94,18 +94,21 @@ export class RelayRuntime {
         ? {}
         : { createDefaultsFor: options.createConversationDefaultsFor }),
     });
-    const namespace = options.idNamespace;
     this.messageRelay = new MessageRelay(this.store, agent, {
       extractor: options.extractor ?? terminalResponseExtractor,
-      deriveConversationId: (descriptor) => deterministicConversationId(`${namespace}:${descriptor.laneKey}`),
+      deriveConversationId: options.deriveConversationId ?? ((descriptor) => deterministicConversationId(descriptor.laneKey)),
     });
 
+    const target = options.target;
     const targets = new DeliveryTargetRegistry();
-    targets.register(options.platform, options.target);
+    targets.register(options.platform, target);
     const dispatcher = new DeliveryDispatcher(this.store, targets);
     this.outboundRelay = new OutboundRelay(this.messageRelay, dispatcher, {
       listConversationIds: () => this.listConversationIds(),
       maxDispatchPerTick: options.maxDispatchPerTick ?? 32,
+      // Sync the outbox regardless (it only reads the EventLog), but never claim delivery work while the
+      // platform transport is down: queued replies wait as `ready` instead of becoming `delivery_unknown`.
+      canDispatch: () => target.isReady?.() ?? true,
     });
   }
 

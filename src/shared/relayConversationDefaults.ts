@@ -70,7 +70,9 @@ export function buildRelayConversationDefaults(options: RelayConversationDefault
       ...(options.extraContextFiles === undefined ? {} : { extraFiles: options.extraContextFiles }),
     });
     if (suffix !== null) {
-      defaults.agent = { agent_context: { system_message_suffix: suffix } };
+      // Upstream StartConversationRequest.agent_launch_additions: deployment context appended after profile
+      // resolution. The server applies it as the agent's system-message suffix.
+      defaults.agent_launch_additions = { system_message_suffix_append: suffix };
     }
   }
   return defaults;

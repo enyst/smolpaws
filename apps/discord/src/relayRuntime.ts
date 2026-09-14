@@ -4,30 +4,30 @@ import { RelayRuntime, defaultRelayDbPath } from '../../../src/coordinator/relay
 import type { MessageWorkStore } from '../../../src/coordinator/store.js';
 import type { LaneDescriptor } from '../../../src/coordinator/types.js';
 import { DiscordDeliveryTarget, type DiscordChunkSender } from './deliveryTarget.js';
-import { DISCORD_RELAY_ID_NAMESPACE } from './handler.js';
 
 export interface DiscordRelayRuntimeOptions {
   logger: Logger;
   serverUrl: string;
   sessionApiKey?: string;
   sendChunk: DiscordChunkSender;
+  /** Transport readiness; while false no delivery is claimed (see DeliveryTarget.isReady). */
+  isConnected: () => boolean;
   dbPath?: string;
   tickMs?: number;
   createConversationDefaults?: Record<string, unknown>;
 }
 
-/** Discord over the shared Message Relay: own store, own `discord-relay:v1` conversation namespace. */
+/** Discord over the shared Message Relay with its own store. */
 export class DiscordRelayRuntime {
   private readonly runtime: RelayRuntime;
 
   constructor(options: DiscordRelayRuntimeOptions) {
     this.runtime = new RelayRuntime({
       platform: 'discord',
-      idNamespace: DISCORD_RELAY_ID_NAMESPACE,
       logger: options.logger,
       serverUrl: options.serverUrl,
       sessionApiKey: options.sessionApiKey,
-      target: new DiscordDeliveryTarget(options.sendChunk),
+      target: new DiscordDeliveryTarget(options.sendChunk, options.isConnected),
       dbPath: options.dbPath ?? defaultRelayDbPath('discord'),
       ...(options.tickMs === undefined ? {} : { tickMs: options.tickMs }),
       ...(options.createConversationDefaults === undefined

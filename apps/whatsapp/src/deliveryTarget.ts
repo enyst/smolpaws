@@ -44,7 +44,12 @@ export class WhatsAppDeliveryTarget implements DeliveryTarget {
   constructor(
     private readonly sendText: WhatsAppTextSender,
     private readonly assistantName: string,
+    private readonly connected: () => boolean = () => true,
   ) {}
+
+  isReady(): boolean {
+    return this.connected();
+  }
 
   validate(lane: LaneRow, payload: unknown): void {
     if (lane.platform !== 'whatsapp') {

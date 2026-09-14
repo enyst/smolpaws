@@ -12,8 +12,6 @@ import { isReadableDocumentMedia, readDocumentText } from '../../../src/document
 import { MAIN_GROUP_FOLDER, type RegisteredGroup, type WhatsAppConfig } from './config.js';
 import type { LedgerMessage } from './ledger.js';
 
-export const WHATSAPP_RELAY_ID_NAMESPACE = 'whatsapp-relay:v1';
-
 export function isControlScope(folder: string): boolean {
   return folder === MAIN_GROUP_FOLDER;
 }
@@ -31,7 +29,7 @@ export function shouldRespond(
 /** One durable lane per registered chat. The cat's own account id keeps lanes distinct across accounts. */
 export function laneDescriptorFor(selfJid: string, chatJid: string, group: RegisteredGroup): LaneDescriptor {
   return {
-    laneKey: `channel:whatsapp:${selfJid}:${chatJid}:root`,
+    laneKey: `whatsapp:${selfJid}:${chatJid}`,
     platform: 'whatsapp',
     accountId: selfJid,
     chatId: chatJid,
@@ -129,14 +127,14 @@ export async function buildPrompt(
   return { text, images, content, documentCount };
 }
 
-/** Keep one message per chat: the latest, so a burst of messages becomes one dispatch per chat. */
+/** Keep one message per chat: the latest ingested, so a burst of messages becomes one dispatch per chat. */
 export function collapseToLatestPerChat(messages: readonly LedgerMessage[]): LedgerMessage[] {
   const latest = new Map<string, LedgerMessage>();
   for (const message of messages) {
     const current = latest.get(message.chat_jid);
-    if (current === undefined || message.timestamp >= current.timestamp) latest.set(message.chat_jid, message);
+    if (current === undefined || message.seq >= current.seq) latest.set(message.chat_jid, message);
   }
-  return [...latest.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  return [...latest.values()].sort((a, b) => a.seq - b.seq);
 }
 
 /** Every lane needs the chat's own working directory; the rest of the defaults are shared. */

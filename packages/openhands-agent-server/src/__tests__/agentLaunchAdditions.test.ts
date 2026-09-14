@@ -6,7 +6,8 @@ import { InMemorySecretStore, TestLLM, type LLMClient, type Message } from '@smo
 import { afterEach, describe, expect, test } from 'vitest';
 
 import { createAgentServerApp } from '../app.js';
-import { agentContextFromRequestAgent } from '../profileAgentFactory.js';
+import { launchAdditionsSuffix } from '../profileAgentFactory.js';
+import { startConversationRequestSchema } from '../models.js';
 
 const SUFFIX = 'You are paws, the SmolPaws cat. CONTEXT-MARKER-7f3a';
 
@@ -45,29 +46,28 @@ async function waitFor(check: () => Promise<void>, timeoutMs = 5_000): Promise<v
   throw lastError;
 }
 
-describe('agentContextFromRequestAgent', () => {
-  test('returns null when the request agent carries no context', () => {
-    expect(agentContextFromRequestAgent(undefined)).toBeNull();
-    expect(agentContextFromRequestAgent({ llm_profile_ref: 'x' })).toBeNull();
-    expect(agentContextFromRequestAgent({ agent_context: null })).toBeNull();
+describe('launchAdditionsSuffix', () => {
+  const base = { workspace: { working_dir: '/tmp/w' } };
+
+  test('returns null when no additions are given or the text is blank', () => {
+    expect(launchAdditionsSuffix(startConversationRequestSchema.parse(base))).toBeNull();
+    expect(launchAdditionsSuffix(startConversationRequestSchema.parse({ ...base, agent_launch_additions: null }))).toBeNull();
+    expect(launchAdditionsSuffix(startConversationRequestSchema.parse({ ...base, agent_launch_additions: { system_message_suffix_append: '   ' } }))).toBeNull();
   });
 
-  test('parses the supported context fields strictly', () => {
-    expect(agentContextFromRequestAgent({ agent_context: { system_message_suffix: 'hi' } })).toEqual({
-      system_message_suffix: 'hi',
-      user_message_suffix: null,
-    });
-    expect(() => agentContextFromRequestAgent({ agent_context: { skills: [] } })).toThrow();
+  test('trims the appended text and rejects unknown fields (upstream extra=forbid)', () => {
+    expect(launchAdditionsSuffix(startConversationRequestSchema.parse({ ...base, agent_launch_additions: { system_message_suffix_append: '  hi  ' } }))).toBe('hi');
+    expect(() => startConversationRequestSchema.parse({ ...base, agent_launch_additions: { user_message_suffix: 'x' } })).toThrow();
   });
 });
 
-describe('conversation agent_context', () => {
+describe('conversation agent_launch_additions', () => {
   const roots: string[] = [];
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  test('a partial request agent overlays server settings and its context reaches the system prompt', async () => {
+  test('launch additions reach the system prompt without touching the resolved profile agent', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-agent-context-'));
     roots.push(root);
     const workspace = path.join(root, 'workspace');
@@ -120,15 +120,17 @@ describe('conversation agent_context', () => {
         url: '/api/conversations',
         payload: {
           workspace: { working_dir: workspace },
-          agent: { agent_context: { system_message_suffix: SUFFIX } },
+          agent_launch_additions: { system_message_suffix_append: `  ${SUFFIX}  ` },
         },
       });
       expect(started.statusCode).toBe(201);
-      const info = started.json<{ id: string; agent: { llm_profile_ref: string; tools: unknown[]; agent_context: { system_message_suffix: string } } }>();
-      // Overlay semantics: server defaults survive, the caller's context is attached.
+      const info = started.json<{ id: string; agent: Record<string, unknown> }>();
+      // The resolved agent settings are untouched, and, as upstream, launch additions are a start-request
+      // input rather than conversation state: ConversationInfo never carries them.
       expect(info.agent.llm_profile_ref).toBe('gpt-nano');
       expect(info.agent.tools).toEqual(['finish']);
-      expect(info.agent.agent_context.system_message_suffix).toBe(SUFFIX);
+      expect(info.agent).not.toHaveProperty('agent_context');
+      expect(info).not.toHaveProperty('agent_launch_additions');
 
       expect((await app.inject({
         method: 'POST',

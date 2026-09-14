@@ -106,15 +106,38 @@ Push immediately.
 
 ### Step 2 — write the server review record
 
-The SDK repo already generated the facts. For each SDK interval file
-`$SDK/transpile/updates/<from8>..<to8>.inventory.json` inside `OLD_PIN..NEW_PIN`,
-list its units whose target is `server` (keys ending in `:server`) plus every
-changed path under `openhands-agent-server/`, `tests/agent_server/`,
+The SDK repo already generated the facts, and the vendor script copied them:
+`packages/openhands-agent-server/vendor/openhands-agent/transpile/updates/<from8>..<to8>.inventory.json`
+for each SDK interval inside `OLD_PIN..NEW_PIN`. The SDK's own review marks
+those `:server` units `DELEGATED`; this package is where they get a decision.
+List each inventory's commits that have a `server` unit (`commits[].units.server`)
+plus every changed path under `openhands-agent-server/`, `tests/agent_server/`,
 `tests/cross/`, and `examples/02_remote_agent_server/`.
 
-Create `packages/openhands-agent-server/transpile/updates/<OLD8>..<NEW8>.md`
-using this layout (the convention is defined in `TRANSPILE_RULES.md`, section
-"Server review records"):
+`npm run test:server-review --prefix packages/openhands-agent-server` tells you
+exactly which intervals still lack a record and, once one exists, which units
+are missing or malformed. It must pass before the PR is opened (it is part of
+`npm run ci`).
+
+Create two files per SDK interval (the convention is defined in
+`TRANSPILE_RULES.md`, section "Server review records"):
+
+1. `packages/openhands-agent-server/transpile/updates/<from8>..<to8>.json`, the
+   machine-checked record. Use `transpile/updates/49ea7458..50080b58.json` as
+   the template. Rules the validator enforces:
+   - `repository`, `from`, `to` copied from the inventory; `inventorySha256` =
+     `sha256(JSON.stringify(inventory) + "\n")` of the parsed inventory
+     (`node -e 'const i=require("./vendor/openhands-agent/transpile/updates/<from8>..<to8>.inventory.json");console.log(require("crypto").createHash("sha256").update(JSON.stringify(i)+"\n").digest("hex"))'`);
+   - `items` has exactly one entry per server unit, keyed `<full sha>:server`;
+   - `disposition` ∈ `PORT | NO_TARGET_CHANGE | DEVIATION | EXCLUDED | DEFERRED`;
+   - `policy`: a `DEV-SERVER-*` id for `DEVIATION`, an `EXC-*` id for `EXCLUDED`,
+     `null` otherwise;
+   - `tracking`: non-empty for `DEFERRED` (for example `OPENAPI-DEFERRED-001`, or
+     the SDK review item the deferral follows);
+   - `evidence`: for `PORT`, one or more existing paths of TypeScript tests in this
+     package that prove the port; empty otherwise.
+2. `packages/openhands-agent-server/transpile/updates/<from8>..<to8>.md`, the
+   human-readable record, using this layout:
 
 ```markdown
 # Server review: <OLD_PIN> .. <NEW_PIN>
@@ -149,7 +172,8 @@ Disposition guide (server flavor):
 | A route the TS server does not implement yet | `DEFERRED` referencing `OPENAPI-DEFERRED-001`; make sure `transpile/openapi-policy.json` lists the operation |
 | Whole subsystem outside scope (plugin/marketplace runtime) | `EXCLUDED` with `EXC-SDK-00x` |
 
-Commit the record: `drift(server <OLD8>..<NEW8>): classify server review units`. Push.
+Run `npm run test:server-review --prefix packages/openhands-agent-server` until it
+passes, then commit both files: `drift(server <OLD8>..<NEW8>): classify server review units`. Push.
 
 ### Step 3 — port `PORT` items tests-first
 

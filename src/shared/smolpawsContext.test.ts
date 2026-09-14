@@ -82,10 +82,10 @@ test('builds conversation defaults with workspace, ingress tag, and identity con
     const defaults = buildRelayConversationDefaults({ ingress: 'whatsapp', env: { SMOLPAWS_WORKSPACE_ROOT: path.join(root, 'missing') }, repoRoot: root });
     assert.deepEqual(defaults.workspace, { kind: 'LocalWorkspace', working_dir: root });
     assert.deepEqual(defaults.tags, { ingress: 'whatsapp' });
-    const agent = defaults.agent as { agent_context: { system_message_suffix: string } };
-    assert.ok(agent.agent_context.system_message_suffix.includes('I am paws'));
+    const additions = defaults.agent_launch_additions as { system_message_suffix_append: string };
+    assert.ok(additions.system_message_suffix_append.includes('I am paws'));
     const bare = buildRelayConversationDefaults({ ingress: 'whatsapp', env: {}, repoRoot: root, includeContext: false });
-    assert.equal(bare.agent, undefined);
+    assert.equal(bare.agent_launch_additions, undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

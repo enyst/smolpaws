@@ -8,6 +8,7 @@ import test from 'node:test';
 import Database from 'better-sqlite3';
 import pino from 'pino';
 
+import { MessageWorkStore } from '../../../../src/coordinator/store.js';
 import { createAgentServerApp } from '../../../../packages/openhands-agent-server/src/app.js';
 import { WhatsAppBridge, type ConnectionUpdate, type WhatsAppSocketLike } from '../adapter.js';
 import { loadConfig } from '../config.js';
@@ -144,7 +145,10 @@ test('WhatsApp ingress reaches the real TypeScript agent-server and returns thro
 
   try {
     await bridge.start();
+    // The relay worker does not exist until WhatsApp reports the socket open.
+    assert.equal(bridge.connected, false);
     await socket.emit('connection.update', { connection: 'open' } satisfies ConnectionUpdate);
+    await bridge.whenReady();
 
     const upsert = (id: string, text: string, seconds: number, chat = '123@g.us') => ({
       messages: [{
@@ -188,7 +192,7 @@ test('WhatsApp ingress reaches the real TypeScript agent-server and returns thro
   const db = new Database(relayDbPath, { readonly: true });
   try {
     const lanes = db.prepare(`SELECT lane_key, platform, chat_id FROM lanes`).all() as Array<{ lane_key: string; platform: string; chat_id: string }>;
-    assert.deepEqual(lanes, [{ lane_key: 'channel:whatsapp:4915551234:123@g.us:root', platform: 'whatsapp', chat_id: '123@g.us' }]);
+    assert.deepEqual(lanes, [{ lane_key: 'whatsapp:4915551234:123@g.us', platform: 'whatsapp', chat_id: '123@g.us' }]);
     const rows = db
       .prepare(`SELECT kind, source_key, state, send_attempted, external_message_id FROM work ORDER BY kind ASC, sequence ASC`)
       .all() as Array<{ kind: string; source_key: string; state: string; send_attempted: number; external_message_id: string | null }>;
@@ -202,6 +206,132 @@ test('WhatsApp ingress reaches the real TypeScript agent-server and returns thro
     ]);
   } finally {
     db.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const LANE_KEY = 'whatsapp:4915551234:123@g.us';
+
+/**
+ * Restart regression: a delivery that was `ready` when the previous process died must stay deliverable
+ * while the new process has no usable transport yet, and must go out once the socket opens. Sending
+ * against a socket that is not open must never turn the row into `delivery_unknown`.
+ */
+test('queued deliveries wait as ready until the WhatsApp socket is open, then go out once', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'whatsapp-relay-restart-'));
+  const repoRoot = path.join(root, 'repo');
+  mkdirSync(path.join(repoRoot, 'data'), { recursive: true });
+  mkdirSync(path.join(repoRoot, 'groups', 'team'), { recursive: true });
+  writeFileSync(
+    path.join(repoRoot, 'data', 'registered_groups.json'),
+    JSON.stringify({ '123@g.us': { name: 'Team', folder: 'team', trigger: '@smolpaws', added_at: '2026-01-01' } }),
+  );
+  const config = { ...loadConfig({ HOME: path.join(root, 'home') }, repoRoot), pollIntervalMs: 60_000, debounceMs: 0 };
+  const relayDbPath = path.join(root, 'whatsapp-relay.db');
+  const server = await createAgentServerApp({
+    agentFactory,
+    config: { conversationsPath: path.join(root, 'conversations'), sessionApiKey: SESSION_KEY },
+  });
+  const app = server.app as unknown as AppLike;
+  const baseUrl = await listen(app);
+
+  const makeBridge = (socket: FakeSocket) => new WhatsAppBridge({
+    logger: pino({ level: 'silent' }),
+    serverUrl: baseUrl,
+    sessionApiKey: SESSION_KEY,
+    config,
+    relayDbPath,
+    ledgerPath: path.join(root, 'messages.db'),
+    tickMs: 60_000,
+    startupPing: false,
+    socketFactory: async () => ({ socket, saveCreds: () => undefined }),
+  });
+  const upsert = (id: string, text: string, seconds: number) => ({
+    messages: [{
+      key: { remoteJid: '123@g.us', id, fromMe: false, participant: '111@s.whatsapp.net' },
+      message: { conversation: text },
+      messageTimestamp: seconds,
+      pushName: 'Engel',
+    }],
+  });
+  const deliveryStates = () => {
+    const db = new Database(relayDbPath, { readonly: true });
+    try {
+      return db
+        .prepare(`SELECT source_key, state, send_attempted FROM work WHERE kind = 'delivery' ORDER BY sequence ASC`)
+        .all() as Array<{ source_key: string; state: string; send_attempted: number }>;
+    } finally {
+      db.close();
+    }
+  };
+
+  try {
+    // Run 1: establish the lane and its conversation through the normal path, then "crash" the process.
+    const first = new FakeSocket();
+    const bridge1 = makeBridge(first);
+    await bridge1.start();
+    await first.emit('connection.update', { connection: 'open' } satisfies ConnectionUpdate);
+    await bridge1.whenReady();
+    await first.emit('messages.upsert', upsert('M1', '@smolpaws say the words', 1_700_000_001));
+    await bridge1.pollOnce();
+    await waitFor(() => first.sent.length >= 2, () => bridge1['runtime']!.runOnce());
+    await bridge1.stop();
+
+    // A reply that was projected but never sent before the crash.
+    const seedDb = new Database(relayDbPath);
+    try {
+      new MessageWorkStore(seedDb).insertDelivery(
+        { sourceKey: `seeded-event:${LANE_KEY}`, laneKey: LANE_KEY, agentEventId: 'seeded-event', payload: { kind: 'current_thread_message', text: 'left over from the previous run' } },
+        Date.now(),
+      );
+    } finally {
+      seedDb.close();
+    }
+    assert.deepEqual(deliveryStates().filter((row) => row.source_key.startsWith('seeded')), [
+      { source_key: `seeded-event:${LANE_KEY}`, state: 'ready', send_attempted: 0 },
+    ]);
+
+    // Run 2: the transport is not open yet, so no relay worker runs and the row is untouched.
+    const second = new FakeSocket();
+    const bridge2 = makeBridge(second);
+    await bridge2.start();
+    assert.equal(bridge2.connected, false);
+    assert.deepEqual(deliveryStates().filter((row) => row.source_key.startsWith('seeded')), [
+      { source_key: `seeded-event:${LANE_KEY}`, state: 'ready', send_attempted: 0 },
+    ]);
+
+    // Socket opens: the worker starts and the leftover reply goes out exactly once.
+    await second.emit('connection.update', { connection: 'open' } satisfies ConnectionUpdate);
+    await bridge2.whenReady();
+    await waitFor(() => second.sent.length >= 1, () => bridge2['runtime']!.runOnce());
+    assert.deepEqual(second.sent, [{ jid: '123@g.us', text: 'smolpaws: left over from the previous run' }]);
+    assert.deepEqual(deliveryStates().filter((row) => row.source_key.startsWith('seeded')), [
+      { source_key: `seeded-event:${LANE_KEY}`, state: 'done', send_attempted: 1 },
+    ]);
+
+    // Mid-run disconnect: a new reply stays `ready` (never claimed) until the socket is back.
+    await second.emit('connection.update', { connection: 'close', lastDisconnect: { error: undefined } } satisfies ConnectionUpdate);
+    const dropDb = new Database(relayDbPath);
+    try {
+      new MessageWorkStore(dropDb).insertDelivery(
+        { sourceKey: `seeded-event-2:${LANE_KEY}`, laneKey: LANE_KEY, agentEventId: 'seeded-event-2', payload: { kind: 'current_thread_message', text: 'sent while offline' } },
+        Date.now(),
+      );
+    } finally {
+      dropDb.close();
+    }
+    await bridge2['runtime']!.runOnce();
+    await bridge2['runtime']!.runOnce();
+    assert.equal(second.sent.length, 1);
+    assert.deepEqual(deliveryStates().filter((row) => row.source_key.startsWith('seeded-event-2')), [
+      { source_key: `seeded-event-2:${LANE_KEY}`, state: 'ready', send_attempted: 0 },
+    ]);
+    await second.emit('connection.update', { connection: 'open' } satisfies ConnectionUpdate);
+    await waitFor(() => second.sent.length >= 2, () => bridge2['runtime']!.runOnce());
+    assert.equal(second.sent[1]?.text, 'smolpaws: sent while offline');
+    await bridge2.stop();
+  } finally {
+    await app.close();
     rmSync(root, { recursive: true, force: true });
   }
 });

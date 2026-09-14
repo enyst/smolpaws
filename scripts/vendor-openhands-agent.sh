@@ -19,7 +19,8 @@
 #   2. `npm ci` in the SDK, then (unless --skip-sdk-checks) `npm test`,
 #      `npm run typecheck`, `npm run lint`
 #   3. `npm run build` and `npm pack` the SDK
-#   4. replace vendor/openhands-agent/{dist,transpile/upstream.json,package.json}
+#   4. replace vendor/openhands-agent/{dist,transpile/upstream.json,
+#      transpile/updates/*.inventory.json,package.json}
 #   5. `npm ci` for packages/openhands-agent-server so the file: dependency is
 #      re-linked, then run `npm run test:upstream-provenance`
 #
@@ -81,6 +82,7 @@ PACKED="$PACK_DIR/package"
 
 test -d "$PACKED/dist" || { echo "packed SDK has no dist/" >&2; exit 1; }
 test -f "$PACKED/transpile/upstream.json" || { echo "packed SDK has no transpile/upstream.json" >&2; exit 1; }
+test -d "$PACKED/transpile/updates" || { echo "packed SDK has no transpile/updates (interval inventories)" >&2; exit 1; }
 
 OLD_PIN="$(node -p "require('$VENDOR_DIR/transpile/upstream.json').commit" 2>/dev/null || printf 'none')"
 NEW_PIN="$(node -p "require('$PACKED/transpile/upstream.json').commit")"
@@ -89,6 +91,10 @@ rm -rf "$VENDOR_DIR/dist" "$VENDOR_DIR/transpile"
 mkdir -p "$VENDOR_DIR/transpile"
 cp -R "$PACKED/dist" "$VENDOR_DIR/dist"
 cp "$PACKED/transpile/upstream.json" "$VENDOR_DIR/transpile/upstream.json"
+# Interval inventories are the review list for transpile/updates/<from8>..<to8>.json in this package
+# (scripts/check-server-review.ts walks them from transpile/server-reviews.json#since to the new pin).
+mkdir -p "$VENDOR_DIR/transpile/updates"
+cp "$PACKED"/transpile/updates/*.inventory.json "$VENDOR_DIR/transpile/updates/"
 
 node - "$PACKED/package.json" "$VENDOR_DIR/package.json" "$SDK_SOURCE" "$SDK_COMMIT" <<'NODE'
 const fs = require('node:fs');
@@ -114,6 +120,8 @@ echo "Vendored SDK: upstream pin $OLD_PIN -> $NEW_PIN" >&2
   cd "$PACKAGE_DIR"
   npm ci --no-audit --no-fund
   npm run test:upstream-provenance
+  # Fails until transpile/updates/<OLD8>..<NEW8>.json exists for every new interval: that is the review.
+  npm run test:server-review || echo "server review records are missing for the new interval(s); write them next (docs/REVENDOR_AUTOMATION.md, step 2)" >&2
 )
 
 echo "Done. Review with: git -C '$ROOT_DIR' status -- packages/openhands-agent-server/vendor" >&2

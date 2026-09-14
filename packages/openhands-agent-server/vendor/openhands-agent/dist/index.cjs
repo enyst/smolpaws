@@ -7415,7 +7415,7 @@ ${detail}` : output.length > 0 ? output : detail;
 var TerminalTool = class {
   static create(options) {
     const executor = new TerminalExecutor(options);
-    return new ToolDefinition({ name: "terminal", description: `Execute a shell command in the project workspace. Commands are killed after \`timeout\` seconds (default ${DEFAULT_TERMINAL_TIMEOUT_SECONDS}); pass a larger timeout for installs or test suites, and start long-lived servers in the background.`, inputSchema: terminalActionSchema, outputSchema: terminalObservationSchema, annotations: toolAnnotationsSchema.parse({ title: "terminal", openWorldHint: false }), executor: (action) => executor.execute(action) });
+    return new ToolDefinition({ name: "terminal", description: `Execute a shell command in the project workspace. Commands are killed after \`timeout\` seconds (default ${DEFAULT_TERMINAL_TIMEOUT_SECONDS}; 0 means no limit); pass a larger timeout for installs or test suites, and start long-lived servers in the background.`, inputSchema: terminalActionSchema, outputSchema: terminalObservationSchema, annotations: toolAnnotationsSchema.parse({ title: "terminal", openWorldHint: false }), executor: (action) => executor.execute(action) });
   }
 };
 var fileEditorActionSchema = zod.z.object({ command: zod.z.enum(["view", "create", "str_replace", "insert", "undo_edit"]), path: zod.z.string(), file_text: zod.z.string().nullable().default(null), old_str: zod.z.string().nullable().default(null), new_str: zod.z.string().nullable().default(null), insert_line: zod.z.number().int().nonnegative().nullable().default(null), view_range: zod.z.array(zod.z.number().int()).nullable().default(null) }).strict();

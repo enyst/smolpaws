@@ -66,7 +66,7 @@ async function main(): Promise<void> {
   logger.info(
     {
       workingDir: (createConversationDefaults.workspace as { working_dir: string }).working_dir,
-      hasContext: createConversationDefaults.agent !== undefined,
+      hasContext: createConversationDefaults.agent_launch_additions !== undefined,
     },
     'Relay conversation defaults resolved',
   );

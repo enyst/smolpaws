@@ -8,6 +8,7 @@ import test from 'node:test';
 import Database from 'better-sqlite3';
 import pino from 'pino';
 
+import { MessageWorkStore } from '../../../../src/coordinator/store.js';
 import { createAgentServerApp } from '../../../../packages/openhands-agent-server/src/app.js';
 import { DiscordBridge, type DiscordClientLike, type DiscordMessageLike } from '../adapter.js';
 import { loadConfig } from '../config.js';
@@ -69,6 +70,8 @@ async function waitFor(predicate: () => boolean, drive: () => Promise<void>, tim
 class FakeClient implements DiscordClientLike {
   readonly sent: Array<{ channelId: string; content: string }> = [];
   readonly handlers = new Map<string, Array<(payload: never) => void>>();
+  /** When false, `login` resolves without ever emitting `clientReady` until `emitReady()` is called. */
+  autoReady = true;
   channels = {
     fetch: async (channelId: string) => ({
       send: async ({ content }: { content: string }) => {
@@ -79,9 +82,11 @@ class FakeClient implements DiscordClientLike {
   };
 
   async login(): Promise<void> {
-    queueMicrotask(() => {
-      for (const handler of this.handlers.get('clientReady') ?? []) handler({ user: { id: BOT_ID, tag: 'paws#0001' } } as never);
-    });
+    if (this.autoReady) queueMicrotask(() => this.emitReady());
+  }
+
+  emitReady(): void {
+    for (const handler of this.handlers.get('clientReady') ?? []) handler({ user: { id: BOT_ID, tag: 'paws#0001' } } as never);
   }
 
   destroy(): void {}
@@ -122,15 +127,15 @@ test('handler policy: DMs, mentions, and the text trigger address the cat; bots 
   assert.equal(shouldRespond({ ...base, content: 'hey @smolpaws', authorIsBot: true }, trigger), false);
   assert.equal(extractPrompt(`<@!${BOT_ID}> @smolpaws  fix the build`, BOT_ID, trigger), 'fix the build');
   assert.deepEqual(laneDescriptorFor({ ...base, isDirectMessage: true, guildId: null }, BOT_ID), {
-    laneKey: `channel:discord:${BOT_ID}:dm:U:root`,
+    laneKey: `discord:${BOT_ID}:dm:U`,
     platform: 'discord',
     accountId: BOT_ID,
     chatId: 'C',
     threadId: null,
     displayName: 'discord-dm-U',
   });
-  assert.equal(laneDescriptorFor({ ...base, isThread: true }, BOT_ID).laneKey, `channel:discord:${BOT_ID}:thread:C:root`);
-  assert.equal(laneDescriptorFor(base, BOT_ID).laneKey, `channel:discord:${BOT_ID}:channel:C:root`);
+  assert.equal(laneDescriptorFor({ ...base, isThread: true }, BOT_ID).laneKey, `discord:${BOT_ID}:thread:C`);
+  assert.equal(laneDescriptorFor(base, BOT_ID).laneKey, `discord:${BOT_ID}:channel:C`);
   const chunks = splitDiscordMessage('word '.repeat(1000));
   assert.ok(chunks.length >= 2 && chunks.every((chunk) => chunk.length <= 2000));
 });
@@ -202,6 +207,75 @@ test('Discord ingress reaches the real TypeScript agent-server and returns throu
     assert.equal(rows[1]?.source_key, `discord:${BOT_ID}:M1`);
   } finally {
     db.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Restart regression: a delivery left `ready` by a previous run must not be attempted before the gateway
+ * client is ready, and must go out once it is. The relay worker only starts after `clientReady`.
+ */
+test('queued deliveries wait as ready until the Discord client is ready, then go out once', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'discord-relay-restart-'));
+  const dbPath = path.join(root, 'discord.db');
+  const server = await createAgentServerApp({ agentFactory, config: { conversationsPath: path.join(root, 'conversations'), sessionApiKey: SESSION_KEY } });
+  const app = server.app as unknown as AppLike;
+  const baseUrl = await listen(app);
+  const laneKey = `discord:${BOT_ID}:channel:C1`;
+  const makeBridge = (client: FakeClient) => new DiscordBridge({
+    logger: pino({ level: 'silent' }),
+    serverUrl: baseUrl,
+    sessionApiKey: SESSION_KEY,
+    config: loadConfig({ DISCORD_BOT_TOKEN: 'token', DISCORD_ALLOWED_USER_IDS: 'U1' }),
+    dbPath,
+    tickMs: 60_000,
+    clientFactory: () => client,
+  });
+  const seeded = () => {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      return db.prepare(`SELECT state, send_attempted FROM work WHERE kind = 'delivery' AND source_key = ?`).get(`seeded:${laneKey}`) as { state: string; send_attempted: number };
+    } finally {
+      db.close();
+    }
+  };
+
+  try {
+    // Run 1 establishes the lane and its conversation, then the process "dies" with a reply still queued.
+    const first = new FakeClient();
+    const bridge1 = makeBridge(first);
+    await bridge1.start();
+    await bridge1.onMessage(message({ id: 'M1', content: '@smolpaws say the words' }));
+    await waitFor(() => first.sent.length > 0, () => bridge1['runtime']!.runOnce());
+    await bridge1.stop();
+    const seedDb = new Database(dbPath);
+    try {
+      new MessageWorkStore(seedDb).insertDelivery(
+        { sourceKey: `seeded:${laneKey}`, laneKey, agentEventId: 'seeded', payload: { kind: 'current_thread_message', text: 'left over' } },
+        Date.now(),
+      );
+    } finally {
+      seedDb.close();
+    }
+    assert.deepEqual(seeded(), { state: 'ready', send_attempted: 0 });
+
+    // Run 2: login succeeds but the gateway is not ready; nothing is attempted and the row stays ready.
+    const second = new FakeClient();
+    second.autoReady = false;
+    const bridge2 = makeBridge(second);
+    const starting = bridge2.start();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(bridge2.connected, false);
+    assert.deepEqual(seeded(), { state: 'ready', send_attempted: 0 });
+
+    second.emitReady();
+    await starting;
+    await waitFor(() => second.sent.length > 0, () => bridge2['runtime']!.runOnce());
+    assert.deepEqual(second.sent, [{ channelId: 'C1', content: 'left over' }]);
+    assert.deepEqual(seeded(), { state: 'done', send_attempted: 1 });
+    await bridge2.stop();
+  } finally {
+    await app.close();
     rmSync(root, { recursive: true, force: true });
   }
 });

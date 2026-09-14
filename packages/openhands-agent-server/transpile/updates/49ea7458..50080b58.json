@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "repository": "OpenHands/software-agent-sdk",
+  "from": "49ea74587c376b90700f6eff128c3d9b57585d27",
+  "to": "50080b58d35b4824fda25fca2345d80bcd08aeff",
+  "inventorySha256": "294163846b5b4f62252dac06eeb9f94ccc2356e2170654f218f659b6cde96826",
+  "items": {
+    "3896f186936342b99c7c5d3f89cdae888f458e7f:server": {
+      "disposition": "DEVIATION",
+      "policy": "DEV-SERVER-004",
+      "reason": "Python restores plaintext subscription credentials into profile pre-flight validation. The TS server keeps profiles as keyring-backed secret references and resolves credentials through SecretStore at run time; there is no plaintext pre-flight path to restore (DEV-SERVER-003/004).",
+      "tracking": [],
+      "evidence": []
+    },
+    "56b016e7f2d028a31ab59af4424d3172ac0b5aec:server": {
+      "disposition": "DEFERRED",
+      "policy": null,
+      "reason": "The canvas-extensions route family is not implemented in the TS server (deferred in openapi-policy.json). The SDK-side change was ported in the SDK repo. Revisit when the extensions routes are ported.",
+      "tracking": [
+        "OPENAPI-DEFERRED-001"
+      ],
+      "evidence": []
+    },
+    "6a1e4d0f08dcdd02786526a51b7965e1877008bc:server": {
+      "disposition": "NO_TARGET_CHANGE",
+      "policy": null,
+      "reason": "Version bump in openhands-agent-server/pyproject.toml and a span-metadata test assertion tweak; no route or behavior change.",
+      "tracking": [],
+      "evidence": []
+    },
+    "7a018907c9b6cac2ee7b205a1b4a5e3e0228e8e4:server": {
+      "disposition": "DEFERRED",
+      "policy": null,
+      "reason": "The /v1 OpenAI-compatible gateway (chat/completions + responses) is not part of the implemented TS slice. Its event model change (streaming identity fields) has no TS counterpart until the SDK StreamContext port lands.",
+      "tracking": [
+        "OPENAPI-DEFERRED-001"
+      ],
+      "evidence": []
+    },
+    "03900b331d575abc8207f2f31536cb3209c19ef4:server": {
+      "disposition": "DEFERRED",
+      "policy": null,
+      "reason": "The server changes forward StreamContext-minted stream ids over the session socket. The TS SDK has no StreamContext yet (DEFERRED in the SDK review); the TS session socket keeps its current delta framing. Revisit together with the SDK port.",
+      "tracking": [
+        "enyst/openhands-agent transpile/updates/49ea7458..50080b58.json#03900b331d575abc8207f2f31536cb3209c19ef4:sdk"
+      ],
+      "evidence": []
+    },
+    "50080b58d35b4824fda25fca2345d80bcd08aeff:server": {
+      "disposition": "NO_TARGET_CHANGE",
+      "policy": null,
+      "reason": "Version bump only.",
+      "tracking": [],
+      "evidence": []
+    }
+  }
+}

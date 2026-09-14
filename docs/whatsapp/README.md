@@ -13,6 +13,8 @@ this bridge has soaked. Run one or the other for a given WhatsApp account, never
 ```text
 WhatsApp (Baileys socket)
   -> ledger: ~/.smolpaws/whatsapp/messages.db (chats, messages, media, cursors)
+     cursors are the ledger's own ingestion sequence (rowid), never WhatsApp's one-second timestamps,
+     so two messages in the same second or a late offline-sync message are never skipped
   -> poll every 2s, one batch per registered chat, debounced
   -> WhatsAppBridge.pollChat: scope + trigger policy, <messages> transcript
   -> RelayRuntime.accept()             durable intake (~/.smolpaws/coordinator/whatsapp-relay-v1.db)
@@ -24,8 +26,8 @@ WhatsApp (Baileys socket)
 
 Identity:
 
-- lane: `channel:whatsapp:{account}:{chat_jid}:root`, one agent-server conversation per registered chat;
-- conversation namespace: `whatsapp-relay:v1` (fresh; legacy `data/sessions.json` ids are never reused);
+- lane: `whatsapp:{account}:{chat_jid}`, one agent-server conversation per registered chat;
+- conversation id: derived deterministically from the lane key (legacy `data/sessions.json` ids are never reused);
 - intake source key: `whatsapp:{account}:{newest WhatsApp message id in the batch}`;
 - delivery source key: `{agent event id}:{lane}`.
 

@@ -19,7 +19,7 @@
     "README.md"
   ],
   "scripts": {
-    "ci": "npm run test:upstream-provenance && npm run openapi && npm run test:openapi-parity && npm test && npm run smoke:local && npm run test:coverage && npm run typecheck && npm run typecheck:examples && npm run lint && npm run build && npm run test:pack",
+    "ci": "npm run test:upstream-provenance && npm run test:server-review && npm run openapi && npm run test:openapi-parity && npm test && npm run smoke:local && npm run test:coverage && npm run typecheck && npm run typecheck:examples && npm run lint && npm run build && npm run test:pack",
     "build": "npm run build:bundle && npm run build:types",
     "build:bundle": "tsup --config tsup.config.ts",
     "build:types": "tsc -p tsconfig.json",
@@ -29,6 +29,7 @@
     "manual:llm:gemini": "tsx examples/manual-llm-smoke-gemini.ts",
     "openapi": "tsx scripts/generate-openapi.ts",
     "test:upstream-provenance": "tsx scripts/check-upstream-provenance.ts",
+    "test:server-review": "tsx scripts/check-server-review.ts",
     "test:openapi-parity": "tsx scripts/check-openapi-parity.ts",
     "test:route-parity": "npm run test:openapi-parity",
     "test:pack": "./scripts/pack-consumer-smoke.sh",

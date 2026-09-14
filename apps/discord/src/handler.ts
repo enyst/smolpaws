@@ -4,7 +4,6 @@
  */
 import type { LaneDescriptor } from '../../../src/coordinator/types.js';
 
-export const DISCORD_RELAY_ID_NAMESPACE = 'discord-relay:v1';
 export const DISCORD_MAX_LENGTH = 2000;
 
 export interface DiscordAuthorizationContext {
@@ -75,7 +74,7 @@ export function extractPrompt(content: string, botUserId: string, triggerPattern
 export function laneDescriptorFor(ctx: DiscordEventContext, botUserId: string): LaneDescriptor {
   const chatId = ctx.isDirectMessage ? `dm:${ctx.authorId}` : ctx.isThread ? `thread:${ctx.channelId}` : `channel:${ctx.channelId}`;
   return {
-    laneKey: `channel:discord:${botUserId}:${chatId}:root`,
+    laneKey: `discord:${botUserId}:${chatId}`,
     platform: 'discord',
     accountId: botUserId,
     // Delivery always targets the Discord channel id (DMs and threads are channels too).

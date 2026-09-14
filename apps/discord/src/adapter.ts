@@ -82,6 +82,8 @@ export class DiscordBridge {
   private client: DiscordClientLike | undefined;
   private runtime: DiscordRelayRuntime | undefined;
   private botUserId = '';
+  /** True from `clientReady` until stop; gates outbound dispatch (DeliveryTarget.isReady). */
+  private clientReady = false;
 
   constructor(options: DiscordBridgeOptions) {
     this.logger = options.logger.child({ bridge: 'discord' });
@@ -98,6 +100,10 @@ export class DiscordBridge {
     return this.client !== undefined && this.runtime !== undefined;
   }
 
+  /**
+   * Log in first, start the relay worker only once the client is ready: queued deliveries from a
+   * previous run are never attempted against a client that is not connected.
+   */
   async start(): Promise<void> {
     if (this.connected) return;
     const runtime = new DiscordRelayRuntime({
@@ -105,12 +111,11 @@ export class DiscordBridge {
       serverUrl: this.serverUrl,
       sessionApiKey: this.sessionApiKey,
       sendChunk: (channelId, text) => this.sendChunk(channelId, text),
+      isConnected: () => this.clientReady,
       ...(this.dbPath === undefined ? {} : { dbPath: this.dbPath }),
       ...(this.tickMs === undefined ? {} : { tickMs: this.tickMs }),
       ...(this.createConversationDefaults === undefined ? {} : { createConversationDefaults: this.createConversationDefaults }),
     });
-    this.runtime = runtime;
-    await runtime.start();
 
     // Fresh client per connection: discord.js cannot reuse a destroyed client.
     const client = this.clientFactory();
@@ -119,6 +124,7 @@ export class DiscordBridge {
       await new Promise<void>((resolve, reject) => {
         client.once('clientReady', (ready) => {
           this.botUserId = ready.user.id;
+          this.clientReady = true;
           this.logger.info(
             { user: ready.user.tag, agentServer: this.serverUrl, buildSha: process.env.SMOLPAWS_BUILD_SHA?.trim() || undefined },
             'SmolPaws Discord bot is ready on Message Relay path 🐾',
@@ -135,10 +141,13 @@ export class DiscordBridge {
         });
         client.login(this.config.botToken).catch(reject);
       });
+      this.runtime = runtime;
+      await runtime.start();
     } catch (error) {
       await runtime.stop().catch(() => undefined);
       client.destroy();
       this.client = undefined;
+      this.clientReady = false;
       this.runtime = undefined;
       throw error;
     }
@@ -151,6 +160,7 @@ export class DiscordBridge {
     });
     this.client?.destroy();
     this.client = undefined;
+    this.clientReady = false;
     this.runtime = undefined;
     this.botUserId = '';
   }

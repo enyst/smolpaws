@@ -13,7 +13,14 @@ interface DiscordDeliveryPayload {
 }
 
 export class DiscordDeliveryTarget implements DeliveryTarget {
-  constructor(private readonly sendChunk: DiscordChunkSender) {}
+  constructor(
+    private readonly sendChunk: DiscordChunkSender,
+    private readonly connected: () => boolean = () => true,
+  ) {}
+
+  isReady(): boolean {
+    return this.connected();
+  }
 
   validate(lane: LaneRow, payload: unknown): void {
     if (lane.platform !== 'discord') {

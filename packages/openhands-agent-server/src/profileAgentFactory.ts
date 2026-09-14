@@ -23,7 +23,6 @@ import {
   type SecretStore,
   type ToolDefinition,
 } from '@smolpaws/openhands-agent';
-import { z } from 'zod';
 
 import type { AgentFactory } from './eventService.js';
 import { publicStartConversationRequestSchema, startConversationRequestSchema, type StartConversationRequest } from './models.js';
@@ -40,27 +39,20 @@ interface ProfileAgentFactoryOptions {
 const defaultToolNames = ['terminal', 'file_editor', 'glob', 'grep', 'finish', 'think'] as const;
 
 /**
- * Caller-supplied conversation context, the subset of upstream `Agent.agent_context` that a start
- * request may carry. It rides on the request's `agent` field next to the profile-first settings and is
- * applied when the conversation's Agent is built. Skills, secrets, and datetime stay runtime-owned.
+ * Upstream applies `agent_launch_additions.system_message_suffix_append` after agent/profile resolution by
+ * appending it to the resolved agent's system-message suffix. Profile-resolved TS agents start with no
+ * context, so the appended text becomes the suffix.
  */
-export const agentContextRequestSchema = z
-  .object({
-    system_message_suffix: z.string().nullable().default(null),
-    user_message_suffix: z.string().nullable().default(null),
-  })
-  .strict();
-export type AgentContextRequest = z.infer<typeof agentContextRequestSchema>;
-
-export function agentContextFromRequestAgent(requestAgent: unknown): AgentContextRequest | null {
-  if (!isRecord(requestAgent) || requestAgent.agent_context === undefined || requestAgent.agent_context === null) return null;
-  return agentContextRequestSchema.parse(requestAgent.agent_context);
+export function launchAdditionsSuffix(request: StartConversationRequest): string | null {
+  const additions = request.agent_launch_additions;
+  const text = additions?.system_message_suffix_append?.trim() ?? '';
+  return text.length > 0 ? text : null;
 }
 
 export function createProfileAgentFactory(options: ProfileAgentFactoryOptions): AgentFactory {
   const createLlmClient = options.llmClientFactory ?? createClientFromProfile;
   return async (requestAgent, context) => {
-    const settings = validateAgentSettings(isRecord(requestAgent) ? withoutAgentContext(requestAgent) : (await options.state.settings()).agent_settings);
+    const settings = validateAgentSettings(requestAgent ?? (await options.state.settings()).agent_settings);
     if (settings.agent_kind !== 'openhands') throw new Error('acp_runtime_not_ported');
     const profile = await resolveProfileForConversation(context.stored.request, settings.llm_profile_ref, options.state);
     const workingDir = path.resolve(context.stored.workspace.working_dir);
@@ -68,19 +60,12 @@ export function createProfileAgentFactory(options: ProfileAgentFactoryOptions): 
     // server default set", preserving the behavior of the previous non-nullable default.
     const configuredTools = settings.tools ?? [];
     const toolSpecs = configuredTools.length === 0 ? defaultToolNames : configuredTools;
-    const agentContext = agentContextFromRequestAgent(requestAgent);
+    const suffix = launchAdditionsSuffix(context.stored.request);
     return new Agent({
       llm: await createLlmClient(profile, options.secretStore),
       tools: toolSpecs.flatMap((spec) => resolveProfileTool(spec, workingDir)),
       toolConcurrencyLimit: settings.tool_concurrency_limit,
-      ...(agentContext === null
-        ? {}
-        : {
-          context: new AgentContext({
-            systemMessageSuffix: agentContext.system_message_suffix,
-            userMessageSuffix: agentContext.user_message_suffix,
-          }),
-        }),
+      ...(suffix === null ? {} : { context: new AgentContext({ systemMessageSuffix: suffix }) }),
     });
   };
 }
@@ -89,24 +74,13 @@ export async function prepareProfileStartRequest(input: unknown, state: ServerSt
   const request = publicStartConversationRequestSchema.parse(input);
   const hasRequestedMaxIterations = isRecord(input) && Object.hasOwn(input, 'max_iterations');
   const settings = await state.settings();
-  // A request `agent` that names its own `llm_profile_ref` fully replaces the server's agent settings
-  // (upstream shape). A partial `agent` (for example only `agent_context`) overlays the server defaults
-  // so product callers can attach conversation context without re-stating the whole profile choice.
-  const requestAgent = isRecord(request.agent) ? request.agent : undefined;
-  const agentContext = agentContextFromRequestAgent(requestAgent);
-  // `agent_context` is not an agent *setting* (settings schemas are strict and persisted); it is carried
-  // beside the validated settings on the stored request only.
-  const requestSettings = requestAgent === undefined ? {} : withoutAgentContext(requestAgent);
-  const effectiveAgent = requestAgent === undefined
-    ? settings.agent_settings
-    : Object.hasOwn(requestSettings, 'llm_profile_ref') ? requestSettings : { ...settings.agent_settings, ...requestSettings };
-  const agentSettings = validateAgentSettings(effectiveAgent);
+  const agentSettings = validateAgentSettings(request.agent ?? settings.agent_settings);
   if (agentSettings.agent_kind !== 'openhands') throw new Error('acp_runtime_not_ported');
   const profile = await state.getProfile(agentSettings.llm_profile_ref);
   if (profile === null) throw new Error(`llm_profile_not_found:${agentSettings.llm_profile_ref}`);
   return startConversationRequestSchema.parse({
     ...request,
-    agent: agentContext === null ? agentSettings : { ...agentSettings, agent_context: agentContext },
+    agent: agentSettings,
     llm_profile_snapshot: snapshotProfile(profile),
     ...(hasRequestedMaxIterations ? {} : { max_iterations: settings.conversation_settings.max_iterations }),
   });
@@ -150,12 +124,6 @@ export function resolveProfileTool(spec: unknown, workingDir: string): readonly 
     case 'cancel_task': return [CancelTaskTool.create()];
     default: throw new Error(`unsupported_profile_tool:${name}`);
   }
-}
-
-function withoutAgentContext(requestAgent: Record<string, unknown>): Record<string, unknown> {
-  const settings = { ...requestAgent };
-  delete settings.agent_context;
-  return settings;
 }
 
 function toolName(spec: unknown): string {

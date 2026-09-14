@@ -20,8 +20,12 @@ const main: RegisteredGroup = { name: 'Engel', folder: 'main', trigger: '@smolpa
 const team: RegisteredGroup = { name: 'Team', folder: 'team', trigger: '@smolpaws', added_at: '2026-01-01' };
 const chatty: RegisteredGroup = { ...team, folder: 'chatty', triggerFree: true };
 
+let nextSeq = 0;
+
 function message(overrides: Partial<LedgerMessage>): LedgerMessage {
+  nextSeq += 1;
   return {
+    seq: nextSeq,
     id: 'M1',
     chat_jid: '123@g.us',
     sender: '111@s.whatsapp.net',
@@ -47,7 +51,7 @@ test('control scope and trigger-free groups answer ambient messages; others need
 test('lane identity is stable per account and chat', () => {
   const lane = laneDescriptorFor('4915551234', '123@g.us', team);
   assert.deepEqual(lane, {
-    laneKey: 'channel:whatsapp:4915551234:123@g.us:root',
+    laneKey: 'whatsapp:4915551234:123@g.us',
     platform: 'whatsapp',
     accountId: '4915551234',
     chatId: '123@g.us',
@@ -100,7 +104,7 @@ test('inline images become a text+image content array, bounded by size', async (
   }
 });
 
-test('a burst collapses to the latest message per chat, ordered by time', () => {
+test('a burst collapses to the latest ingested message per chat, in ingestion order', () => {
   const collapsed = collapseToLatestPerChat([
     message({ id: 'A1', chat_jid: 'a@g.us', timestamp: '2026-09-13T10:00:00.000Z' }),
     message({ id: 'B1', chat_jid: 'b@g.us', timestamp: '2026-09-13T10:00:05.000Z' }),
@@ -112,13 +116,13 @@ test('a burst collapses to the latest message per chat, ordered by time', () => 
 test('conversation defaults keep the shared context and add the per-scope workspace', () => {
   const config = loadConfig({ HOME: os.tmpdir() }, '/repo/smolpaws');
   const defaults = conversationDefaultsForGroup(
-    { tags: { ingress: 'whatsapp' }, agent: { agent_context: { system_message_suffix: 'paws' } } },
+    { tags: { ingress: 'whatsapp' }, agent_launch_additions: { system_message_suffix_append: 'paws' } },
     config,
     team,
   );
   assert.deepEqual(defaults.workspace, { kind: 'LocalWorkspace', working_dir: scopeWorkingDir('/repo/smolpaws', team) });
   assert.deepEqual(defaults.tags, { ingress: 'whatsapp', scope: 'team' });
-  assert.deepEqual(defaults.agent, { agent_context: { system_message_suffix: 'paws' } });
+  assert.deepEqual(defaults.agent_launch_additions, { system_message_suffix_append: 'paws' });
   assert.equal(scopeWorkingDir('/repo/smolpaws', team), path.join('/repo/smolpaws', 'groups', 'team'));
 });
 
