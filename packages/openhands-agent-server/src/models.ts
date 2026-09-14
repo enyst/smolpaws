@@ -62,11 +62,23 @@ export const sendMessageResponseSchema = z
   .strict();
 export type SendMessageResponse = z.infer<typeof sendMessageResponseSchema>;
 
+/**
+ * Upstream `AgentLaunchAdditions`: deployment-controlled context applied after agent/profile resolution.
+ * The stored profile is not modified; the text is appended to the resolved agent's system-message suffix.
+ */
+export const agentLaunchAdditionsSchema = z
+  .object({
+    system_message_suffix_append: z.string().max(32768).nullable().default(null),
+  })
+  .strict();
+export type AgentLaunchAdditions = z.infer<typeof agentLaunchAdditionsSchema>;
+
 const startConversationRequestBaseSchema = z
   .object({
     id: z.string().uuid().optional(),
     conversation_id: z.string().uuid().optional(),
     agent: z.unknown().optional(),
+    agent_launch_additions: agentLaunchAdditionsSchema.nullable().optional(),
     workspace: workspaceSchema.default({ kind: 'LocalWorkspace', working_dir: 'workspace/project' }),
     initial_message: sendMessageRequestSchema.optional(),
     persistence_dir: z.string().nullable().default('workspace/conversations'),

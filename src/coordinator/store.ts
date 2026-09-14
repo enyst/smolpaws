@@ -479,6 +479,22 @@ export class MessageWorkStore {
     return res.changes === 1 ? 'done' : null;
   }
 
+  /**
+   * Give a claim back untouched: the row returns to `ready` with the claim's attempt uncounted and no
+   * backoff, for work the worker could not even start (for example the platform transport is not
+   * connected). Only the live claim (same generation, still `claimed`) can release.
+   */
+  release(claim: ClaimedWork, now: Date | number): WorkState | null {
+    const res = this.db
+      .prepare(
+        `UPDATE work SET state='ready', available_at=@now, attempts=MAX(attempts - 1, 0),
+           claim_owner=NULL, claim_until=NULL, updated_at=@now
+         WHERE id=@id AND state='claimed' AND generation=@generation`,
+      )
+      .run({ id: claim.row.id, generation: claim.generation, now: iso(now) });
+    return res.changes === 1 ? 'ready' : null;
+  }
+
   /** Operator repair: return a blocking terminal item to `ready` for another attempt. */
   requeue(id: string, now: Date | number): WorkState | null {
     const res = this.db

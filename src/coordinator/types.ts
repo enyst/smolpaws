@@ -153,8 +153,11 @@ export const DEFAULT_RETRY_POLICY: RetryPolicy = {
  * REST client (turnClient-style) in production. Kept upstream-shaped: append + run + event search.
  */
 export interface AgentServerClient {
-  /** Ensure a conversation with this id exists (idempotent). */
-  ensureConversation(conversationId: string): Promise<void>;
+  /**
+   * Ensure a conversation with this id exists (idempotent). The lane descriptor lets an implementation
+   * choose per-lane creation defaults (for example a per-scope workspace); it may be ignored.
+   */
+  ensureConversation(conversationId: string, lane?: LaneDescriptor): Promise<void>;
   /**
    * Append an event with a caller-supplied deterministic id and optionally request a run.
    * Requires the ADR §8 idempotent-append delta. Returns whether the event was newly created.

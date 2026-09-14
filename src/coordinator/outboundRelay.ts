@@ -16,6 +16,8 @@ export interface OutboundRelayOptions {
   listConversationIds: () => readonly string[] | Promise<readonly string[]>;
   /** Bound external sends per tick so one busy process does not monopolize the loop. */
   maxDispatchPerTick?: number;
+  /** When it returns false the tick syncs the outbox but claims no delivery work (transport down). */
+  canDispatch?: () => boolean;
 }
 
 export interface OutboundRelayTickResult {
@@ -58,11 +60,14 @@ export class OutboundRelay {
 
     const dispatchOutcomes: DeliveryDispatchOutcome[] = [];
     let dispatched = 0;
-    for (let i = 0; i < this.maxDispatchPerTick; i += 1) {
+    const canDispatch = this.options.canDispatch?.() ?? true;
+    for (let i = 0; canDispatch && i < this.maxDispatchPerTick; i += 1) {
       const outcome = await this.dispatcher.dispatchNext(worker);
       if (outcome.kind === 'idle') break;
       dispatchOutcomes.push(outcome);
       if (outcome.kind === 'delivered') dispatched += 1;
+      // A not-connected transport will not become connected within this tick; stop claiming.
+      if (outcome.kind === 'transport_unavailable') break;
     }
 
     return { syncedDeliveries, dispatched, syncFailures, dispatchOutcomes };

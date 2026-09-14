@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import {
   Agent,
+  AgentContext,
   CancelTaskTool,
   FileEditorTool,
   FinishTool,
@@ -37,6 +38,17 @@ interface ProfileAgentFactoryOptions {
 
 const defaultToolNames = ['terminal', 'file_editor', 'glob', 'grep', 'finish', 'think'] as const;
 
+/**
+ * Upstream applies `agent_launch_additions.system_message_suffix_append` after agent/profile resolution by
+ * appending it to the resolved agent's system-message suffix. Profile-resolved TS agents start with no
+ * context, so the appended text becomes the suffix.
+ */
+export function launchAdditionsSuffix(request: StartConversationRequest): string | null {
+  const additions = request.agent_launch_additions;
+  const text = additions?.system_message_suffix_append?.trim() ?? '';
+  return text.length > 0 ? text : null;
+}
+
 export function createProfileAgentFactory(options: ProfileAgentFactoryOptions): AgentFactory {
   const createLlmClient = options.llmClientFactory ?? createClientFromProfile;
   return async (requestAgent, context) => {
@@ -48,10 +60,12 @@ export function createProfileAgentFactory(options: ProfileAgentFactoryOptions): 
     // server default set", preserving the behavior of the previous non-nullable default.
     const configuredTools = settings.tools ?? [];
     const toolSpecs = configuredTools.length === 0 ? defaultToolNames : configuredTools;
+    const suffix = launchAdditionsSuffix(context.stored.request);
     return new Agent({
       llm: await createLlmClient(profile, options.secretStore),
       tools: toolSpecs.flatMap((spec) => resolveProfileTool(spec, workingDir)),
       toolConcurrencyLimit: settings.tool_concurrency_limit,
+      ...(suffix === null ? {} : { context: new AgentContext({ systemMessageSuffix: suffix }) }),
     });
   };
 }
