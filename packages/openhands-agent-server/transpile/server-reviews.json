@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "since": "49ea74587c376b90700f6eff128c3d9b57585d27",
+  "note": "Server review records (transpile/updates/<from8>..<to8>.json) are required for every vendored SDK interval from this upstream commit to the vendored pin; npm run test:server-review enforces it."
+}

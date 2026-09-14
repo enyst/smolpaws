@@ -9,7 +9,7 @@ See [docs/README.md](docs/README.md) for the current doc index, including GitHub
 
 ## Quick Context
 
-This repo owns the WhatsApp host, the GitHub Worker ingress, and the shared Fastify agent-server. Execution is mostly local; each scope keeps its own mounted filesystem and conversation state.
+This repo owns the channel bridges (WhatsApp, Slack, Discord), the GitHub/email Worker ingress, the Message Relay, and the TypeScript OpenHands agent-server package. Execution is local; each scope keeps its own workspace folder and conversation state.
 
 SmolPaws is an OpenHands agent in TypeScript, with inspiration from NanoClaw, OpenClaw, pi, and other open source projects.
 
@@ -17,12 +17,16 @@ SmolPaws is an OpenHands agent in TypeScript, with inspiration from NanoClaw, Op
 
 | File | Purpose |
 |------|---------|
-| `src/index.ts` | Main app: WhatsApp connection and message routing |
+| `apps/whatsapp/` | Standalone WhatsApp relay bridge (the primary channel's new home; see `docs/whatsapp/README.md`) |
+| `apps/slack/` | Standalone Slack relay bridge (`paws`) |
+| `scripts/run-local-bridge.sh` | Starts any standalone bridge, booting the `:8790` agent-server first if needed; used by the bridge LaunchAgents |
+| `src/coordinator/` | Message Relay: durable intake/delivery around the agent-server (`relayRuntime.ts` is the shared loop) |
+| `packages/openhands-agent-server/` | The upstream-shaped TypeScript agent-server every relay bridge talks to |
+| `src/index.ts` | Legacy root process: WhatsApp connection and message routing on the old `/turns` runner (rollback path) |
 | `src/config.ts` | Trigger pattern, paths, intervals |
-| `src/agent-runtime/shared-runner.ts` | AppleWorkspace-backed runner client |
 | `apps/github/` | Cloudflare Worker for GitHub webhook + notification ingress |
 | `apps/email/` | Cloudflare Worker for Resend inbound-email ingress (Svix-verified webhook, strict sender allowlist) |
-| `apps/agent-server/` | Shared Fastify agent-server app and runner image source |
+| `apps/agent-server/` | Legacy Fastify `/turns` runner on `:8788` (reference code; hosts the Discord adapter until it moves) |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
 | `src/db.ts` | SQLite operations |
 | `groups/{name}/AGENTS.md` | Per-group memory (isolated) |

@@ -16,3 +16,5 @@ Current docs:
 - [`github/deployment-alternatives.md`](github/deployment-alternatives.md) - GitHub/runner deployment options
 - [`slack/README.md`](slack/README.md) - Slack app architecture and implementation plan
 - [`slack/instructions.md`](slack/instructions.md) - Slack app setup and local run notes
+- [`whatsapp/README.md`](whatsapp/README.md) - standalone WhatsApp Message Relay bridge: flow, device linking, launchd, six-point verification, rollback
+- [`bridges.md`](bridges.md) - how standalone bridges start (LaunchAgent → bridge → agent-server), shared runtime, conversation defaults

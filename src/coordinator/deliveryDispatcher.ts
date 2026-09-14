@@ -13,6 +13,12 @@ export interface DeliverySendResult {
 }
 
 export interface DeliveryTarget {
+  /**
+   * Optional transport readiness. When it returns false the dispatcher releases the claim untouched (back
+   * to `ready`, no attempt counted, no backoff), so a disconnected socket never turns a send that never
+   * started into `delivery_unknown` and never burns retries.
+   */
+  isReady?(): boolean;
   /** Pure/preflight validation. Must not perform external I/O. */
   validate(lane: LaneRow, payload: unknown): void;
   /** Perform the external side effect. Throwing after this starts is treated as ambiguous delivery. */
@@ -36,7 +42,9 @@ export type DeliveryDispatchOutcome =
   | { kind: 'delivered'; workId: string; externalMessageId: string | null }
   | { kind: 'failed'; workId: string; error: string }
   | { kind: 'delivery_unknown'; workId: string; error: string }
-  | { kind: 'stale'; workId: string };
+  | { kind: 'stale'; workId: string }
+  /** The platform transport is not connected; the claim was released to `ready` without any send attempt. */
+  | { kind: 'transport_unavailable'; workId: string };
 
 export interface DeliveryDispatcherOptions {
   now?: () => number;
@@ -79,6 +87,13 @@ export class DeliveryDispatcher {
       const message = errorMessage(error);
       this.store.settle(claim, { kind: 'fail', error: message }, this.now());
       return { kind: 'failed', workId: claim.row.id, error: message };
+    }
+
+    // Transport readiness is checked after validation and before markSending: a send that never started
+    // is not an attempt at all, never an ambiguous external effect.
+    if (target.isReady !== undefined && !target.isReady()) {
+      this.store.release(claim, this.now());
+      return { kind: 'transport_unavailable', workId: claim.row.id };
     }
 
     if (!this.store.markSending(claim, this.now())) {

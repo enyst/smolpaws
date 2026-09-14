@@ -31,9 +31,9 @@ DISCORD_ALLOWED_USER_IDS=123456789012345678,234567890123456789
 # DISCORD_ALLOWED_GUILDS=123456789012345678
 # DISCORD_ALLOWED_CHANNELS=123456789012345678
 
-# Agent server (defaults to local)
-# SMOLPAWS_RUNNER_URL=http://127.0.0.1:8788
-# SMOLPAWS_RUNNER_TOKEN=your-token
+# TypeScript OpenHands agent-server (defaults to local :8790)
+# SMOLPAWS_RELAY_SERVER_URL=http://127.0.0.1:8790
+# SMOLPAWS_RELAY_SERVER_API_KEY=only-if-the-server-enforces-it
 ```
 
 ### 3. Install Dependencies
@@ -46,10 +46,15 @@ npm install
 ### 4. Run
 
 ```bash
-# From the repo root
-npm run discord:dev    # Development (auto-reload)
-npm run discord:start  # Production
+# From the repo root. Starts the :8790 agent-server first if nothing healthy answers there.
+npm run discord:start
+npm run bridge:launchagent:install -- discord   # supervised by launchd (macOS)
 ```
+
+The bridge is a standalone process on the durable Message Relay (see `docs/bridges.md`): Gateway →
+`DiscordBridge.onMessage` → `RelayRuntime` intake (SQLite `~/.smolpaws/coordinator/discord-relay-v1.db`)
+→ TypeScript agent-server → delivery outbox → `DiscordDeliveryTarget` → `channel.send`. It no longer
+uses the legacy `/turns` runner on `:8788` or the shared bridge loader.
 
 ## How It Works
 
