@@ -3969,8 +3969,8 @@ async function getGitDiff(filePath, ref) {
   }
   const validRepo = await validateGitRepository(repo);
   const base = await getValidRef(validRepo, ref, "display");
-  const relative2 = toPosixPath2(path3.slice(validRepo.length + 1));
-  const original = await runGitCommand(["git", "show", `${base}:${relative2}`], { cwd: validRepo }).catch(() => "");
+  const relative3 = toPosixPath2(path3.slice(validRepo.length + 1));
+  const original = await runGitCommand(["git", "show", `${base}:${relative3}`], { cwd: validRepo }).catch(() => "");
   const modified = (await promises.readFile(path3, "utf8")).split(/\r?\n/u).join("\n").replace(/\n$/u, "");
   return { modified, original };
 }
@@ -4173,10 +4173,8 @@ function getCachePath(source, cacheDir) {
 async function fetchWithResolution(source, cacheDir, options = {}) {
   const parsed = parseExtensionSource(source);
   if (parsed.type === "local") {
-    if (options.repoPath !== void 0 && options.repoPath !== null) {
-      throw new ExtensionFetchError("repoPath is not supported for local extension sources. Specify the full path directly.");
-    }
-    return { path: await resolveLocalSource(parsed.url), resolvedRef: null };
+    const basePath = await resolveLocalSource(parsed.url);
+    return { path: await applySubpath(basePath, options.repoPath ?? null, `local source '${source}'`), resolvedRef: null };
   }
   if (options.gitFetcher === void 0) {
     throw new ExtensionFetchError("Git extension fetching requires an explicit gitFetcher in the TypeScript package");
@@ -4184,7 +4182,7 @@ async function fetchWithResolution(source, cacheDir, options = {}) {
   await promises.mkdir(cacheDir, { recursive: true });
   const cachePath = getCachePath(source, cacheDir);
   const resolvedRef = await options.gitFetcher(parsed.url, cachePath, { ref: options.ref ?? null, update: options.update ?? true });
-  return { path: await applySubpath(cachePath, options.repoPath ?? null), resolvedRef };
+  return { path: await applySubpath(cachePath, options.repoPath ?? null, "extension repository"), resolvedRef };
 }
 async function fetchExtension(source, cacheDir, options = {}) {
   return (await fetchWithResolution(source, cacheDir, options)).path;
@@ -4318,13 +4316,18 @@ async function resolveLocalSource(source) {
   }
   return path3;
 }
-async function applySubpath(basePath, subpath) {
+async function applySubpath(basePath, subpath, context) {
   if (subpath === null || subpath.length === 0) {
     return basePath;
   }
   const finalPath = path2.resolve(basePath, subpath.replace(/^\/+|\/+$/gu, ""));
+  const resolvedBase = path2.resolve(basePath);
+  const rel = path2.relative(resolvedBase, finalPath);
+  if (rel === ".." || rel.startsWith(`..${path2.sep}`)) {
+    throw new ExtensionFetchError(`Subdirectory '${subpath}' escapes ${context}`);
+  }
   if (!await exists2(finalPath)) {
-    throw new ExtensionFetchError(`Subdirectory '${subpath}' not found in extension repository`);
+    throw new ExtensionFetchError(`Subdirectory '${subpath}' not found in ${context}`);
   }
   return finalPath;
 }
@@ -6689,12 +6692,12 @@ async function loadProjectAgents(projectDir) {
 async function loadUserAgents() {
   return loadAgentsFromDirs(agentDirectories.map((dir) => userAgentsDir(dir)));
 }
-function userAgentsDir(relative2) {
-  const [base, ...rest] = relative2.split("/");
+function userAgentsDir(relative3) {
+  const [base, ...rest] = relative3.split("/");
   if (base === ".openhands") {
     return path2.join(getUserPersistenceDir(), rest.join("/"));
   }
-  return path2.join(os.homedir(), relative2);
+  return path2.join(os.homedir(), relative3);
 }
 async function discoverAgents(options = {}) {
   const includeProject = options.includeProject ?? true;
@@ -7376,27 +7379,43 @@ var execAsync = util.promisify(child_process.exec);
 var baseToolObservationSchema = zod.z.object({ text: zod.z.string(), is_error: zod.z.boolean().default(false) }).strict();
 var terminalActionSchema = zod.z.object({ command: zod.z.string(), is_input: zod.z.boolean().default(false), timeout: zod.z.number().nonnegative().nullable().default(null), reset: zod.z.boolean().default(false) }).strict();
 var terminalObservationSchema = baseToolObservationSchema.extend({ command: zod.z.string().nullable().default(null), exit_code: zod.z.number().nullable().default(null), timeout: zod.z.boolean().default(false) }).strict();
+var DEFAULT_TERMINAL_TIMEOUT_SECONDS = 300;
+var TERMINAL_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 var TerminalExecutor = class {
   workingDir;
+  defaultTimeoutSeconds;
   constructor(options) {
     this.workingDir = options.workingDir;
+    this.defaultTimeoutSeconds = options.defaultTimeoutSeconds ?? DEFAULT_TERMINAL_TIMEOUT_SECONDS;
   }
   async execute(action) {
     const parsed = terminalActionSchema.parse(action);
     if (parsed.is_input) return { text: "Interactive input is not supported by this executor.", is_error: true, command: parsed.command, exit_code: null, timeout: false };
     try {
-      const { stdout, stderr } = await execAsync(parsed.command, { cwd: this.workingDir, timeout: parsed.timeout === null ? void 0 : parsed.timeout * 1e3 });
+      const cwd = await promises.stat(this.workingDir);
+      if (!cwd.isDirectory()) throw new Error("not a directory");
+    } catch {
+      return { text: `Working directory does not exist: ${this.workingDir}`, is_error: true, command: parsed.command, exit_code: -1, timeout: false };
+    }
+    const timeoutSeconds = parsed.timeout === null ? this.defaultTimeoutSeconds : parsed.timeout;
+    try {
+      const { stdout, stderr } = await execAsync(parsed.command, { cwd: this.workingDir, timeout: timeoutSeconds * 1e3, maxBuffer: TERMINAL_MAX_BUFFER_BYTES });
       return { text: `${stdout}${stderr}`, is_error: false, command: parsed.command, exit_code: 0, timeout: false };
     } catch (error) {
       const err = error;
-      return { text: `${err.stdout ?? ""}${err.stderr ?? String(error)}`, is_error: true, command: parsed.command, exit_code: typeof err.code === "number" ? err.code : -1, timeout: err.killed ?? false };
+      const timedOut = err.killed === true || err.signal === "SIGTERM";
+      const output = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+      const detail = timedOut ? `Command timed out after ${timeoutSeconds}s and was killed. Pass a larger \`timeout\` for long-running commands, or run servers in the background.` : output.length > 0 ? "" : err.message ?? String(error);
+      const text = output.length > 0 && detail.length > 0 ? `${output}
+${detail}` : output.length > 0 ? output : detail;
+      return { text, is_error: true, command: parsed.command, exit_code: typeof err.code === "number" ? err.code : -1, timeout: timedOut };
     }
   }
 };
 var TerminalTool = class {
   static create(options) {
     const executor = new TerminalExecutor(options);
-    return new ToolDefinition({ name: "terminal", description: "Execute a shell command in the project workspace.", inputSchema: terminalActionSchema, outputSchema: terminalObservationSchema, annotations: toolAnnotationsSchema.parse({ title: "terminal", openWorldHint: false }), executor: (action) => executor.execute(action) });
+    return new ToolDefinition({ name: "terminal", description: `Execute a shell command in the project workspace. Commands are killed after \`timeout\` seconds (default ${DEFAULT_TERMINAL_TIMEOUT_SECONDS}; 0 means no limit); pass a larger timeout for installs or test suites, and start long-lived servers in the background.`, inputSchema: terminalActionSchema, outputSchema: terminalObservationSchema, annotations: toolAnnotationsSchema.parse({ title: "terminal", openWorldHint: false }), executor: (action) => executor.execute(action) });
   }
 };
 var fileEditorActionSchema = zod.z.object({ command: zod.z.enum(["view", "create", "str_replace", "insert", "undo_edit"]), path: zod.z.string(), file_text: zod.z.string().nullable().default(null), old_str: zod.z.string().nullable().default(null), new_str: zod.z.string().nullable().default(null), insert_line: zod.z.number().int().nonnegative().nullable().default(null), view_range: zod.z.array(zod.z.number().int()).nullable().default(null) }).strict();
@@ -8014,6 +8033,7 @@ exports.ConversationState = ConversationState;
 exports.CriticBase = CriticBase;
 exports.CriticResult = CriticResult;
 exports.DEFAULT_EXEC_TOOL_NAMES = DEFAULT_EXEC_TOOL_NAMES;
+exports.DEFAULT_TERMINAL_TIMEOUT_SECONDS = DEFAULT_TERMINAL_TIMEOUT_SECONDS;
 exports.DEFAULT_TEXT_CONTENT_LIMIT = DEFAULT_TEXT_CONTENT_LIMIT;
 exports.DEFAULT_TRUNCATE_NOTICE = DEFAULT_TRUNCATE_NOTICE;
 exports.DEFAULT_TRUNCATE_NOTICE_WITH_PERSIST = DEFAULT_TRUNCATE_NOTICE_WITH_PERSIST;

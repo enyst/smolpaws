@@ -127,18 +127,36 @@ Every update is a finite `OLD_PIN..NEW_PIN` interval prepared and checked by the
 
 Credential-gated live LLM workflows prove external provider viability; they are not substitutes for Python/TypeScript parity tests.
 
+The unattended weekly procedure that performs steps 1–7 is written out in [`docs/REVENDOR_AUTOMATION.md`](docs/REVENDOR_AUTOMATION.md).
+
+## Server review records
+
+The SDK repository generates the interval inventory for both targets, but its review files annotate `:server` units only as "transpiled separately". The server-side decisions live here:
+
+```text
+transpile/updates/<OLD8>..<NEW8>.json   machine-checked record
+transpile/updates/<OLD8>..<NEW8>.md     human-readable record (subjects, reasoning, OpenAPI delta)
+```
+
+One pair per vendored interval, frozen once the interval's PR merges. The SDK marks every `:server` unit as `DELEGATED` in its own review and ships the interval inventory (`transpile/updates/<OLD8>..<NEW8>.inventory.json`) inside the package we vendor. The `.json` record here must contain exactly one item per server unit of that inventory (`<sha>:server`), each with a disposition (`PORT`, `NO_TARGET_CHANGE`, `DEVIATION`, `EXCLUDED`, `DEFERRED`), the policy ID where required (`DEV-SERVER-*` for `DEVIATION`, an `EXCLUDED` policy for `EXCLUDED`, none otherwise), a concrete reason, a tracking item for every `DEFERRED`, and existing TypeScript test paths as evidence for every `PORT`. It also carries the inventory's SHA-256 so a record cannot silently outlive the inventory it reviewed. The `.md` file adds subjects, reasoning, the pinned Python OpenAPI delta, and any `transpile/openapi-policy.json` changes.
+
+`npm run test:server-review` (part of `npm run ci`) walks the vendored inventories from `transpile/server-reviews.json#since` to the vendored pin and fails on a missing, stale, or incomplete record, so a re-vendor cannot land without its review.
+
+These records are review evidence, not a parity ledger. Compatibility is still proven by tests and the generated OpenAPI comparison.
+
 ## Validation
 
 ```sh
 npm run ci
 ```
 
-The package CI begins by validating the vendored canonical manifest and ensuring duplicate pin metadata has not crept back into the vendored package. It then runs generated OpenAPI parity, deterministic tests, local server smoke, typechecks, lint, build, and packed-consumer verification.
+The package CI begins by validating the vendored canonical manifest, ensuring duplicate pin metadata has not crept back into the vendored package, and checking that every vendored interval has a complete server review record. It then runs generated OpenAPI parity, deterministic tests, local server smoke, typechecks, lint, build, and packed-consumer verification.
 
 Focused checks:
 
 ```sh
 npm run test:upstream-provenance
+npm run test:server-review
 npm run openapi
 npm run test:openapi-parity
 ```

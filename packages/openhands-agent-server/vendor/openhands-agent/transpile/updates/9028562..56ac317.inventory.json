@@ -1,0 +1,484 @@
+{
+  "schemaVersion": 1,
+  "repository": "OpenHands/software-agent-sdk",
+  "from": "9028562e2d5eda76de662ec9b7584125760eb83f",
+  "to": "56ac31719f91059dc9b319dbc6bb79f17ef60cd7",
+  "fromAuthoredAt": "2026-07-11T00:14:31+02:00",
+  "toAuthoredAt": "2026-07-13T17:18:33+02:00",
+  "totalCommits": 8,
+  "firstParentCommits": 8,
+  "commits": [
+    {
+      "sha": "cf6c2a3a4ace65b651ea29032ab6b4a74d7bb41a",
+      "authoredAt": "2026-07-11T13:05:37+02:00",
+      "subject": "[codex] fix ACP prompt argument order (#3996)",
+      "units": {
+        "sdk": {
+          "target": "sdk",
+          "files": [
+            {
+              "status": "M",
+              "path": "openhands-sdk/openhands/sdk/agent/acp_agent.py",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "source",
+              "module": "agent",
+              "policyHints": [
+                "DEV-SDK-005"
+              ]
+            },
+            {
+              "status": "M",
+              "path": "tests/sdk/agent/test_acp_agent.py",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "test",
+              "module": "agent",
+              "policyHints": []
+            }
+          ],
+          "modules": [
+            "agent"
+          ],
+          "policyHints": [
+            "DEV-SDK-005"
+          ]
+        }
+      },
+      "ignoredPaths": [],
+      "unmappedPaths": []
+    },
+    {
+      "sha": "777671766f4196da318b5b1e6179a6dc897cad36",
+      "authoredAt": "2026-07-12T15:22:58-07:00",
+      "subject": "feat(security): add ToolShieldLLMSecurityAnalyzer (#2911)",
+      "units": {
+        "sdk": {
+          "target": "sdk",
+          "files": [
+            {
+              "status": "M",
+              "path": "openhands-sdk/openhands/sdk/security/__init__.py",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "source",
+              "module": "security",
+              "policyHints": [
+                "DEV-SDK-001",
+                "DEV-SDK-002"
+              ]
+            },
+            {
+              "status": "A",
+              "path": "openhands-sdk/openhands/sdk/security/toolshield_helpers.py",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "source",
+              "module": "security",
+              "policyHints": [
+                "DEV-SDK-001",
+                "DEV-SDK-002"
+              ]
+            },
+            {
+              "status": "A",
+              "path": "openhands-sdk/openhands/sdk/security/toolshield_llm_analyzer.py",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "source",
+              "module": "security",
+              "policyHints": [
+                "DEV-SDK-001",
+                "DEV-SDK-002"
+              ]
+            },
+            {
+              "status": "M",
+              "path": "openhands-sdk/pyproject.toml",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "source",
+              "module": "pyproject",
+              "policyHints": []
+            },
+            {
+              "status": "A",
+              "path": "tests/sdk/security/test_toolshield_llm_analyzer.py",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "test",
+              "module": "security",
+              "policyHints": [
+                "DEV-SDK-001",
+                "DEV-SDK-002"
+              ]
+            },
+            {
+              "status": "M",
+              "path": "uv.lock",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "shared",
+              "module": "dependencies",
+              "policyHints": []
+            }
+          ],
+          "modules": [
+            "dependencies",
+            "pyproject",
+            "security"
+          ],
+          "policyHints": [
+            "DEV-SDK-001",
+            "DEV-SDK-002"
+          ]
+        },
+        "server": {
+          "target": "server",
+          "files": [
+            {
+              "status": "A",
+              "path": "tests/cross/test_toolshield_tool_experience_mapping.py",
+              "previousPath": null,
+              "target": "server",
+              "kind": "test",
+              "module": "test_toolshield_tool_experience_mapping",
+              "policyHints": []
+            },
+            {
+              "status": "M",
+              "path": "uv.lock",
+              "previousPath": null,
+              "target": "server",
+              "kind": "shared",
+              "module": "dependencies",
+              "policyHints": []
+            }
+          ],
+          "modules": [
+            "dependencies",
+            "test_toolshield_tool_experience_mapping"
+          ],
+          "policyHints": []
+        }
+      },
+      "ignoredPaths": [],
+      "unmappedPaths": []
+    },
+    {
+      "sha": "54861fee8d340fc2c3fbfe303efc79e06c6ce598",
+      "authoredAt": "2026-07-13T12:47:09+02:00",
+      "subject": "chore(deps): bump MishaKav/pytest-coverage-comment from 1.7.2 to 1.10.0 (#4046)",
+      "units": {},
+      "ignoredPaths": [
+        ".github/workflows/tests.yml"
+      ],
+      "unmappedPaths": []
+    },
+    {
+      "sha": "36685714a862a3998d4888cca7bc85aa7a029dab",
+      "authoredAt": "2026-07-13T12:47:13+02:00",
+      "subject": "chore(deps): bump docker/setup-buildx-action from 4.0.0 to 4.2.0 (#4045)",
+      "units": {},
+      "ignoredPaths": [
+        ".github/workflows/release-binaries.yml",
+        ".github/workflows/server.yml"
+      ],
+      "unmappedPaths": []
+    },
+    {
+      "sha": "c8e7225267456d8b85840e5967cef33782fd6a77",
+      "authoredAt": "2026-07-13T12:55:27+02:00",
+      "subject": "fix(mcp): validate secrets after parsing (#4099)",
+      "units": {
+        "sdk": {
+          "target": "sdk",
+          "files": [
+            {
+              "status": "M",
+              "path": "openhands-sdk/openhands/sdk/mcp/config.py",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "source",
+              "module": "mcp",
+              "policyHints": []
+            },
+            {
+              "status": "A",
+              "path": "tests/sdk/mcp/test_mcp_config_secrets.py",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "test",
+              "module": "mcp",
+              "policyHints": []
+            }
+          ],
+          "modules": [
+            "mcp"
+          ],
+          "policyHints": []
+        },
+        "server": {
+          "target": "server",
+          "files": [
+            {
+              "status": "M",
+              "path": "tests/agent_server/test_event_service.py",
+              "previousPath": null,
+              "target": "server",
+              "kind": "test",
+              "module": "test_event",
+              "policyHints": []
+            }
+          ],
+          "modules": [
+            "test_event"
+          ],
+          "policyHints": []
+        }
+      },
+      "ignoredPaths": [],
+      "unmappedPaths": []
+    },
+    {
+      "sha": "c5379ec3f8529f004c8ad2d12c021ccdd529fd33",
+      "authoredAt": "2026-07-13T17:43:29+05:45",
+      "subject": "fix(skills): make marketplaces additive to public skills (#4087)",
+      "units": {
+        "sdk": {
+          "target": "sdk",
+          "files": [
+            {
+              "status": "M",
+              "path": "openhands-sdk/openhands/sdk/context/agent_context.py",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "source",
+              "module": "context",
+              "policyHints": []
+            },
+            {
+              "status": "M",
+              "path": "tests/sdk/conversation/test_local_conversation_plugins.py",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "test",
+              "module": "conversation",
+              "policyHints": []
+            }
+          ],
+          "modules": [
+            "context",
+            "conversation"
+          ],
+          "policyHints": []
+        },
+        "server": {
+          "target": "server",
+          "files": [
+            {
+              "status": "M",
+              "path": "openhands-agent-server/openhands/agent_server/skills_router.py",
+              "previousPath": null,
+              "target": "server",
+              "kind": "source",
+              "module": "skills",
+              "policyHints": []
+            },
+            {
+              "status": "M",
+              "path": "openhands-agent-server/openhands/agent_server/skills_service.py",
+              "previousPath": null,
+              "target": "server",
+              "kind": "source",
+              "module": "skills",
+              "policyHints": []
+            },
+            {
+              "status": "M",
+              "path": "tests/agent_server/test_skills_service.py",
+              "previousPath": null,
+              "target": "server",
+              "kind": "test",
+              "module": "test_skills",
+              "policyHints": []
+            }
+          ],
+          "modules": [
+            "skills",
+            "test_skills"
+          ],
+          "policyHints": []
+        }
+      },
+      "ignoredPaths": [],
+      "unmappedPaths": []
+    },
+    {
+      "sha": "025d7d3e459fa2d02c3b3c13099e20fbeba18037",
+      "authoredAt": "2026-07-13T20:46:20+05:30",
+      "subject": "fix(mcp): preserve nested object properties in LLM-facing tool schema (#4011)",
+      "units": {
+        "sdk": {
+          "target": "sdk",
+          "files": [
+            {
+              "status": "M",
+              "path": "openhands-sdk/openhands/sdk/mcp/tool.py",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "source",
+              "module": "mcp",
+              "policyHints": []
+            },
+            {
+              "status": "A",
+              "path": "tests/sdk/mcp/test_mcp_nested_schema.py",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "test",
+              "module": "mcp",
+              "policyHints": []
+            }
+          ],
+          "modules": [
+            "mcp"
+          ],
+          "policyHints": []
+        }
+      },
+      "ignoredPaths": [],
+      "unmappedPaths": []
+    },
+    {
+      "sha": "56ac31719f91059dc9b319dbc6bb79f17ef60cd7",
+      "authoredAt": "2026-07-13T17:18:33+02:00",
+      "subject": "Release v1.36.0 (#4104)",
+      "units": {
+        "sdk": {
+          "target": "sdk",
+          "files": [
+            {
+              "status": "M",
+              "path": "openhands-sdk/pyproject.toml",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "source",
+              "module": "pyproject",
+              "policyHints": []
+            },
+            {
+              "status": "M",
+              "path": "openhands-tools/pyproject.toml",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "source",
+              "module": "pyproject",
+              "policyHints": []
+            },
+            {
+              "status": "M",
+              "path": "openhands-workspace/pyproject.toml",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "source",
+              "module": "workspace",
+              "policyHints": []
+            },
+            {
+              "status": "M",
+              "path": "uv.lock",
+              "previousPath": null,
+              "target": "sdk",
+              "kind": "shared",
+              "module": "dependencies",
+              "policyHints": []
+            }
+          ],
+          "modules": [
+            "dependencies",
+            "pyproject",
+            "workspace"
+          ],
+          "policyHints": []
+        },
+        "server": {
+          "target": "server",
+          "files": [
+            {
+              "status": "M",
+              "path": "openhands-agent-server/pyproject.toml",
+              "previousPath": null,
+              "target": "server",
+              "kind": "source",
+              "module": "pyproject",
+              "policyHints": []
+            },
+            {
+              "status": "M",
+              "path": "uv.lock",
+              "previousPath": null,
+              "target": "server",
+              "kind": "shared",
+              "module": "dependencies",
+              "policyHints": []
+            }
+          ],
+          "modules": [
+            "dependencies",
+            "pyproject"
+          ],
+          "policyHints": []
+        }
+      },
+      "ignoredPaths": [],
+      "unmappedPaths": []
+    }
+  ],
+  "summary": {
+    "targets": {
+      "sdk": {
+        "commitUnits": 6,
+        "files": 18,
+        "modules": [
+          "agent",
+          "context",
+          "conversation",
+          "dependencies",
+          "mcp",
+          "pyproject",
+          "security",
+          "workspace"
+        ],
+        "tests": 5,
+        "examples": 0,
+        "policyHints": [
+          "DEV-SDK-001",
+          "DEV-SDK-002",
+          "DEV-SDK-005"
+        ]
+      },
+      "server": {
+        "commitUnits": 4,
+        "files": 8,
+        "modules": [
+          "dependencies",
+          "pyproject",
+          "skills",
+          "test_event",
+          "test_skills",
+          "test_toolshield_tool_experience_mapping"
+        ],
+        "tests": 3,
+        "examples": 0,
+        "policyHints": []
+      }
+    },
+    "ignoredPaths": [
+      ".github/workflows/release-binaries.yml",
+      ".github/workflows/server.yml",
+      ".github/workflows/tests.yml"
+    ],
+    "unmappedPaths": []
+  }
+}

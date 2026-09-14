@@ -30,8 +30,9 @@ platform into these six concepts and stops there.
 
 ## Where the essentials live in this repo
 
-The shared bridge core is in `src/shared/bridgeAdapter.ts` (not under `apps/`), and each app
-subclasses it:
+The shared relay core is `src/coordinator/relayRuntime.ts` (`RelayRuntime`) plus the conversation
+defaults in `src/shared/relayConversationDefaults.ts`; the legacy `src/shared/bridgeAdapter.ts` base
+class remains only for `apps/discord`:
 
 | Essential   | Where |
 |-------------|-------|
@@ -48,20 +49,29 @@ each app's `plugin.json` (`kind: "bridge"`).
 
 ## Two shapes of bridge
 
-- **Socket/adapter bridges** (`apps/discord`, `apps/slack`) extend `BaseBridgeAdapter` and run
-  in-process with the agent-server. This is the canonical shape — start here for a new channel.
-- **Webhook Workers** (`apps/github`, `apps/email`) are Cloudflare Workers that receive
-  platform webhooks and call the agent-server over HTTP. Same six essentials, different
-  transport; they don't extend `BaseBridgeAdapter` because they aren't long-lived listeners.
+- **Standalone relay bridges** (`apps/slack`, `apps/whatsapp`) run as their own process, own their
+  platform socket, and hand messages to the shared Message Relay
+  (`src/coordinator/relayRuntime.ts`): durable SQLite intake → TypeScript agent-server on `:8790` →
+  delivery outbox → platform send. `plugin.json` says `"kind": "standalone"`, so the legacy loader
+  ignores them. **This is the canonical shape** — start here for a new channel. See
+  `docs/bridges.md` and `apps/whatsapp/AGENTS.md`.
+- **Webhook Workers** (`apps/github`, `apps/email`) are Cloudflare Workers that receive platform
+  webhooks and call the agent-server over HTTP. Same six essentials, different transport.
+- **Legacy adapter bridges** (`apps/discord`) extend `BaseBridgeAdapter` and are loaded in-process by
+  the old `apps/agent-server` `/turns` runner on `:8788`. That path is reference code; Discord moves to
+  the relay shape next (see `docs/bridges.md`).
 
-`apps/agent-server` is not a bridge — it is the shared Fastify agent-server the bridges talk to.
+`apps/agent-server` is not a bridge — it is the legacy Fastify runner. The target server is
+`packages/openhands-agent-server`.
 
 ## Adding a bridge
 
 1. Model the platform in terms of the six essentials above — nothing more.
-2. Prefer extending `BaseBridgeAdapter`; only reach for a Worker when the platform is
-   webhook-delivered and there's no persistent socket.
-3. Add a `plugin.json` with `kind: "bridge"` and `requiredEnv` so the loader can discover it.
-4. Keep authorization to a channel allowlist / access check; real policy lives in the ingress
-   handler, not scattered through the adapter.
-5. See `apps/slack/AGENTS.md` for a worked example of the adapter pattern.
+2. Build a standalone relay bridge: `index.ts` (entrypoint + conversation defaults), `config.ts`,
+   `adapter.ts` (platform socket), `handler.ts` (pure policy), `deliveryTarget.ts`, `relayRuntime.ts`
+   (thin wrapper over the shared runtime with the platform's own `<platform>-relay:v1` namespace).
+   Reach for a Worker only when the platform is webhook-delivered and there's no persistent socket.
+3. Add a `plugin.json` with `kind: "standalone"` and `requiredEnv`/`secretEnv`; the generic launcher
+   `scripts/run-local-bridge.sh <name>` and `scripts/install-bridge-launchagent.sh <name>` then work.
+4. Keep authorization to a channel allowlist / access check in the handler.
+5. Use `apps/whatsapp` as the worked example (fake-socket end-to-end test against the real server).

@@ -1,9 +1,9 @@
 {
   "name": "discord",
   "label": "Discord",
-  "kind": "bridge",
-  "version": "1.0.0",
-  "description": "Discord gateway adapter \u2014 connects via discord.js WebSocket.",
+  "kind": "standalone",
+  "version": "2.0.0",
+  "description": "Standalone Discord Gateway bridge for the durable Message Relay and Delivery Dispatcher path.",
   "requiredEnv": [
     "DISCORD_BOT_TOKEN"
   ],
@@ -14,6 +14,8 @@
     "DISCORD_TRIGGER",
     "DISCORD_ALLOWED_GUILDS",
     "DISCORD_ALLOWED_CHANNELS",
-    "DISCORD_ALLOWED_USER_IDS"
+    "DISCORD_ALLOWED_USER_IDS",
+    "SMOLPAWS_RELAY_SERVER_URL",
+    "SMOLPAWS_RELAY_SERVER_API_KEY"
   ]
 }

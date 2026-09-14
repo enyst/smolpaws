@@ -13,7 +13,7 @@
  * reads back `{event_id, created}` if the server returns them; until the delta ships the server returns
  * only `{success:true}` and we fall back to the deterministic id with `created:true`.
  */
-import type { AgentEvent, AgentServerClient } from './types.js';
+import type { AgentEvent, AgentServerClient, LaneDescriptor } from './types.js';
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -24,6 +24,8 @@ export interface HttpAgentServerClientOptions {
   fetch?: FetchLike;
   /** Extra fields for conversation creation (workspace, agent, tags, …). */
   createDefaults?: Record<string, unknown>;
+  /** Per-lane creation fields merged over `createDefaults` (for example a per-scope workspace). */
+  createDefaultsFor?: (lane: LaneDescriptor) => Record<string, unknown>;
   /** Restrict the projector's event search to a kind (e.g. 'ActionEvent'); omit for all kinds. */
   searchKind?: string;
 }
@@ -46,6 +48,7 @@ export class HttpAgentServerClient implements AgentServerClient {
   private readonly sessionApiKey?: string;
   private readonly doFetch: FetchLike;
   private readonly createDefaults: Record<string, unknown>;
+  private readonly createDefaultsFor: ((lane: LaneDescriptor) => Record<string, unknown>) | undefined;
   private readonly searchKind?: string;
 
   constructor(options: HttpAgentServerClientOptions) {
@@ -53,6 +56,7 @@ export class HttpAgentServerClient implements AgentServerClient {
     this.sessionApiKey = options.sessionApiKey;
     this.doFetch = options.fetch ?? ((url, init) => fetch(url, init));
     this.createDefaults = options.createDefaults ?? {};
+    this.createDefaultsFor = options.createDefaultsFor;
     this.searchKind = options.searchKind;
   }
 
@@ -63,11 +67,12 @@ export class HttpAgentServerClient implements AgentServerClient {
     return headers;
   }
 
-  async ensureConversation(conversationId: string): Promise<void> {
+  async ensureConversation(conversationId: string, lane?: LaneDescriptor): Promise<void> {
+    const perLane = lane !== undefined && this.createDefaultsFor !== undefined ? this.createDefaultsFor(lane) : {};
     const res = await this.doFetch(`${this.baseUrl}/api/conversations`, {
       method: 'POST',
       headers: this.headers(true),
-      body: JSON.stringify({ id: conversationId, ...this.createDefaults }),
+      body: JSON.stringify({ id: conversationId, ...this.createDefaults, ...perLane }),
     });
     // 200/201 = created or returned; 409 = already exists — both mean the conversation now exists.
     if (res.status === 409 || res.ok) return;

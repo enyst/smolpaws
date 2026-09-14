@@ -1,351 +1,223 @@
 /**
- * Discord channel adapter.
+ * Standalone Discord bridge for the durable Message Relay architecture.
  *
- * Connects to Discord via discord.js, listens for messages, and dispatches
- * to the agent server through BaseBridgeAdapter.
+ * Owns the discord.js Gateway client and hands authorized, addressed messages to the shared Message
+ * Relay; replies come back through {@link DiscordDeliveryTarget}. Same shape as `apps/slack` and
+ * `apps/whatsapp`: own process, no `BaseBridgeAdapter`, no `/turns`.
  */
+import { ChannelType, Client, Events, GatewayIntentBits, Partials, type Message } from 'discord.js';
+import type { Logger } from 'pino';
 
+import { loadConfig, type DiscordConfig } from './config.js';
 import {
-  Client,
-  Events,
-  GatewayIntentBits,
-  type Message,
-  Partials,
-  ChannelType,
-} from 'discord.js';
-import {
-  BaseBridgeAdapter,
-  bridgeRegistry,
-  type BridgeAdapterConfig,
-  type ReplyContext,
-  type IncomingMessage,
-} from '../../../src/shared/bridgeAdapter.js';
+  extractPrompt,
+  isDiscordMessageAllowed,
+  laneDescriptorFor,
+  shouldRespond,
+  type DiscordEventContext,
+} from './handler.js';
+import { DiscordRelayRuntime } from './relayRuntime.js';
 
-// Discord message limit
-const MAX_MESSAGE_LENGTH = 2000;
+export { isDiscordMessageAllowed } from './handler.js';
 
-export type DiscordAdapterConfig = BridgeAdapterConfig & {
-  botToken: string;
-  trigger?: string;
-  allowedGuilds?: Set<string>;
-  allowedChannels?: Set<string>;
-  allowedUserIds?: Set<string>;
-};
-
-export interface DiscordAuthorizationContext {
-  readonly userId: string;
-  readonly guildId: string | null;
-  readonly channelId: string;
-  readonly isDirectMessage: boolean;
+/** The slice of a discord.js client the bridge uses; tests provide a fake. */
+export interface DiscordClientLike {
+  login(token: string): Promise<unknown>;
+  destroy(): unknown;
+  once(event: 'clientReady' | 'ready', handler: (client: { user: { id: string; tag: string } }) => void): unknown;
+  on(event: 'messageCreate', handler: (message: DiscordMessageLike) => void): unknown;
+  on(event: 'error', handler: (error: unknown) => void): unknown;
+  channels: { fetch(channelId: string): Promise<DiscordChannelLike | null> };
 }
 
-export interface DiscordAuthorizationFilters {
-  readonly allowedUserIds: ReadonlySet<string>;
-  readonly allowedGuilds: ReadonlySet<string>;
-  readonly allowedChannels: ReadonlySet<string>;
+export interface DiscordChannelLike {
+  send(options: { content: string; allowedMentions: { parse: never[] } }): Promise<{ id: string }>;
+  sendTyping?: () => Promise<unknown>;
 }
 
-export function isDiscordMessageAllowed(
-  context: DiscordAuthorizationContext,
-  filters: DiscordAuthorizationFilters,
-): boolean {
-  // Fail closed: user authorization is the security-critical gate. An empty
-  // allowlist authorizes nobody (never everybody), so a missing or misnamed
-  // `DISCORD_ALLOWED_USER_IDS` denies access instead of opening the bot up.
-  // Guild/channel filters below keep their "empty = all scopes" semantics —
-  // they only narrow *where* an already-authorized user may trigger the bot.
-  if (filters.allowedUserIds.size === 0) return false;
-  if (!filters.allowedUserIds.has(context.userId)) return false;
-  if (context.isDirectMessage) return true;
-  if (filters.allowedGuilds.size > 0 && (context.guildId === null || !filters.allowedGuilds.has(context.guildId))) return false;
-  if (filters.allowedChannels.size > 0 && !filters.allowedChannels.has(context.channelId)) return false;
-  return true;
+/** What the bridge reads from a discord.js Message. */
+export interface DiscordMessageLike {
+  id: string;
+  content: string;
+  channelId: string;
+  guildId: string | null;
+  author: { id: string; tag: string; bot: boolean };
+  channel: { type: number; isThread(): boolean; sendTyping?: () => Promise<unknown> };
+  mentions: { has(userId: string): boolean };
+  reply(options: { content: string; allowedMentions: { parse: never[] } }): Promise<unknown>;
 }
 
-export class DiscordAdapter extends BaseBridgeAdapter {
-  private client?: Client;
-  private readonly botToken: string;
-  private readonly triggerPattern: RegExp;
-  private readonly allowedGuilds: Set<string>;
-  private readonly allowedChannels: Set<string>;
-  private readonly allowedUserIds: Set<string>;
+export interface DiscordBridgeOptions {
+  logger: Logger;
+  serverUrl: string;
+  sessionApiKey?: string;
+  config?: DiscordConfig;
+  dbPath?: string;
+  tickMs?: number;
+  createConversationDefaults?: Record<string, unknown>;
+  clientFactory?: () => DiscordClientLike;
+}
+
+export function createDiscordClient(): DiscordClientLike {
+  return new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+      GatewayIntentBits.DirectMessages,
+    ],
+    partials: [Partials.Channel],
+  }) as unknown as DiscordClientLike;
+}
+
+export class DiscordBridge {
+  private readonly logger: Logger;
+  private readonly serverUrl: string;
+  private readonly sessionApiKey: string | undefined;
+  private readonly config: DiscordConfig;
+  private readonly dbPath: string | undefined;
+  private readonly tickMs: number | undefined;
+  private readonly createConversationDefaults: Record<string, unknown> | undefined;
+  private readonly clientFactory: () => DiscordClientLike;
+  private client: DiscordClientLike | undefined;
+  private runtime: DiscordRelayRuntime | undefined;
   private botUserId = '';
+  /** True from `clientReady` until stop; gates outbound dispatch (DeliveryTarget.isReady). */
+  private clientReady = false;
 
-  constructor(config: DiscordAdapterConfig) {
-    super(config);
-    this.botToken = config.botToken;
-    const trigger = config.trigger || '@smolpaws';
-    this.triggerPattern = new RegExp(
-      trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-      'i',
-    );
-    this.allowedGuilds = config.allowedGuilds ?? new Set();
-    this.allowedChannels = config.allowedChannels ?? new Set();
-    this.allowedUserIds = config.allowedUserIds ?? new Set();
+  constructor(options: DiscordBridgeOptions) {
+    this.logger = options.logger.child({ bridge: 'discord' });
+    this.serverUrl = options.serverUrl.replace(/\/+$/, '');
+    this.sessionApiKey = options.sessionApiKey;
+    this.config = options.config ?? loadConfig(process.env, (message) => this.logger.warn(message));
+    this.dbPath = options.dbPath;
+    this.tickMs = options.tickMs;
+    this.createConversationDefaults = options.createConversationDefaults;
+    this.clientFactory = options.clientFactory ?? createDiscordClient;
   }
 
-  // ── Lifecycle ────────────────────────────────────────────────────
-
-  protected async connect(): Promise<void> {
-    // Fresh client per connection cycle — discord.js doesn't support
-    // reusing a destroyed client, and reusing a live one would
-    // accumulate duplicate event listeners.
-    this.client = new Client({
-      intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.DirectMessages,
-      ],
-      partials: [Partials.Channel],
-    });
-
-    return new Promise<void>((resolve, reject) => {
-      const client = this.client!;
-      client.once(Events.ClientReady, (readyClient) => {
-        this.botUserId = readyClient.user.id;
-        this.logger.info(
-          {
-            user: readyClient.user.tag,
-            guilds: readyClient.guilds.cache.size,
-          },
-          'Discord bot ready 🐾',
-        );
-        resolve();
-      });
-
-      client.on(Events.MessageCreate, (message) => {
-        void this.onMessage(message);
-      });
-
-      client.on(Events.Error, (error) => {
-        this.logger.error({ error }, 'Discord client error');
-      });
-
-      client.login(this.botToken).catch(reject);
-    });
+  get connected(): boolean {
+    return this.client !== undefined && this.runtime !== undefined;
   }
 
-  protected async disconnect(): Promise<void> {
+  /**
+   * Log in first, start the relay worker only once the client is ready: queued deliveries from a
+   * previous run are never attempted against a client that is not connected.
+   */
+  async start(): Promise<void> {
+    if (this.connected) return;
+    const runtime = new DiscordRelayRuntime({
+      logger: this.logger,
+      serverUrl: this.serverUrl,
+      sessionApiKey: this.sessionApiKey,
+      sendChunk: (channelId, text) => this.sendChunk(channelId, text),
+      isConnected: () => this.clientReady,
+      ...(this.dbPath === undefined ? {} : { dbPath: this.dbPath }),
+      ...(this.tickMs === undefined ? {} : { tickMs: this.tickMs }),
+      ...(this.createConversationDefaults === undefined ? {} : { createConversationDefaults: this.createConversationDefaults }),
+    });
+
+    // Fresh client per connection: discord.js cannot reuse a destroyed client.
+    const client = this.clientFactory();
+    this.client = client;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once('clientReady', (ready) => {
+          this.botUserId = ready.user.id;
+          this.clientReady = true;
+          this.logger.info(
+            { user: ready.user.tag, agentServer: this.serverUrl, buildSha: process.env.SMOLPAWS_BUILD_SHA?.trim() || undefined },
+            'SmolPaws Discord bot is ready on Message Relay path 🐾',
+          );
+          resolve();
+        });
+        client.on('messageCreate', (message) => {
+          void this.onMessage(message).catch((error: unknown) => {
+            this.logger.error({ err: error }, 'Error processing Discord message');
+          });
+        });
+        client.on('error', (error) => {
+          this.logger.error({ err: error }, 'Discord client error');
+        });
+        client.login(this.config.botToken).catch(reject);
+      });
+      this.runtime = runtime;
+      await runtime.start();
+    } catch (error) {
+      await runtime.stop().catch(() => undefined);
+      client.destroy();
+      this.client = undefined;
+      this.clientReady = false;
+      this.runtime = undefined;
+      throw error;
+    }
+  }
+
+  async stop(): Promise<void> {
+    // Stop the relay first so an in-flight delivery can still use the client, then disconnect.
+    await this.runtime?.stop().catch((error: unknown) => {
+      this.logger.warn({ err: error }, 'Failed to stop Discord relay runtime cleanly');
+    });
     this.client?.destroy();
     this.client = undefined;
+    this.clientReady = false;
+    this.runtime = undefined;
+    this.botUserId = '';
   }
 
-  // ── Platform I/O ─────────────────────────────────────────────────
-
-  protected async sendReply(ctx: ReplyContext, text: string): Promise<void> {
-    if (!text.trim()) return;
-    const message = ctx.original as Message;
-    for (const chunk of splitMessage(text)) {
-      await message.reply({
-        content: chunk,
-        allowedMentions: { parse: [] },
-      });
-    }
-  }
-
-  protected async sendTyping(ctx: ReplyContext): Promise<void> {
-    const message = ctx.original as Message;
-    const channel = message.channel;
-    if ('sendTyping' in channel) {
-      await channel.sendTyping();
-    }
-  }
-
-  protected override buildCreateConversation(msg: IncomingMessage) {
-    const base = super.buildCreateConversation(msg);
-    return {
-      ...base,
-      smolpaws: {
-        ...base.smolpaws,
-        discord: msg.platformContext,
-      },
+  /** Exposed for tests: feed one message through the same path the gateway uses. */
+  async onMessage(message: DiscordMessageLike): Promise<void> {
+    const runtime = this.runtime;
+    if (runtime === undefined || !this.botUserId) return;
+    const ctx: DiscordEventContext = {
+      messageId: message.id,
+      channelId: message.channelId,
+      guildId: message.guildId,
+      isDirectMessage: message.channel.type === ChannelType.DM,
+      isThread: message.channel.isThread(),
+      authorId: message.author.id,
+      authorTag: message.author.tag,
+      authorIsBot: message.author.bot,
+      content: message.content,
+      mentionsBot: message.mentions.has(this.botUserId),
     };
-  }
-
-  // ── Message handling ─────────────────────────────────────────────
-
-  private async onMessage(message: Message): Promise<void> {
-    if (!this.shouldRespond(message)) return;
-    if (!this.isAllowed(message)) {
+    if (!shouldRespond(ctx, this.config.triggerPattern)) return;
+    if (!isDiscordMessageAllowed(
+      { userId: ctx.authorId, guildId: ctx.guildId, channelId: ctx.channelId, isDirectMessage: ctx.isDirectMessage },
+      this.config,
+    )) {
       await message.reply({
-        content:
-          "smolpaws: sorry, these paws only answer a small trusted circle. Ask Engel to add you, or set up your own little cat agent 🐾",
+        content: 'smolpaws: sorry, these paws only answer a small trusted circle. Ask Engel to add you, or set up your own little cat agent 🐾',
         allowedMentions: { parse: [] },
-      }).catch(() => {});
+      }).catch(() => undefined);
       return;
     }
 
-    const prompt = this.extractPrompt(message.content);
+    const prompt = extractPrompt(ctx.content, this.botUserId, this.config.triggerPattern);
     if (!prompt) {
-      await message.reply({
-        content: '🐾 You called? Say something after the mention and I\'ll help.',
-        allowedMentions: { parse: [] },
-      }).catch(() => {});
+      await message.reply({ content: '🐾 You called? Say something after the mention and I\'ll help.', allowedMentions: { parse: [] } }).catch(() => undefined);
       return;
     }
 
-    const conversationId = this.buildConversationId(message);
-    const replyCtx: ReplyContext = {
-      original: message,
-      conversationId,
-    };
-
-    this.logger.info(
-      {
-        author: message.author.tag,
-        channel: message.channelId,
-        guild: message.guildId,
-        conversationId,
-        promptLength: prompt.length,
-      },
-      'Processing Discord message',
-    );
-
+    const lane = laneDescriptorFor(ctx, this.botUserId);
+    this.logger.info({ author: ctx.authorTag, channel: ctx.channelId, guild: ctx.guildId, lane: lane.laneKey, promptLength: prompt.length }, 'Processing Discord message');
+    await message.channel.sendTyping?.().catch(() => undefined);
     try {
-      await this.dispatch(
-        {
-          conversationId,
-          prompt,
-          messageId: message.id,
-          platformContext: {
-            guild_id: message.guildId ?? undefined,
-            channel_id: message.channelId,
-            author_id: message.author.id,
-            author_name: message.author.tag,
-          },
-        },
-        replyCtx,
-      );
+      await runtime.accept(lane, ctx.messageId, prompt);
     } catch (error) {
-      this.logger.error({ error, conversationId }, 'Error processing message');
-      await message.reply({
-        content: '🐾 Something went wrong on my end. Try again in a moment.',
-        allowedMentions: { parse: [] },
-      }).catch(() => {});
+      this.logger.error({ err: error, lane: lane.laneKey }, 'Discord intake was not durably accepted');
+      await message.reply({ content: '🐾 Something went wrong on my end. Try again in a moment.', allowedMentions: { parse: [] } }).catch(() => undefined);
     }
   }
 
-  private shouldRespond(message: Message): boolean {
-    if (message.author.bot) return false;
-    if (message.mentions.has(this.botUserId)) return true;
-    if (this.triggerPattern.test(message.content)) return true;
-    if (message.channel.type === ChannelType.DM) return true;
-    return false;
-  }
-
-  private isAllowed(message: Message): boolean {
-    return isDiscordMessageAllowed(
-      {
-        userId: message.author.id,
-        guildId: message.guildId,
-        channelId: message.channelId,
-        isDirectMessage: message.channel.type === ChannelType.DM,
-      },
-      {
-        allowedUserIds: this.allowedUserIds,
-        allowedGuilds: this.allowedGuilds,
-        allowedChannels: this.allowedChannels,
-      },
-    );
-  }
-
-  private extractPrompt(content: string): string {
-    return content
-      .replace(new RegExp(`<@!?${this.botUserId}>`, 'g'), '')
-      .replace(this.triggerPattern, '')
-      .trim();
-  }
-
-  private buildConversationId(message: Message): string {
-    if (message.channel.type === ChannelType.DM) {
-      return `discord-dm-${message.author.id}`;
-    }
-    if (message.channel.isThread()) {
-      return `discord-thread-${message.channelId}`;
-    }
-    return `discord-channel-${message.channelId}`;
+  private async sendChunk(channelId: string, text: string): Promise<string | null> {
+    const client = this.client;
+    if (client === undefined) throw new Error('Discord client is not connected');
+    const channel = await client.channels.fetch(channelId);
+    if (channel === null) throw new Error(`Discord channel not found: ${channelId}`);
+    const sent = await channel.send({ content: text, allowedMentions: { parse: [] } });
+    return sent.id ?? null;
   }
 }
 
-// ── Message splitting ──────────────────────────────────────────────
-
-function splitMessage(text: string): string[] {
-  if (text.length <= MAX_MESSAGE_LENGTH) return [text];
-
-  const chunks: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= MAX_MESSAGE_LENGTH) {
-      chunks.push(remaining);
-      break;
-    }
-    let splitAt = remaining.lastIndexOf('\n', MAX_MESSAGE_LENGTH);
-    if (splitAt < MAX_MESSAGE_LENGTH * 0.5) {
-      splitAt = remaining.lastIndexOf(' ', MAX_MESSAGE_LENGTH);
-    }
-    if (splitAt < MAX_MESSAGE_LENGTH * 0.3) {
-      splitAt = MAX_MESSAGE_LENGTH;
-    }
-    chunks.push(remaining.slice(0, splitAt));
-    remaining = remaining.slice(splitAt).trimStart();
-  }
-  return chunks;
-}
-
-// ── Helpers ────────────────────────────────────────────────────────
-
-function parseSet(envValue: string | undefined): Set<string> {
-  return new Set(
-    (envValue || '').split(',').map((s) => s.trim()).filter(Boolean),
-  );
-}
-
-// ── Register with the bridge registry ─────────────────────────────
-
-bridgeRegistry.register('discord', (config) => {
-  const botToken = process.env.DISCORD_BOT_TOKEN?.trim();
-  if (!botToken) {
-    throw new Error('DISCORD_BOT_TOKEN is required');
-  }
-
-  // Reject an ambiguous config that sets both the removed variable and its
-  // replacement — refuse to guess which one is authoritative.
-  if (process.env.DISCORD_ALLOWED_USERS && process.env.DISCORD_ALLOWED_USER_IDS) {
-    throw new Error(
-      'DISCORD_ALLOWED_USERS was removed; set only DISCORD_ALLOWED_USER_IDS (immutable account IDs).',
-    );
-  }
-
-  const allowedUserIds = parseSet(process.env.DISCORD_ALLOWED_USER_IDS);
-
-  // The deprecated variable used renameable usernames and is no longer read.
-  // If it is still present, warn — it no longer grants anyone access, and
-  // authorization now fails closed (see below).
-  if (process.env.DISCORD_ALLOWED_USERS) {
-    config.logger.warn(
-      { adapter: config.name },
-      'DISCORD_ALLOWED_USERS is removed and ignored; migrate to DISCORD_ALLOWED_USER_IDS (immutable account IDs).',
-    );
-  }
-
-  // Fail closed: no configured allowlist means no user can trigger the bot.
-  // Warn loudly so a missing/misnamed variable is visible rather than
-  // silently locking everyone out (and, before this change, silently
-  // opening the bot to everyone).
-  if (allowedUserIds.size === 0) {
-    config.logger.warn(
-      { adapter: config.name },
-      'DISCORD_ALLOWED_USER_IDS is empty; no users are authorized to trigger the bot (fail closed). Set immutable account IDs to grant access.',
-    );
-  }
-
-  return new DiscordAdapter({
-    ...config,
-    botToken,
-    trigger: process.env.DISCORD_TRIGGER || '@smolpaws',
-    allowedGuilds: parseSet(process.env.DISCORD_ALLOWED_GUILDS),
-    allowedChannels: parseSet(process.env.DISCORD_ALLOWED_CHANNELS),
-    allowedUserIds,
-  });
-});
+export type { Message as DiscordJsMessage };

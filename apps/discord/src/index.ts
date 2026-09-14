@@ -1,44 +1,62 @@
-/**
- * Discord ingress — thin entry point that starts the Discord channel adapter.
- *
- * All platform logic lives in adapter.ts. This file just wires config
- * and handles process lifecycle.
- */
-
+/** Standalone Discord entrypoint for the Message Relay / new-agent-server path. */
 import pino from 'pino';
-import { bridgeRegistry } from '../../../src/shared/bridgeAdapter.js';
 
-// Import the adapter module to trigger registration with bridgeRegistry
-import './adapter.js';
+import { loadKeychainSecretsByName } from '../../../src/shared/keychain.js';
+import {
+  buildRelayConversationDefaults,
+  privateMemoryFiles,
+} from '../../../src/shared/relayConversationDefaults.js';
+import { DiscordBridge } from './adapter.js';
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
   transport: { target: 'pino-pretty', options: { colorize: true } },
 });
 
-const RUNNER_URL = (
-  process.env.SMOLPAWS_RUNNER_URL || 'http://127.0.0.1:8788'
+const agentServerUrl = (
+  process.env.SMOLPAWS_RELAY_SERVER_URL ||
+  process.env.SMOLPAWS_COORD_SERVER_URL ||
+  'http://127.0.0.1:8790'
 ).replace(/\/+$/, '');
-const RUNNER_TOKEN = process.env.SMOLPAWS_RUNNER_TOKEN?.trim();
+const sessionApiKey =
+  process.env.SMOLPAWS_RELAY_SERVER_API_KEY?.trim() ||
+  process.env.SMOLPAWS_COORD_SERVER_API_KEY?.trim();
 
-async function main() {
+let bridge: DiscordBridge | undefined;
+let stopping = false;
+
+async function main(): Promise<void> {
+  // The bot token lives in the macOS Keychain (service "openhands"); env still wins when set.
   try {
-    await bridgeRegistry.startAdapter('discord', {
-      runnerUrl: RUNNER_URL,
-      runnerToken: RUNNER_TOKEN,
-      logger,
-    });
+    const loaded = await loadKeychainSecretsByName(['DISCORD_BOT_TOKEN']);
+    if (loaded.length > 0) logger.info({ loaded }, 'Loaded Discord secrets from Keychain');
   } catch (error) {
-    logger.fatal({ error }, 'Failed to start Discord adapter');
-    process.exit(1);
+    logger.warn({ error }, 'Keychain secret load failed; relying on existing env');
+  }
+  const createConversationDefaults = buildRelayConversationDefaults({
+    ingress: 'discord',
+    extraContextFiles: privateMemoryFiles(),
+  });
+  try {
+    bridge = new DiscordBridge({ logger, serverUrl: agentServerUrl, sessionApiKey, createConversationDefaults });
+    await bridge.start();
+  } catch (error) {
+    logger.fatal({ error }, 'Failed to start standalone Discord Message Relay bridge');
+    process.exitCode = 1;
   }
 }
 
+async function stop(signal: NodeJS.Signals): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  logger.info({ signal }, 'Shutting down standalone Discord Message Relay bridge');
+  await bridge?.stop();
+}
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => {
-    logger.info({ signal }, 'Shutting down');
-    void bridgeRegistry.stopAll().finally(() => process.exit(0));
+  process.once(signal, () => {
+    void stop(signal).finally(() => process.exit(process.exitCode ?? 0));
   });
 }
 
-main();
+void main();

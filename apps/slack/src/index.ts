@@ -2,6 +2,10 @@
 import pino from 'pino';
 
 import { loadKeychainSecretsByName } from '../../../src/shared/keychain.js';
+import {
+  buildRelayConversationDefaults,
+  privateMemoryFiles,
+} from '../../../src/shared/relayConversationDefaults.js';
 import { SlackBridge } from './adapter.js';
 
 const logger = pino({
@@ -52,7 +56,22 @@ async function main(): Promise<void> {
     process.env.SMOLPAWS_RELAY_SERVER_API_KEY?.trim() ||
     process.env.SMOLPAWS_COORD_SERVER_API_KEY?.trim();
 
-  const bridge = new SlackBridge({ logger, serverUrl: agentServerUrl, sessionApiKey: sessionKey });
+  // New lanes get a real working directory (the cat's home checkout) and the SmolPaws identity docs as
+  // conversation context; without these the agent-server defaults to a cwd-relative workspace that does not
+  // exist and the model has no idea it is paws.
+  const createConversationDefaults = buildRelayConversationDefaults({
+    ingress: 'slack',
+    extraContextFiles: privateMemoryFiles(),
+  });
+  logger.info(
+    {
+      workingDir: (createConversationDefaults.workspace as { working_dir: string }).working_dir,
+      hasContext: createConversationDefaults.agent_launch_additions !== undefined,
+    },
+    'Relay conversation defaults resolved',
+  );
+
+  const bridge = new SlackBridge({ logger, serverUrl: agentServerUrl, sessionApiKey: sessionKey, createConversationDefaults });
   registerSignalHandlers(bridge);
 
   try {

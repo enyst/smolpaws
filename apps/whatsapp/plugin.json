@@ -1,0 +1,19 @@
+{
+  "name": "whatsapp",
+  "label": "WhatsApp",
+  "kind": "standalone",
+  "version": "2.0.0",
+  "description": "Standalone WhatsApp (Baileys) bridge for the durable Message Relay and Delivery Dispatcher path.",
+  "requiredEnv": [],
+  "secretEnv": [],
+  "optionalEnv": [
+    "ASSISTANT_NAME",
+    "SMOLPAWS_HOME_DIR",
+    "SMOLPAWS_WHATSAPP_REGISTERED_GROUPS",
+    "SMOLPAWS_RELAY_SERVER_URL",
+    "SMOLPAWS_RELAY_SERVER_API_KEY",
+    "SMOLPAWS_WORKING_DIR",
+    "SMOLPAWS_WORKSPACE_ROOT",
+    "SMOLPAWS_DEFAULT_WORKING_DIR"
+  ]
+}
