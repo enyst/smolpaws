@@ -99,8 +99,15 @@ An existing link from the legacy root process is reused as-is; nothing to redo.
 
 ### 3. Register chats
 
-`~/.smolpaws/whatsapp/registered_groups.json` (or the legacy `data/registered_groups.json` in the
-checkout):
+The bridge selects one registration file at startup, in this order:
+
+1. `SMOLPAWS_WHATSAPP_REGISTERED_GROUPS`, when set;
+2. `<SMOLPAWS_HOME_DIR>/whatsapp/registered_groups.json`, when present (`SMOLPAWS_HOME_DIR` defaults to `~/.smolpaws`);
+3. the legacy checkout's `data/registered_groups.json`, when present.
+
+These files are **not merged**. An explicit canary file replaces the normal list for that process;
+editing a fallback file does not change the running canary's chats. If no file exists, the bridge
+starts with no registered chats. Each key is a WhatsApp chat JID:
 
 ```json
 {
@@ -109,8 +116,23 @@ checkout):
 }
 ```
 
-`main` is the control scope and answers every message; other chats need an `@smolpaws` mention unless
-`triggerFree` is true. The file is re-read when it changes; no restart needed.
+Add another entry to the selected file to enable another chat; preserve its existing `folder` when
+migrating a legacy group. `folder` selects the scope and `groups/<folder>` workspace. Only `main` is
+the control scope. `triggerFree: true` lets another group answer ordinary text without granting
+control-scope permissions. Otherwise, messages need an `@<ASSISTANT_NAME>` mention (normally
+`@smolpaws`). The stored `trigger` field is retained for legacy compatibility; the current matcher
+uses `ASSISTANT_NAME`, not a separate trigger per entry.
+
+The selected file is re-read when its modification time changes, during ingestion and the two-second
+poll loop. Adding a chat or changing `triggerFree` applies to subsequent human-message handling
+without a restart. Changing the environment variable to select a different file requires restarting
+the process. This reload does not recreate existing conversations: workspace/context and the server's
+default profile are resolved when a conversation is first created. There is no per-chat model field.
+
+Registration is checked before message content is stored. An excluded chat updates chat metadata only;
+its new text/media is not saved for later recovery. A registered but unmentioned message is retained
+as context for a later addressed message. Enabling a chat does not recover messages dropped while it
+was excluded, and any already-pending ledger rows should be accounted for before expanding a canary.
 
 ### 4. Environment
 
@@ -120,10 +142,12 @@ checkout):
 SMOLPAWS_RELAY_SERVER_URL=http://127.0.0.1:8790     # default
 SMOLPAWS_RELAY_SERVER_API_KEY=...                   # only if the server enforces X-Session-API-Key
 ASSISTANT_NAME=smolpaws                             # default
-SMOLPAWS_WORKING_DIR=                               # optional; default: this checkout's groups/<scope>
+SMOLPAWS_WHATSAPP_REGISTERED_GROUPS=/absolute/path/to/registered_groups.json  # optional override
 ```
 
-The agent-server needs an active LLM profile and credential in its own state/keychain.
+The agent-server needs an active LLM profile and credential in its own state/keychain; legacy
+`LLM_PROFILE_ID` does not select it. WhatsApp uses `groups/<folder>` for each chat's workspace,
+overriding the shared bridge `SMOLPAWS_WORKING_DIR` default.
 
 ### 5. Run
 

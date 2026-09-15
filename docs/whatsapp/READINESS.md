@@ -1,9 +1,10 @@
 # WhatsApp readiness: iPad canary passed; overnight soak running
 
-Updated 2026-09-15. The standalone bridge now includes the history handoff (`kxa.6`), shared scheduler
+Updated 2026-09-16. The standalone bridge now includes the history handoff (`kxa.6`), shared scheduler
 (`kxa.4`), outbound media/voice (`kxa.2`), existing scope rules (`kxa.8`), recovery (`kxa.9`) and bounded
-HTTP intake (`39y`). SDK #32 is vendored at `5f28eb8`, including SDK #31 subscription OAuth, #30 bridge tools, provider
-fix #28 and the multi-tool thought correction. Beads owns completion and deployment status.
+HTTP intake (`39y`). The canary product host was verified at SmolPaws `28106cd` on September 16,
+vendoring SDK `a983e4c`: subscription OAuth, bridge tools, provider compatibility, multi-tool and
+concurrent-input history fixes, and provider usage metrics. Beads owns completion and deployment status.
 
 Real-provider preflight passed on 2026-09-15: SmolPaws `7a98ef1`, SDK `573ec5d`, the configured
 `deepseek-v4-flash` profile and its normal Keychain reference. A temporary real product host verified
@@ -70,6 +71,27 @@ before deciding permanent cutover. All-ingress retirement remains `b1r.24`. Thes
 observations, not a promise of continuous monitoring. The private runtime directory contains the
 exact service configuration, evidence and rollback procedure; never restore old auth or ledger
 snapshots over progress made during the canary.
+
+## September 16 scope expansion — reloaded, replies pending
+
+The user authorized adding the two existing legacy groups, OpenHands and Hunting, alongside Main
+in the overnight canary. Both additional groups keep `triggerFree: true`, so ordinary text can
+trigger replies without an `@smolpaws` mention. Their existing scope folders remain distinct;
+neither becomes the control scope. Main retains its control permissions and private-memory context.
+
+The selected canary registration file now contains exactly these three chats, retaining the legacy
+entries. At 00:46:35.891 Stockholm time on September 16 (September 15, 22:46:35.891 UTC), the running
+bridge logged `Registered WhatsApp chats loaded` with count 3. No restart was needed. This expanded
+the selected file, rather than merging every legacy registration. See [Register chats](README.md#3-register-chats)
+for file precedence, hot reload and the supported per-chat fields. New conversations use the active
+server profile; adding a registration does not introduce a per-chat model override.
+
+Both added groups had zero undispatched saved messages and no active legacy scheduled tasks at the
+check. Registration reload does not import their legacy schedules; that import occurs at runtime
+startup. No synthetic WhatsApp test or message replay was sent. Configuration and hot reload are
+verified; end-to-end replies in the two groups await the user's new test messages. A message received
+while its chat was excluded was not saved by the bridge for later recovery. The overnight soak
+remains `smolpaws-957`; this expansion does not declare permanent cutover or all-ingress retirement.
 
 ## Implemented and tested
 
