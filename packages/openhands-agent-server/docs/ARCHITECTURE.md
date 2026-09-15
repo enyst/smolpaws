@@ -293,6 +293,32 @@ not block this package.
 resolution. The default is unchanged. SmolPaws' relay-server host uses this seam for its shared scheduler
 and file outbox; the parity package owns no channel queue or scheduling database.
 
+### Product context composition
+
+`createAgentServerApp({ configureContext })` lets the host compose SDK context after the existing
+launch-addition suffix is resolved. The callback receives that context and the stored conversation;
+omitting it retains the bare server behavior. It adds no HTTP fields or changes to the 32,768-character
+launch-addition limit. The server factory tests cover asynchronous composition, preserved context and
+the unchanged default path.
+
+SmolPaws' `apps/relay-server/src/context.ts` uses this callback to load configured files as always-on,
+non-AgentSkills `Skill` objects. It selects scope through the registered scheduler lane, not request
+tags, and atomically writes a private `smolpaws-context.json` alongside `meta.json` and `events/` on first
+use. Subsequent runs restore the same validated file bodies before looking at configuration or source
+files. Existing conversations without a snapshot capture one on their next run through this host;
+later configuration changes apply only where no snapshot exists yet. Corrupt snapshots and explicit
+missing configuration/files fail instead of replacing context silently.
+
+The fork API copies request/event history, not the product context snapshot. A fork's new direct
+agent-server lane receives a fresh configured snapshot on first use, without inheriting the source
+lane's private context selection.
+
+The snapshot and configuration belong to the product host, not to this parity package or the SDK.
+See [conversation context files](../../../docs/context-files.md) for version-1 configuration, scoped
+private files and update semantics. Native upstream memory loading (`load_memory`, default 6,000
+characters across user/project indexes), its preference propagation, and full AgentProfile skill
+discovery remain deferred under `smolpaws-45n`; this product feature does not claim those semantics.
+
 ## ChatGPT subscription profiles
 
 `POST /api/llm/subscription/openai/device/start` returns the browser verification URL, user code

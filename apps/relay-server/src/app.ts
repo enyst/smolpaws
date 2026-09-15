@@ -6,6 +6,7 @@ import type { ProfileToolConfigurator } from '../../../packages/openhands-agent-
 import { TaskScheduler, type ScheduledLane } from '../../../src/coordinator/taskScheduler.js';
 import { queueMedia } from '../../../src/coordinator/outboundMedia.js';
 import { nativeRelayDbPath } from './relayPaths.js';
+import { productContext, type ProductContextOptions } from './context.js';
 import type * as Sdk from '../../../packages/openhands-agent-server/vendor/openhands-agent/dist/index.js';
 const sdk = createRequire(import.meta.url)('../../../packages/openhands-agent-server/vendor/openhands-agent/dist/index.cjs') as typeof Sdk;
 
@@ -22,10 +23,19 @@ export function productTools(scheduler: TaskScheduler): ProfileToolConfigurator 
     const extensionTools = [...Object.values(sdk.TASK_SCHEDULER_TOOL_FACTORIES).map(make => make()), sdk.SendMessageTool.create(), sdk.SendMediaTool.create()];
     const all = new Map(tools.map(tool => [tool.name, tool]));
     for (const tool of extensionTools) {
-      if (tool.name === 'send_message') { if (!all.has(tool.name)) all.set(tool.name, tool); continue; }
+      // Widen schemas at the heterogeneous registry boundary; execute still validates each action.
+      const inputSchema: Sdk.ToolDefinition['inputSchema'] = tool.inputSchema;
+      const outputSchema: Sdk.ToolDefinition['outputSchema'] = tool.outputSchema;
+      if (tool.name === 'send_message') {
+        if (!all.has(tool.name)) all.set(tool.name, new sdk.ToolDefinition({
+          name: tool.name, description: tool.description, inputSchema, outputSchema,
+          annotations: tool.annotations, meta: tool.meta, executor: (action, context) => tool.execute(action, context),
+        }));
+        continue;
+      }
       const registered = lane;
       all.set(tool.name, new sdk.ToolDefinition({ name: tool.name, description: tool.description,
-        inputSchema: tool.inputSchema, outputSchema: tool.outputSchema, annotations: tool.annotations,
+        inputSchema, outputSchema, annotations: tool.annotations,
         meta: { ...tool.meta, smolpaws_execution_context: true },
         executor: (action, context) => {
           const actionId = (context as { actionEventId?: string } | undefined)?.actionEventId;
@@ -39,9 +49,13 @@ export function productTools(scheduler: TaskScheduler): ProfileToolConfigurator 
     return [...all.values()];
   };
 }
-export async function createRelayServerApp(options: AgentServerAppOptions = {}, scheduler = new TaskScheduler()): Promise<AgentServerApp & { scheduler: TaskScheduler }> {
+export interface RelayServerAppOptions extends Omit<AgentServerAppOptions, 'configureContext'> {
+  context?: ProductContextOptions;
+}
+export async function createRelayServerApp(options: RelayServerAppOptions = {}, scheduler = new TaskScheduler()): Promise<AgentServerApp & { scheduler: TaskScheduler }> {
   try {
-    const server = await createAgentServerApp({ ...options, configureTools: productTools(scheduler) });
+    const { context, ...serverOptions } = options;
+    const server = await createAgentServerApp({ ...serverOptions, configureTools: productTools(scheduler), configureContext: productContext(scheduler, context) });
     server.app.addHook('onSend', async (_request, reply) => { reply.header('x-smolpaws-host', 'relay'); });
     server.app.addHook('onClose', async () => { scheduler.close(); });
     return { ...server, scheduler };

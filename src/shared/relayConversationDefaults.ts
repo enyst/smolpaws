@@ -15,18 +15,14 @@ import { mkdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { loadSmolpawsContextSuffix, smolpawsRepoRoot } from './smolpawsContext.js';
+import { smolpawsRepoRoot } from './smolpawsContext.js';
 
 export interface RelayConversationDefaultsOptions {
-  /** Bridge name recorded in conversation tags and the context header, e.g. `slack`. */
+  /** Bridge name recorded in conversation tags, e.g. `slack`. */
   readonly ingress: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** Override the checkout root used for docs and the fallback working dir (tests). */
   readonly repoRoot?: string;
-  /** Extra absolute markdown files appended to the context (for example private memory). */
-  readonly extraContextFiles?: readonly string[];
-  /** Set false to omit the SmolPaws identity context (deterministic canaries). */
-  readonly includeContext?: boolean;
 }
 
 function isDirectory(candidate: string): boolean {
@@ -59,27 +55,8 @@ export function buildRelayConversationDefaults(options: RelayConversationDefault
   const env = options.env ?? process.env;
   const repoRoot = options.repoRoot ?? smolpawsRepoRoot();
   const workingDir = resolveRelayWorkingDir(env, repoRoot);
-  const defaults: Record<string, unknown> = {
+  return {
     workspace: { kind: 'LocalWorkspace', working_dir: workingDir },
     tags: { ingress: options.ingress },
   };
-  if (options.includeContext !== false) {
-    const suffix = loadSmolpawsContextSuffix({
-      repoRoot,
-      ingress: options.ingress,
-      ...(options.extraContextFiles === undefined ? {} : { extraFiles: options.extraContextFiles }),
-    });
-    if (suffix !== null) {
-      // Upstream StartConversationRequest.agent_launch_additions: deployment context appended after profile
-      // resolution. The server applies it as the agent's system-message suffix.
-      defaults.agent_launch_additions = { system_message_suffix_append: suffix };
-    }
-  }
-  return defaults;
-}
-
-/** Private durable memory the cat keeps outside the repo; attached when present. */
-export function privateMemoryFiles(env: Readonly<Record<string, string | undefined>> = process.env): string[] {
-  const home = env.SMOLPAWS_HOME_DIR?.trim() || path.join(homedir(), '.smolpaws');
-  return [path.join(home, 'memory', 'MEMORY.md')];
 }

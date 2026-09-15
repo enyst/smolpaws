@@ -235,3 +235,28 @@ Code/tests describe current factual behavior; this contract describes intended p
 The default factory retains its behavior when omitted. This TypeScript factory option has no HTTP/schema
 fields; scheduling, attachment spooling and bridge delivery remain in the consuming SmolPaws host,
 `apps/relay-server`, using SDK EXT-SDK-001/002. It does not add product state to the transpiled package.
+
+## Product context composition
+
+`createAgentServerApp({ configureContext })` may compose an SDK `AgentContext` at the same host boundary.
+It receives the existing context and stored conversation, runs after launch-addition suffix resolution,
+and leaves the default factory unchanged when omitted. This is an internal TypeScript factory option,
+not a new HTTP field. The upstream launch-addition limit remains 32,768 characters.
+
+The SmolPaws host selects context files and the trusted scheduler scope, persists its own immutable
+`smolpaws-context.json` beside conversation metadata, and supplies full contents as non-AgentSkills
+`Skill` values with `trigger: null`. The SDK's existing `REPO_CONTEXT` rendering owns prompt inclusion.
+The generic server must not select SmolPaws paths, infer private-file access from request tags, or
+silently replace an established host snapshot. See the [product context contract](../../docs/context-files.md).
+This composition uses an existing SDK surface; it does not lift the launch limit or establish a new
+SDK memory implementation.
+
+Upstream opt-in `load_memory` / `memory_context`, its 6,000-character user/project index loader and
+server preference propagation (PRs #4178 and #4566) remain **DEFERRED**, tracked by `smolpaws-45n`.
+Full AgentProfile context/skill discovery is also outstanding under that bead. The current compatibility
+consequence is that upstream memory preferences and discovery do not produce the equivalent automatic
+context here. Revisit when completing that bead or reviewing changes to these upstream surfaces; preserve
+the pinned initialization, serialization and restore tests before claiming parity. The SDK's
+[current correction](https://github.com/smolpaws/openhands-agent/blob/main/transpile/context-memory.md) supersedes earlier absence-based
+`NO_TARGET_CHANGE` reasoning without rewriting frozen interval reviews. Host-owned context files do not
+close this deferred work, and no memory exclusion is implied.

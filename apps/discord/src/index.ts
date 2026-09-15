@@ -2,10 +2,7 @@
 import pino from 'pino';
 
 import { loadKeychainSecretsByName } from '../../../src/shared/keychain.js';
-import {
-  buildRelayConversationDefaults,
-  privateMemoryFiles,
-} from '../../../src/shared/relayConversationDefaults.js';
+import { buildRelayConversationDefaults } from '../../../src/shared/relayConversationDefaults.js';
 import { DiscordBridge } from './adapter.js';
 
 const logger = pino({
@@ -35,7 +32,6 @@ async function main(): Promise<void> {
   }
   const createConversationDefaults = buildRelayConversationDefaults({
     ingress: 'discord',
-    extraContextFiles: privateMemoryFiles(),
   });
   try {
     bridge = new DiscordBridge({ logger, serverUrl: agentServerUrl, sessionApiKey, createConversationDefaults });

@@ -58,11 +58,11 @@ ledger recognizes the cat's own messages by that prefix.
 | `task-scheduler.ts` | Shared `src/coordinator/taskScheduler.ts`; see "Scheduler, media and rollback" below |
 | voice outbox drain | `voiceOutbox.ts` imports the established producer into durable media delivery |
 
-Each chat's agent conversation works in `groups/<scope>` under the checkout, as before. Every
-conversation also gets the SmolPaws identity context (`docs/smolpaws/*.md`) as its system-message suffix.
-Private `~/.smolpaws/memory/MEMORY.md`, when present, is supplied only for the control scope (`main`).
-The shared renderer respects the upstream 32,768-character launch-context limit: oversized documents
-remain on disk and are referenced with a read-before-answer instruction; smaller identity docs stay inline.
+Each chat's agent conversation works in `groups/<scope>` under the checkout, as before. The
+SmolPaws product server loads identity and private memory from its [context configuration](../context-files.md).
+Select private memory explicitly for each authorized scope (for example `whatsapp:main` or
+`whatsapp:openhands`). The full selected files are always-on SDK context, captured once beside each
+conversation. No read-before-answer tool step or larger launch-suffix limit is needed.
 
 ## Setup
 

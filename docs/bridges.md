@@ -68,7 +68,8 @@ Logs: `~/.smolpaws/logs/bridge.<bridge>.launchagent.log`, `~/.smolpaws/logs/open
 | Durable intake, lane→conversation binding, outbox sync, dispatch loop | `src/coordinator/relayRuntime.ts` (`RelayRuntime`) |
 | What counts as deliverable | `src/coordinator/messageRelay.ts` extractors (`terminalResponseExtractor` and `sendMessageExtractor` for all three bridges) |
 | Agent-server HTTP client, per-lane creation defaults | `src/coordinator/httpAgentServerClient.ts` |
-| Workspace + SmolPaws identity context for new conversations | `src/shared/relayConversationDefaults.ts`, `src/shared/smolpawsContext.ts` |
+| Workspace and ingress defaults | `src/shared/relayConversationDefaults.ts` |
+| Configured identity/memory files and conversation snapshots | `apps/relay-server/src/context.ts` |
 | Launch + supervision | `scripts/run-local-bridge.sh`, `launchd/com.smolpaws.bridge.plist`, `scripts/install-bridge-launchagent.sh` |
 
 ### Conversation defaults
@@ -79,12 +80,10 @@ When a lane is first seen, the bridge creates the agent-server conversation with
   `SMOLPAWS_WORKSPACE_ROOT/SMOLPAWS_DEFAULT_WORKING_DIR` (default `~/repos/smolpaws`), else this
   checkout. WhatsApp uses `groups/<scope>` under the checkout, per registered chat.
 - `tags.ingress`: the bridge name (WhatsApp adds `tags.scope`).
-- `agent_launch_additions.system_message_suffix_append`: the SmolPaws identity docs
-  (`docs/smolpaws/*.md` except README/HEARTBEAT; WhatsApp adds private `MEMORY.md` only for `main`)
-  framed as `<SMOLPAWS_CONTEXT>`. This is the upstream agent-server field for deployment context: the
-  server resolves the agent from its profile first and only then appends the suffix as the SDK
-  `AgentContext.system_message_suffix`, so the cat is paws in every channel without any bridge
-  overriding agent settings. Without it the model answers as a generic assistant.
+
+The product server loads identity and scoped memory from its [context configuration](context-files.md),
+then supplies full file contents as always-on SDK skills. Bridge requests carry no context-file bodies.
+Run these bridges against the SmolPaws product host, which owns context, scheduling and delivery tools.
 
 Bridges do not send `agent` at all; the agent and its LLM profile stay the server's choice.
 
@@ -157,14 +156,12 @@ Proof: `npm run coordinator:test`, `npm run relay-server:test`, bridge tests/typ
 transpiled package CI. The [WhatsApp readiness checklist](whatsapp/READINESS.md) records the remaining
 live-provider, transport and service-cutover work.
 
-### Launch context size
+### Context file size
 
-The upstream server limits `agent_launch_additions.system_message_suffix_append` to 32,768
-characters. The shared bridge context renderer keeps complete documents inline while they fit.
-When the combined context is larger, it replaces the largest documents with explicit local-file
-references and an instruction to read them before answering. It preserves the original files and
-does not truncate them. This normally leaves the small identity documents inline and references
-large private memory. WhatsApp still supplies private memory only for its control scope.
+Configured files are supplied in full through `AgentContext.skills` and frozen beside conversation
+state. They are not replaced with file pointers. The separate upstream launch-addition request
+retains its 32,768-character limit; the model's token window still applies. See the
+[context configuration and snapshot lifecycle](context-files.md).
 
 ### Final replies after explicit sends
 
