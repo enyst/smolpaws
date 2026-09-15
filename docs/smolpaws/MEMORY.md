@@ -1,7 +1,7 @@
 # MEMORY.md
 
-SmolPaws' durable memory lives at `~/.smolpaws/memory/MEMORY.md` (private, not committed).
+The SmolPaws host selects durable memory files for each conversation's scope. Selected files are already supplied in full as always-on context; use that content without a separate startup read.
 
-This stub exists so the repo context loader has something to find. The real memory file contains machine-specific facts, operational details, and private context that should not be in a public repository.
+This public stub contains no private memory and grants no access to another scope's files. Keep private memory and daily working notes outside the public repository.
 
-On every conversation start, read `~/.smolpaws/memory/MEMORY.md` for the full durable memory.
+When configuring memory storage or scope selection, see [conversation context files](../context-files.md).

@@ -16,7 +16,7 @@ verification, and rollback.
 | `src/adapter.ts` | `WhatsAppBridge`: Baileys socket lifecycle, ingest, poll loop, typing, `sendText` |
 | `src/deliveryTarget.ts` | `WhatsAppDeliveryTarget`: prefix, chunking, `chat.sendMessage` |
 | `src/relayRuntime.ts` | `WhatsAppRelayRuntime` over the shared `src/coordinator/relayRuntime.ts`; delivers `send_message` actions and the terminal response |
-| `src/index.ts` | entrypoint: conversation defaults (identity context, ingress tag), signals |
+| `src/index.ts` | entrypoint: workspace/ingress defaults and signals; context belongs to the product server |
 | `src/auth.ts` | device linking: QR or `--phone` pairing code |
 
 ## Invariants

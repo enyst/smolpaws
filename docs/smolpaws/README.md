@@ -11,25 +11,31 @@ SmolPaws should treat this directory as the canonical local source of self/conte
 - long-term memory
 - daily memory
 
-## Live Today
+## Conversation context
 
-All root markdown files in this directory are loaded into the live SmolPaws context on every run.
+The shared relay-server host loads the public root markdown files in this directory by default,
+excluding `README.md` and `HEARTBEAT.md`. It supplies the full file bodies as always-on SDK repository
+skills and freezes them in a private snapshot for each conversation. They are reused on later turns
+and server restarts; source edits take effect for conversations that have not captured a snapshot yet.
 
-That includes:
+The default files include:
 
 - `AGENTS.md`
 - `IDENTITY.md`
 - `USER.md`
 - `TOOLS.md`
 - `SOUL.md`
-- `MEMORY.md` (stub — points to private `~/.smolpaws/memory/MEMORY.md`)
-- `HEARTBEAT.md`
+- `MEMORY.md` (public guidance; private memory is selected by scope configuration)
 - `BOOT.md`
 - `BOOTSTRAP.md`
 
+`HEARTBEAT.md` is the heartbeat ingress checklist, not general conversation context. The context
+configuration can replace these defaults and add files for individual scopes. See
+[conversation context files](../context-files.md) for configuration and snapshot behavior.
+
 ## Private State
 
-Durable memory (`MEMORY.md`) and daily memory files live under `~/.smolpaws/memory/`. They contain machine-specific facts, operational details, and personal context that should not be in a public repository. They are not auto-injected into the repo context but SmolPaws reads them at conversation start and during heartbeats.
+Durable memory (`MEMORY.md`) and daily memory files live under `~/.smolpaws/memory/`. They contain machine-specific facts, operational details, and personal context that should not be in a public repository. The public `MEMORY.md` here carries only usage guidance; it does not load or authorize reading a private file. The host's private `context.json` can select that file for a scope such as `whatsapp:main`, in which case its full content enters that conversation's snapshot. Daily logs are not loaded unless explicitly configured; the agent can read relevant logs on demand within its scope.
 
 Heartbeat is now available as a local LaunchAgent-backed ingress. The canonical local commands are:
 
@@ -43,9 +49,7 @@ By default, the LaunchAgent runs once per hour. Heartbeat runs reuse one convers
 
 ## Why This Exists
 
-SmolPaws now has two layers of context:
-
-- repo-specific guidance and skills from the target workspace or repo clone
-- persistent SmolPaws identity/context from the canonical local `smolpaws` repo
-
-That keeps the cat consistent even when it is acting inside some other repository.
+The product host keeps SmolPaws identity and selected durable context available even when a conversation
+works inside another repository. Automatic AgentProfile/project-skill discovery and upstream's separate
+bounded memory-index loader remain deferred under `smolpaws-45n`; explicit product context does not
+complete those ports.

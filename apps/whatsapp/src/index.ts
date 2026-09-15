@@ -2,10 +2,7 @@ import { installNetworkErrorGuard } from '../../../src/network-errors.js';
 /** Standalone WhatsApp entrypoint for the Message Relay / new-agent-server path. */
 import pino from 'pino';
 
-import {
-  buildRelayConversationDefaults,
-  privateMemoryFiles,
-} from '../../../src/shared/relayConversationDefaults.js';
+import { buildRelayConversationDefaults } from '../../../src/shared/relayConversationDefaults.js';
 import { WhatsAppBridge } from './adapter.js';
 import { loadConfig } from './config.js';
 
@@ -24,16 +21,13 @@ const sessionApiKey =
   process.env.SMOLPAWS_RELAY_SERVER_API_KEY?.trim() ||
   process.env.SMOLPAWS_COORD_SERVER_API_KEY?.trim();
 
-// Identity context and ingress tag are shared with every bridge; the per-chat workspace is added by the
-// bridge when a lane is created (groups/<scope> under the checkout).
+// The bridge supplies the ingress and per-chat workspace; the product server loads configured context.
 const createConversationDefaults = buildRelayConversationDefaults({
   ingress: 'whatsapp',
   repoRoot: config.repoRoot,
-
 });
 
-const controlConversationDefaults = buildRelayConversationDefaults({ ingress: 'whatsapp', repoRoot: config.repoRoot, extraContextFiles: privateMemoryFiles() });
-const bridge = new WhatsAppBridge({ controlConversationDefaults, logger, serverUrl: agentServerUrl, sessionApiKey, config, createConversationDefaults });
+const bridge = new WhatsAppBridge({ logger, serverUrl: agentServerUrl, sessionApiKey, config, createConversationDefaults });
 let stopping = false;
 
 async function main(): Promise<void> {
@@ -43,7 +37,7 @@ async function main(): Promise<void> {
       {
         registeredGroupsPath: config.registeredGroupsPath,
         registeredChats: Object.keys(config.registeredGroups).length,
-        hasContext: createConversationDefaults.agent_launch_additions !== undefined,
+        contextSource: 'product-server',
       },
       'WhatsApp bridge configuration resolved',
     );

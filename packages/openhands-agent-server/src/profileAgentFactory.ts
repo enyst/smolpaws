@@ -34,8 +34,12 @@ export type ProfileLlmClientFactory = (profile: LLMProfile, secretStore: SecretS
 
 export type ProfileToolConfigurator = (tools: readonly ToolDefinition[], context: AgentFactoryContext) => readonly ToolDefinition[];
 
+/** Compose deployment-owned context after profile resolution and launch additions. */
+export type ProfileContextConfigurator = (existingContext: AgentContext | null, factoryContext: AgentFactoryContext) => AgentContext | null | Promise<AgentContext | null>;
+
 interface ProfileAgentFactoryOptions {
   readonly configureTools?: ProfileToolConfigurator;
+  readonly configureContext?: ProfileContextConfigurator;
   readonly state: ServerStateService;
   readonly secretStore: SecretStore;
   readonly llmClientFactory?: ProfileLlmClientFactory;
@@ -68,11 +72,15 @@ export function createProfileAgentFactory(options: ProfileAgentFactoryOptions): 
     const resolvedTools = toolSpecs.flatMap((spec) => resolveProfileTool(spec, workingDir));
     const tools = options.configureTools?.(resolvedTools, context) ?? resolvedTools;
     const suffix = launchAdditionsSuffix(context.stored.request);
+    const existingContext = suffix === null ? null : new AgentContext({ systemMessageSuffix: suffix });
+    const agentContext = options.configureContext === undefined
+      ? existingContext
+      : await options.configureContext(existingContext, context);
     return new Agent({
       llm: await createLlmClient(profile, options.secretStore),
       tools,
       toolConcurrencyLimit: settings.tool_concurrency_limit,
-      ...(suffix === null ? {} : { context: new AgentContext({ systemMessageSuffix: suffix }) }),
+      ...(agentContext === null ? {} : { context: agentContext }),
     });
   };
 }

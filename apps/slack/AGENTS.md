@@ -62,10 +62,10 @@ npm ci --prefix packages/openhands-agent-server
 npm ci --prefix apps/slack
 ```
 
-Start the TypeScript agent-server:
+Start the SmolPaws product host:
 
 ```bash
-./scripts/run-local-smolpaws.sh npm --prefix packages/openhands-agent-server run dev:server
+npm run relay-server:start
 ```
 
 It listens on `127.0.0.1:8790` by default. Then start paws separately:
