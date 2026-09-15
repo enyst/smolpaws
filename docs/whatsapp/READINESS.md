@@ -72,7 +72,7 @@ observations, not a promise of continuous monitoring. The private runtime direct
 exact service configuration, evidence and rollback procedure; never restore old auth or ledger
 snapshots over progress made during the canary.
 
-## September 16 scope expansion — reloaded, replies pending
+## September 16 scope expansion — OpenHands replies verified
 
 The user authorized adding the two existing legacy groups, OpenHands and Hunting, alongside Main
 in the overnight canary. Both additional groups keep `triggerFree: true`, so ordinary text can
@@ -88,10 +88,13 @@ server profile; adding a registration does not introduce a per-chat model overri
 
 Both added groups had zero undispatched saved messages and no active legacy scheduled tasks at the
 check. Registration reload does not import their legacy schedules; that import occurs at runtime
-startup. No synthetic WhatsApp test or message replay was sent. Configuration and hot reload are
-verified; end-to-end replies in the two groups await the user's new test messages. A message received
-while its chat was excluded was not saved by the bridge for later recovery. The overnight soak
-remains `smolpaws-957`; this expansion does not declare permanent cutover or all-ingress retirement.
+startup. No synthetic WhatsApp test or message replay was sent. Two new OpenHands messages at
+00:48:49 and 00:49:12 Stockholm time each completed one intake and one reply delivery, with a single
+send attempt, a distinct external WhatsApp message ID and no recorded error. Transport accepted the
+replies at 00:48:55 and 00:49:24; this does not claim a separate user confirmation of display.
+Hunting is enabled but still awaits a new test message. A message received while its chat was
+excluded was not saved by the bridge for later recovery. The overnight soak remains `smolpaws-957`;
+this expansion does not declare permanent cutover or all-ingress retirement.
 
 ## Implemented and tested
 
