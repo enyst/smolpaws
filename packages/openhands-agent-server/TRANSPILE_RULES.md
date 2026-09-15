@@ -80,6 +80,20 @@ The server may accept additive collection-level `POST /api/profiles` and `POST /
 
 The server exposes root-level server-details routes (`/`, `/alive`, `/health`, `/ready`, `/server_info`) that the upstream public OpenAPI contract no longer publishes after it narrowed the release contract to the `/api/` surface. They remain additive TS-server surface and are not part of the upstream `/api` parity comparison.
 
+## Deferred surface
+
+### DEFER-SERVER-001 — LLM subscription endpoints (`/llm/subscription/openai/*`)
+
+The upstream Python server exposes an LLM router (`openhands/agent_server/llm_router.py`, prefix `/llm`) whose OpenAI subscription routes let a client connect a ChatGPT subscription over OAuth device login, backed by the SDK's `OpenAISubscriptionAuth`:
+
+- `GET  /llm/subscription/openai/status` — safe connection state (no tokens); refreshes if needed;
+- `GET  /llm/subscription/openai/models` — models available through the subscription;
+- `POST /llm/subscription/openai/device/start` — start the OAuth device-code login;
+- `POST /llm/subscription/openai/device/poll` — poll that login to completion;
+- `POST /llm/subscription/openai/logout` — log out of the subscription.
+
+The TS server does **not** yet implement an `llmRouter`, so none of `/llm/*` exists here. **Consequence:** there is no HTTP path for a UI to connect a ChatGPT subscription via device login; only a static provider key/secret can be configured. This surface is **in scope** (`DEFERRED`) and must be transpiled — `PORT` it tests-first, including the server-side device-login state and drop-expired handling. It depends on the SDK subscription auth (credential store + refresh) landing first; the SDK's own `~/.openhands/auth` store is authoritative — do **not** read the Codex CLI's `~/.codex/auth.json` (that path belongs to the separate `tomcat` experiment). Tracked as beads `smolpaws-zlo.2` (this server surface) and `smolpaws-zlo.1` (the SDK auth it drives).
+
 ## Tests-first rule
 
 For compatibility work:
