@@ -156,3 +156,20 @@ work remains `ready`. These mechanisms do not claim exactly-once delivery from e
 Proof: `npm run coordinator:test`, `npm run relay-server:test`, bridge tests/typechecks, and the full
 transpiled package CI. The [WhatsApp readiness checklist](whatsapp/READINESS.md) records the remaining
 live-provider, transport and service-cutover work.
+
+### Launch context size
+
+The upstream server limits `agent_launch_additions.system_message_suffix_append` to 32,768
+characters. The shared bridge context renderer keeps complete documents inline while they fit.
+When the combined context is larger, it replaces the largest documents with explicit local-file
+references and an instruction to read them before answering. It preserves the original files and
+does not truncate them. This normally leaves the small identity documents inline and references
+large private memory. WhatsApp still supplies private memory only for its control scope.
+
+### Final replies after explicit sends
+
+The relay suppresses a terminal reply that repeats text already queued by `send_message` in the
+same turn. It reads the durable EventLog back to the previous user message or terminal reply and
+checks the corresponding outbox record, so paging, cursor replay and process restart do not change
+the decision. It preserves explicit repeated sends, different final text, and identical text in a
+later turn. No provider or agent-loop rule owns this channel delivery policy.
