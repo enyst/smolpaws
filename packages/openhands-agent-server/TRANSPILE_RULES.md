@@ -80,6 +80,31 @@ The server may accept additive collection-level `POST /api/profiles` and `POST /
 
 The server exposes root-level server-details routes (`/`, `/alive`, `/health`, `/ready`, `/server_info`) that the upstream public OpenAPI contract no longer publishes after it narrowed the release contract to the `/api/` surface. They remain additive TS-server surface and are not part of the upstream `/api` parity comparison.
 
+## Subscription authentication
+
+The five `/api/llm/subscription/openai/*` routes port the pinned Python device-login contract.
+The server retains opaque polling-token state, prevents concurrent polling of one challenge, drops
+expired challenges, and fences in-flight results across logout. The SDK owns device requests,
+credential persistence in `~/.openhands/auth`, refresh and subscription request transformation.
+Never read the Codex CLI's `~/.codex/auth.json`. OAuth credentials are never written into profile
+snapshots or server events. Profile validation and conversation execution use the same SDK factory
+and subscription auth instance, so both restore/refresh the connected account.
+
+This completes former `DEFER-SERVER-001` (beads `smolpaws-zlo.1` / `smolpaws-zlo.2`). The router's
+`/llm` prefix is mounted under `/api`, as in Python. `DEV-SERVER-003` applies to profile/general
+secret storage; it does not exclude the explicitly ported SDK OAuth credential store. The historical
+`3896f1869363:server` review classified preflight credential restoration too broadly as a deviation:
+that behavior is now ported and tested in `src/__tests__/subscriptionProfile.test.ts`.
+
+### DEV-SERVER-006 — curated model discovery without LiteLLM
+
+`GET /api/llm/models/verified` returns the exact pinned SDK `VERIFIED_MODELS` mapping.
+`GET /api/llm/providers` and `GET /api/llm/models` use that curated mapping, preserving response
+shapes, sorted unique model lists and provider filtering. Python's additional LiteLLM unverified
+registry and optional AWS discovery are not provided: TS calls providers directly and does not
+bundle LiteLLM. The list is discovery guidance, not an allowlist or a claim that every provider
+configuration has been live-tested in TS. Profiles can still name models outside this catalog.
+
 ## Tests-first rule
 
 For compatibility work:
