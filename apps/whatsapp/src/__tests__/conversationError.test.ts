@@ -168,7 +168,9 @@ test('real step-limit and provider errors are delivered once, and new messages r
     await connect();
     await send('M1', 'ORIGINAL-TASK: pick up the saved work', 1_700_000_001);
     const conversationId = bridge['runtime']!.workStore.getLane(LANE_KEY)!.conversationId;
-    await waitFor(async () => (await client.executionStatus(conversationId)) === 'error', drive);
+    // Terminal state can precede durable event publication and the next relay tick.
+    // Observe both the state and transport effect before checking exact payloads/delivery rows.
+    await waitFor(async () => (await client.executionStatus(conversationId)) === 'error' && socket.sent.length === 1, drive);
     await drive();
 
     const firstErrors = (await client.searchEvents(conversationId, null, 100)).items
@@ -179,7 +181,7 @@ test('real step-limit and provider errors are delivered once, and new messages r
     assert.equal(toolExecutions, 1, 'an error must not automatically replay completed tool work');
 
     await send('M2', 'bumpity', 1_700_000_002);
-    await waitFor(async () => (await client.executionStatus(conversationId)) === 'finished', drive);
+    await waitFor(async () => (await client.executionStatus(conversationId)) === 'finished' && socket.sent.length === 2, drive);
     await drive();
     assert.equal(bridge['runtime']!.workStore.getLane(LANE_KEY)!.conversationId, conversationId);
     assert.deepEqual(socket.sent, [{ jid: CHAT, text: NOTICE }, { jid: CHAT, text: RESUMED }]);
@@ -202,7 +204,7 @@ test('real step-limit and provider errors are delivered once, and new messages r
     assert.deepEqual(socket.sent, [], 'durable event IDs must suppress both the old error and normal reply');
 
     await send('M3', 'do another bounded task', 1_700_000_003);
-    await waitFor(async () => (await client.executionStatus(conversationId)) === 'error', drive);
+    await waitFor(async () => (await client.executionStatus(conversationId)) === 'error' && socket.sent.length === 1, drive);
     await drive();
     const events = (await client.searchEvents(conversationId, null, 100)).items;
     const errors = events.filter((event) => event.kind === 'ConversationErrorEvent');
@@ -229,7 +231,7 @@ test('real step-limit and provider errors are delivered once, and new messages r
     // A thrown provider failure must follow the same durable, user-visible path as the SDK limit.
     throwNextCompletion = true;
     await send('M4', 'PROVIDER-TASK: try the next task', 1_700_000_004);
-    await waitFor(async () => (await client.executionStatus(conversationId)) === 'error', drive);
+    await waitFor(async () => (await client.executionStatus(conversationId)) === 'error' && socket.sent.length === 2, drive);
     await drive();
     assert.deepEqual(socket.sent, [{ jid: CHAT, text: NOTICE }, { jid: CHAT, text: ERROR_NOTICE }]);
     assert.doesNotMatch(JSON.stringify(socket.sent), /test-only-secret/);
@@ -240,7 +242,7 @@ test('real step-limit and provider errors are delivered once, and new messages r
     assert.equal(toolExecutions, 2);
 
     await send('M5', 'continue after the provider error', 1_700_000_005);
-    await waitFor(async () => (await client.executionStatus(conversationId)) === 'finished', drive);
+    await waitFor(async () => (await client.executionStatus(conversationId)) === 'finished' && socket.sent.length === 3, drive);
     await drive();
     assert.equal(bridge['runtime']!.workStore.getLane(LANE_KEY)!.conversationId, conversationId);
     assert.deepEqual(socket.sent, [
