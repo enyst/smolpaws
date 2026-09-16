@@ -126,6 +126,29 @@ export const terminalResponseExtractor: DeliverableExtractor = (event: AgentEven
   return { payload: { kind: 'current_thread_message', text } };
 };
 
+/**
+ * A conversation-level error needs a visible notice, whether or not it ends the run. Tool errors
+ * remain available to the agent to recover from. Never relay raw error details: they
+ * can contain credentials, request bodies, or private provider URLs.
+ */
+export const conversationErrorExtractor: DeliverableExtractor = (event: AgentEvent) => {
+  if (event.kind !== 'ConversationErrorEvent') return null;
+  let text = 'I encountered a conversation error. Send another message to try continuing.';
+  if (event.code === 'MaxIterationsReached') {
+    const match = typeof event.detail === 'string'
+      ? /^Agent reached maximum iterations limit \(([1-9]\d{0,15})\)\.$/.exec(event.detail)
+      : null;
+    const steps = match === null ? NaN : Number(match[1]);
+    const limit = Number.isSafeInteger(steps) ? `${steps}-step` : 'step';
+    text = `I stopped because this run reached its ${limit} limit. Send another message to continue.`;
+  }
+  return { payload: { kind: 'current_thread_message', text } };
+};
+
+/** Deliver explicit sends, terminal replies, and conversation failures through the shared outbox. */
+export const bridgeResponseExtractor: DeliverableExtractor = (event: AgentEvent) =>
+  sendMessageExtractor(event) ?? terminalResponseExtractor(event) ?? conversationErrorExtractor(event);
+
 function deliveryText(payload: unknown): string | null {
   const value = payload as { kind?: unknown; text?: unknown } | null;
   return value?.kind === 'current_thread_message' && typeof value.text === 'string' ? value.text.trim() : null;

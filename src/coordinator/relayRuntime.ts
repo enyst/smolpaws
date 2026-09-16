@@ -23,7 +23,7 @@ import type { Logger } from 'pino';
 import { DeliveryDispatcher, DeliveryTargetRegistry, type DeliveryTarget } from './deliveryDispatcher.js';
 import { HttpAgentServerClient } from './httpAgentServerClient.js';
 import { deterministicConversationId } from './ids.js';
-import { MessageRelay, sendMessageExtractor, terminalResponseExtractor } from './messageRelay.js';
+import { MessageRelay, bridgeResponseExtractor } from './messageRelay.js';
 import { OutboundRelay } from './outboundRelay.js';
 import { MessageWorkStore } from './store.js';
 import type { DeliverableExtractor, InboundMessage, LaneDescriptor } from './types.js';
@@ -47,7 +47,7 @@ export interface RelayRuntimeOptions {
   createConversationDefaults?: Record<string, unknown>;
   /** Per-lane creation fields merged over the shared defaults (for example a per-scope workspace). */
   createConversationDefaultsFor?: (lane: LaneDescriptor) => Record<string, unknown>;
-  /** What counts as deliverable. Defaults to finish observation OR end-of-turn assistant text. */
+  /** What counts as deliverable. Defaults to explicit sends, terminal replies, and conversation errors. */
   extractor?: DeliverableExtractor;
   maxDispatchPerTick?: number;
   schedulerDbPath?: string;
@@ -114,7 +114,7 @@ export class RelayRuntime {
     this.agent = agent;
     this.messageRelay = new MessageRelay(this.store, agent, {
       onEvent: (conversationId, event) => { this.scheduler.observe(conversationId, event); this.recovery.observe(conversationId, event); },
-      extractor: options.extractor ?? ((event) => sendMessageExtractor(event) ?? terminalResponseExtractor(event)),
+      extractor: options.extractor ?? bridgeResponseExtractor,
       deriveConversationId: options.deriveConversationId ?? ((descriptor) => deterministicConversationId(descriptor.laneKey)),
     });
 

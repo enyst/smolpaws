@@ -163,6 +163,25 @@ state. They are not replaced with file pointers. The separate upstream launch-ad
 retains its 32,768-character limit; the model's token window still applies. See the
 [context configuration and snapshot lifecycle](context-files.md).
 
+### Conversation failures and continuation
+
+Relay bridges deliver each `ConversationErrorEvent` as a concise message through the same durable
+outbox as ordinary replies. A step-limit error says that the run reached its step limit and that
+another message can continue it. Other conversation errors use a generic notice, without forwarding
+provider details to the chat. The server redacts exception messages before recording them in its
+event log. Recoverable tool errors do not produce these notices.
+Each notice uses the error event's identity, so retry, cursor replay and process restart cannot create
+a second delivery for the same error. A later error event gets its own notice.
+
+A follow-up prompt resumes the same saved conversation, including completed tool work and prior
+context. It gets a fresh per-run iteration allowance. The normal SDK/server default is **500 steps**;
+settings supply this value to new conversations, while existing conversations retain the limit saved
+in their request. A temporary canary limit must be removed from both places when normal use begins.
+An intake marked `done` means the prompt was accepted, not that the agent completed it successfully.
+
+The notification change applies to newly projected events. Deployment does not rewind delivery
+cursors to replay old failures or automatically resume unfinished user turns.
+
 ### Final replies after explicit sends
 
 The relay suppresses a terminal reply that repeats text already queued by `send_message` in the

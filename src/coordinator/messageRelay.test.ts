@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-import { MessageRelay, sendMessageExtractor, terminalResponseExtractor } from './messageRelay.js';
+import { MessageRelay, bridgeResponseExtractor, sendMessageExtractor, terminalResponseExtractor } from './messageRelay.js';
 import { deterministicEventId } from './ids.js';
 import { MessageWorkStore } from './store.js';
 import type { AgentEvent, AgentServerClient, LaneDescriptor, RetryPolicy } from './types.js';
@@ -185,6 +185,91 @@ const finishObservation = (id: string, text: string): AgentEvent => ({
   kind: 'ObservationEvent',
   tool_name: 'finish',
   observation: { message: text },
+});
+
+const conversationError = (id: string, code: string, detail: string): AgentEvent => ({
+  id,
+  kind: 'ConversationErrorEvent',
+  source: 'environment',
+  code,
+  detail,
+});
+
+test('conversation failures project safe notices while recoverable tool and server events do not', async () => {
+  const { store, coord, agent } = makeCoordinator(Date.now, new FakeAgentServer(), bridgeResponseExtractor);
+  const binding = await coord.resolveLane(lane());
+  agent.events = [
+    { id: 'tool-error', kind: 'AgentErrorEvent', error: 'Tool failed; the agent can recover.' },
+    { id: 'observation-error', kind: 'ObservationEvent', tool_name: 'terminal', observation: { is_error: true, text: 'Command failed.' } },
+    { id: 'server-error', kind: 'ServerErrorEvent', detail: 'Socket closed.' },
+    conversationError('steps', 'MaxIterationsReached', 'Agent reached maximum iterations limit (12).'),
+    conversationError('provider', 'ProviderAuthError', 'private provider URL, access token, and response body'),
+  ];
+
+  assert.equal(await coord.syncDeliveryOutbox(binding.conversationId), 2);
+  const deliveries = store.listLaneWork(binding.laneKey, 'delivery');
+  assert.deepEqual(deliveries.map(row => ({ id: row.agentEventId, payload: row.payload })), [
+    { id: 'steps', payload: { kind: 'current_thread_message', text: 'I stopped because this run reached its 12-step limit. Send another message to continue.' } },
+    { id: 'provider', payload: { kind: 'current_thread_message', text: 'I encountered a conversation error. Send another message to try continuing.' } },
+  ]);
+  assert.equal(store.getProjectionCursor(binding.conversationId), '5');
+});
+
+test('failure notices survive a database restart and cursor replay without hiding a later failure', async () => {
+  const dbPath = tempDbPath();
+  const agent = new FakeAgentServer();
+  let database = new Database(dbPath);
+  let store = new MessageWorkStore(database, POLICY);
+  const make = () => new MessageRelay(store, agent, { extractor: bridgeResponseExtractor, outboxSyncPageSize: 1 });
+  let relay = make();
+  const binding = await relay.resolveLane(lane());
+  agent.events = [conversationError('first-failure', 'MaxIterationsReached', 'Agent reached maximum iterations limit (12).')];
+  try {
+    assert.equal(await relay.syncDeliveryOutbox(binding.conversationId), 1);
+    assert.equal(store.listLaneWork(binding.laneKey, 'delivery')[0]?.sourceKey, `first-failure:${binding.laneKey}`);
+    database.close();
+    database = new Database(dbPath);
+    store = new MessageWorkStore(database, POLICY);
+    relay = make();
+    assert.equal(await relay.syncDeliveryOutbox(binding.conversationId), 0);
+
+    // Simulate a crash after the durable delivery insert but before cursor advancement.
+    store.setProjectionCursor(binding.conversationId, '0', Date.now());
+    assert.equal(await relay.syncDeliveryOutbox(binding.conversationId), 0);
+    agent.events.push(conversationError('next-failure', 'MaxIterationsReached', 'Agent reached maximum iterations limit (12).'));
+    assert.equal(await relay.syncDeliveryOutbox(binding.conversationId), 1);
+    assert.equal(store.listLaneWork(binding.laneKey, 'delivery').length, 2);
+    assert.equal(await make().syncDeliveryOutbox(binding.conversationId), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test('a conversation error is delivered even when an explicit send used the same notice text', async () => {
+  const { store, coord, agent } = makeCoordinator(Date.now, new FakeAgentServer(), bridgeResponseExtractor);
+  const binding = await coord.resolveLane(lane());
+  agent.events = [
+    sendAction('send', 'I stopped because this run reached its 12-step limit. Send another message to continue.'),
+    conversationError('failure', 'MaxIterationsReached', 'Agent reached maximum iterations limit (12).'),
+  ];
+  assert.equal(await coord.syncDeliveryOutbox(binding.conversationId), 2);
+  assert.equal(store.listLaneWork(binding.laneKey, 'delivery').length, 2);
+});
+
+test('max-step notices only include a positive safe integer from the exact SDK detail format', () => {
+  for (const detail of [
+    'private detail',
+    'Agent reached maximum iterations limit (12). secret',
+    'Agent reached maximum iterations limit (12).\nsecret',
+    'Agent reached maximum iterations limit (-1).',
+    'Agent reached maximum iterations limit (0).',
+    'Agent reached maximum iterations limit (1.5).',
+    'Agent reached maximum iterations limit (9007199254740992).',
+  ]) {
+    assert.deepEqual(bridgeResponseExtractor(conversationError('failure', 'MaxIterationsReached', detail)), {
+      payload: { kind: 'current_thread_message', text: 'I stopped because this run reached its step limit. Send another message to continue.' },
+    });
+  }
 });
 
 test('final echoes are suppressed across pages and projector restart, but new turns and explicit sends survive', async () => {

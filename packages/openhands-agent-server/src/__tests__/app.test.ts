@@ -74,10 +74,14 @@ function delayedFinishAgentFactory() {
   });
 }
 
+const PROVIDER_REQUEST_SECRET = 'provider-request-only-secret';
+
 function failingAgentFactory() {
   const llm: LLMClient = {
     profile: llmProfileSchema.parse({ profileId: 'failing-provider', providerId: 'openai', model: 'test-model' }),
-    complete: () => Promise.reject(new Error('provider_response_invalid')),
+    complete: () => Promise.reject(Object.assign(new Error('provider_response_invalid'), {
+      request: { headers: { authorization: `Bearer ${PROVIDER_REQUEST_SECRET}` } },
+    })),
   };
   return new Agent({ llm, tools: [FinishTool.create()] });
 }
@@ -338,9 +342,14 @@ describe('createAgentServerApp', () => {
         expect(info.json<{ execution_status: string }>().execution_status).toBe('error');
         expect(stateStatuses).toContain('error');
       });
+      const errors = await app.inject({ method: 'GET', url: `/api/conversations/${id}/events/search?kind=ConversationErrorEvent` });
+      expect(errors.json<{ items: unknown[] }>().items).toMatchObject([
+        { kind: 'ConversationErrorEvent', source: 'environment', code: 'Error', detail: 'provider_response_invalid' },
+      ]);
       const eventDir = path.join(root, id, 'events');
       const persistedEvents = await Promise.all((await readdir(eventDir)).map((file) => readFile(path.join(eventDir, file), 'utf8')));
-      expect(persistedEvents.join('\n')).not.toContain('provider_response_invalid');
+      expect(persistedEvents.join('\n')).toContain('provider_response_invalid');
+      expect(persistedEvents.join('\n')).not.toContain(PROVIDER_REQUEST_SECRET);
     } finally {
       await app.close();
       await rm(root, { recursive: true, force: true });

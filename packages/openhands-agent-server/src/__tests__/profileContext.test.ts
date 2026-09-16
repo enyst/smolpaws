@@ -122,7 +122,7 @@ describe('profile agent context configuration', () => {
     const { server, llmClientFactory, complete } = await fixture({ configureContext: async () => { throw failure; } });
     const id = await start(server);
     await run(server, id, 'error');
-    expect(errorLog).toHaveBeenCalledWith('conversation_run_error', failure);
+    expect(errorLog).toHaveBeenCalledWith('conversation_run_error', { code: 'Error', detail: 'required_context_unavailable' });
     expect(llmClientFactory).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
   });
