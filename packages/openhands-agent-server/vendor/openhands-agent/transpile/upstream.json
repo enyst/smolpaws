@@ -322,6 +322,16 @@
         "openhands-agent-server/openhands/agent_server/conversation_service.py",
         "openhands-agent-server/openhands/agent_server/event_service.py"
       ]
+    },
+    {
+      "id": "DEV-SERVER-008",
+      "kind": "DEVIATION",
+      "target": "server",
+      "prefixes": [],
+      "paths": [
+        "openhands-agent-server/openhands/agent_server/event_service.py",
+        "tests/agent_server/test_event_service.py"
+      ]
     }
   ]
 }

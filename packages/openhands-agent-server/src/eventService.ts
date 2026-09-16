@@ -9,6 +9,7 @@ import {
   EVENTS_DIR,
   LocalConversation,
   LocalFileStore,
+  agentErrorEventSchema,
   conversationErrorEventSchema,
   conversationStateUpdateEventSchema,
   DuplicateEventError,
@@ -64,6 +65,34 @@ export class EventService {
     this.saveConversation = options.saveConversation ?? (async () => undefined);
     this.secretStore = options.secretStore;
     this.agentFactory = options.agentFactory;
+  }
+
+  /** Called only while restoring an exclusively owned conversation, before exposing it. */
+  async recoverInterruptedTools(): Promise<boolean> {
+    const events = this.events();
+    // Python also guards by tool_call_id: an imported observation may identify
+    // the completed call even when its action_id differs from the local event ID.
+    const completedCalls = new Set(events.flatMap((event) =>
+      event.kind === 'ObservationEvent' || event.kind === 'UserRejectObservation' || event.kind === 'AgentErrorEvent'
+        ? [event.tool_call_id] : []));
+    const pending = this.state.pendingActions().filter((action) => !completedCalls.has(action.tool_call_id));
+    if (pending.length === 0) return false;
+
+    this.state.executionStatus = conversationExecutionStatus.ERROR;
+    for (const action of pending) {
+      const error = agentErrorEventSchema.parse({
+        tool_name: action.tool_name,
+        tool_call_id: action.tool_call_id,
+        error: 'A restart occurred while this tool was in progress. Its outcome is unknown because no result was saved. The tool will not be rerun automatically.',
+        classification: { kind: 'internal', retryable: false },
+      });
+      await this.appendStateEvent(error);
+      await this.publishEventOnce(error);
+    }
+    // The restoring owner saves metadata inside the same lease guard as these
+    // event writes; calling saveConversation here would nest its lease lock.
+    this.touch();
+    return true;
   }
 
   async getEvent(eventId: string): Promise<Event | null> {

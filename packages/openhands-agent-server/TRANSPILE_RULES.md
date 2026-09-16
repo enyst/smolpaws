@@ -141,6 +141,27 @@ Evidence: `src/__tests__/metrics.test.ts`, adapted from pinned
 exercises provider responses, idempotent append, event publication, restart, changed response
 models, fork reset/preservation, missing usage, and older unmeasured history.
 
+### DEV-SERVER-008 — restore interrupted calls without automatic tool replay
+
+After claiming exclusive ownership of a disk-restored conversation, the server appends an SDK
+`AgentErrorEvent` for every action with no saved result, before exposing the conversation to
+requests. Each result states that the outcome is unknown after a restart and uses the upstream
+`internal`, non-retryable classification. Existing results, errors, user messages and accounting
+remain intact. No interrupted command is automatically executed again, and recovery makes no
+provider request. A later prompt or explicit run can continue the same conversation.
+
+This ports upstream `EventService.start()` crash recovery with two deliberate differences:
+Python checks persisted `RUNNING`, while TS does not persist execution status and therefore
+uses unmatched actions in exclusively owned restored history; Python marks the first unmatched
+action and may execute remaining pending actions, while TS closes every unknown-outcome action
+in a parallel batch. Re-executing a command whose side effects may have completed before the
+crash could duplicate work. The durable log remains append-only; SDK provider adapters order
+completed tool results before any queued user retries in the outbound request. This policy does
+not apply to live/new/forked conversations. If confirmation support is added, distinguish
+awaiting approval from interrupted execution before extending this restoration rule.
+
+Source, historical review correction and evidence: [restart recovery](transpile/interrupted-tools.md).
+
 ## Tests-first rule
 
 For compatibility work:
