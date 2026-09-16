@@ -131,7 +131,9 @@ See [subscription architecture](../../packages/openhands-agent-server/docs/ARCHI
    scheduler and server state while stopped. The updated legacy host is the supported rollback target.
 4. Use an explicit registered-chats file containing only the trusted control chat. Set
    `SMOLPAWS_WHATSAPP_REGISTERED_GROUPS`, `SMOLPAWS_WHATSAPP_ROUTER_STATE`, `SMOLPAWS_RELAY_DB_PATH`,
-   `SMOLPAWS_SCHEDULER_DB_PATH`, server persistence/state and `SMOLPAWS_WHATSAPP_STARTUP_PING=0`.
+   `SMOLPAWS_SCHEDULER_DB_PATH` and server persistence/state. Startup notices are enabled by default
+   for every registered chat; set `SMOLPAWS_WHATSAPP_STARTUP_PING=0` only for an intentionally silent
+   test, then remove that override when normal testing begins.
    `SMOLPAWS_HOME_DIR` now relocates the default relay path as well as WhatsApp state. The native
    host uses its own relay database beside the scheduler; use `SMOLPAWS_AGENT_SERVER_RELAY_DB_PATH`
    only if it needs an explicit path. Never point two platform workers at one work database.

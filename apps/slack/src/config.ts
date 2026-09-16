@@ -9,6 +9,10 @@ export type SlackConfig = {
   allowedTeamIds: Set<string>;
   allowedChannelIds: Set<string>;
   allowedUserIds: Set<string>;
+  /** Announce readiness in explicitly configured channels; default true. */
+  startupPing?: boolean;
+  /** Explicit startup destinations; falls back to allowedChannelIds when absent. */
+  startupChannelIds?: Set<string>;
   logLevel: string;
 };
 
@@ -25,6 +29,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     allowedTeamIds: parseSet(env.SLACK_ALLOWED_TEAM_IDS),
     allowedChannelIds: parseSet(env.SLACK_ALLOWED_CHANNEL_IDS),
     allowedUserIds: parseSet(env.SLACK_ALLOWED_USER_IDS),
+    startupPing: env.SMOLPAWS_SLACK_STARTUP_PING !== '0',
+    startupChannelIds: parseSet(env.SMOLPAWS_SLACK_STARTUP_CHANNEL_IDS ?? env.SLACK_ALLOWED_CHANNEL_IDS),
     logLevel: env.LOG_LEVEL || 'info',
   };
 }

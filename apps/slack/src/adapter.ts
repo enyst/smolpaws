@@ -9,6 +9,7 @@ import { App } from '@slack/bolt';
 import type { GenericMessageEvent } from '@slack/types';
 import type { Logger } from 'pino';
 
+import { StartupNotice } from '../../../src/shared/startupNotice.js';
 import type {
   IncomingMessage,
   ReplyContext,
@@ -36,6 +37,8 @@ export interface SlackBridgeOptions {
   tickMs?: number;
   /** Additional upstream-shaped conversation defaults for this bridge instance. */
   createConversationDefaults?: Record<string, unknown>;
+  /** Supply a transport for isolated lifecycle tests. */
+  appFactory?: () => App;
 }
 
 export class SlackBridge {
@@ -49,6 +52,8 @@ export class SlackBridge {
   private readonly dbPath?: string;
   private readonly tickMs?: number;
   private readonly createConversationDefaults?: Record<string, unknown>;
+  private readonly appFactory: () => App;
+  private readonly startupNotice: StartupNotice;
   private readonly dedup = new MessageDeduplicator();
   private readonly guestLimiter = new GuestRateLimiter();
   private readonly mentionedThreads = new MentionedThreadTracker();
@@ -61,6 +66,12 @@ export class SlackBridge {
     this.dbPath = options.dbPath;
     this.tickMs = options.tickMs;
     this.createConversationDefaults = options.createConversationDefaults;
+    this.appFactory = options.appFactory ?? (() => new App({
+      token: this.slackConfig.botToken,
+      appToken: this.slackConfig.appToken,
+      socketMode: true,
+    }));
+    this.startupNotice = new StartupNotice(this.logger);
   }
 
   get connected(): boolean {
@@ -70,11 +81,7 @@ export class SlackBridge {
   async start(): Promise<void> {
     if (this.connected) return;
 
-    const app = new App({
-      token: this.slackConfig.botToken,
-      appToken: this.slackConfig.appToken,
-      socketMode: true,
-    });
+    const app = this.appFactory();
     this.app = app;
     const deps = this.buildDeps();
 
@@ -145,6 +152,16 @@ export class SlackBridge {
         },
         'SmolPaws Slack bot is ready on Message Relay path 🐾',
       );
+      if (this.slackConfig.startupPing !== false) {
+        const teamAllowed = this.slackConfig.allowedTeamIds.size === 0 ||
+          (auth.team_id !== undefined && this.slackConfig.allowedTeamIds.has(auth.team_id));
+        const targets = [...(this.slackConfig.startupChannelIds ?? this.slackConfig.allowedChannelIds)]
+          .filter((id) => this.slackConfig.allowedChannelIds.size === 0 || this.slackConfig.allowedChannelIds.has(id));
+        await this.startupNotice.notify(
+          teamAllowed ? targets : [],
+          (channel, text) => this.postChunk(channel, text),
+        );
+      }
     } catch (error) {
       await this.runtime?.stop().catch(() => undefined);
       await app.stop().catch(() => undefined);

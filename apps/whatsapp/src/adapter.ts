@@ -27,6 +27,7 @@ import Database from 'better-sqlite3';
 import { markWhatsAppMessages, setWhatsAppOwnerMode } from '../../../src/whatsapp-progress.js';
 import { acquireWhatsAppOwner } from '../../../src/whatsapp-owner.js';
 import { isTransientNetworkError } from '../../../src/network-errors.js';
+import { StartupNotice } from '../../../src/shared/startupNotice.js';
 import { resolveOutboundChatJid } from '../../../src/whatsapp-jid.js';
 import { resolveWhatsAppVersion } from '../../../src/whatsapp-version.js';
 import { loadConfig, loadRegisteredGroups, type RegisteredGroup, type WhatsAppConfig } from './config.js';
@@ -82,7 +83,7 @@ export interface WhatsAppBridgeOptions {
   controlConversationDefaults?: Record<string, unknown>;
   socketFactory?: WhatsAppSocketFactory;
   downloadMedia?: (message: WAMessage, socket: WhatsAppSocketLike, logger: Logger) => Promise<Buffer>;
-  /** Send `🐾 I'm up.` to the control chat once per process start. Default true. */
+  /** Send `🐾 I'm up.` to every registered chat once after bridge startup. Default true. */
   startupPing?: boolean;
   /** Called when WhatsApp needs a fresh device link. Default: log, notify, exit(1). */
   onAuthRequired?: () => void;
@@ -166,7 +167,7 @@ export class WhatsAppBridge {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private connectionGeneration = 0;
-  private startupNotified = false;
+  private readonly startupNotice: StartupNotice;
   /** True between Baileys `open` and `close`; gates outbound dispatch (DeliveryTarget.isReady). */
   private socketConnected = false;
   private runtimeStarted: Promise<void> | null = null;
@@ -180,6 +181,7 @@ export class WhatsAppBridge {
 
   constructor(options: WhatsAppBridgeOptions) {
     this.logger = options.logger.child({ bridge: 'whatsapp' });
+    this.startupNotice = new StartupNotice(this.logger);
     this.serverUrl = options.serverUrl.replace(/\/+$/, '');
     this.sessionApiKey = options.sessionApiKey;
     this.config = options.config ?? loadConfig();
@@ -278,6 +280,10 @@ export class WhatsAppBridge {
       this.pollTimer.unref?.();
       this.logger.info({ agentServer: this.serverUrl }, 'SmolPaws WhatsApp bridge is ready on Message Relay path 🐾');
       this.resolveReady?.();
+      if (this.startupPing) {
+        void this.startupNotice.notify(Object.keys(this.registeredGroups), (jid, text) =>
+          this.sendText(jid, `${this.config.assistantName}: ${text}`));
+      }
     }).catch(async error => {
       await runtime.stop(); this.runtime = undefined; this.runtimeStarted = null; throw error;
     });
@@ -392,15 +398,6 @@ export class WhatsAppBridge {
             });
           }, GROUP_SYNC_INTERVAL_MS);
           this.groupSyncTimer.unref?.();
-        }
-        if (this.startupPing && !this.startupNotified) {
-          this.startupNotified = true;
-          const mainJid = Object.entries(this.registeredGroups).find(([, group]) => group.folder === 'main')?.[0];
-          if (mainJid) {
-            void this.sendText(mainJid, `${this.config.assistantName}: 🐾 I'm up.`).catch((error: unknown) => {
-              this.logger.warn({ err: error }, 'Startup notification failed');
-            });
-          }
         }
       }
     });

@@ -134,6 +134,23 @@ other platforms. Native API conversations without a bridge report that media del
 The existing private WhatsApp `voice-outbox.jsonl` producer feeds this same outbox. Provider upload
 limits still apply; voice generation/transcoding is unchanged. Spool files are retained for diagnosis.
 
+## Startup notices
+
+After a standalone bridge's transport and relay are ready, it sends the fixed `🐾 I'm up.` message
+once to each configured destination. WhatsApp adds the assistant-name prefix and uses every
+registered chat. Slack and Discord use `SMOLPAWS_SLACK_STARTUP_CHANNEL_IDS` and
+`SMOLPAWS_DISCORD_STARTUP_CHANNEL_IDS`, respectively, falling back to their explicit channel
+allowlists. Existing channel/workspace/server restrictions still apply. Empty destination lists mean
+no announcement; unrestricted ingress does not mean broadcasting to every channel the bot can access.
+Slack announcements go to the channel itself, not each historical conversation thread.
+
+Set `SMOLPAWS_WHATSAPP_STARTUP_PING=0`, `SMOLPAWS_SLACK_STARTUP_PING=0`, or
+`SMOLPAWS_DISCORD_STARTUP_PING=0` to disable a bridge's notice. A fresh bridge process announces
+again; ordinary transport reconnects and an agent-server-only restart do not. These are operational
+messages with no LLM call, conversation event or work replay. Each destination is attempted once;
+send failures are logged independently and are not retried into possible duplicates or allowed to
+block the conversation delivery queue.
+
 ## Recovery and ownership
 
 The ledger journals handled message identities so old timestamps cannot reset progress. The relay

@@ -116,9 +116,23 @@ SMOLPAWS_RELAY_SERVER_API_KEY=...
 SLACK_ALLOWED_TEAM_IDS=T12345
 SLACK_ALLOWED_CHANNEL_IDS=C12345,D12345
 SLACK_ALLOWED_USER_IDS=U12345
+
+# Optional: disable the deterministic startup message (enabled by default)
+# SMOLPAWS_SLACK_STARTUP_PING=0
+# Or select startup destinations independently of ingress channel restrictions:
+# SMOLPAWS_SLACK_STARTUP_CHANNEL_IDS=C12345,D12345
 ```
 
 The old `SMOLPAWS_COORD_SERVER_*` names remain temporary fallbacks. Raw provider credentials do not belong in Relay SQLite or delivery rows; the agent-server resolves its active profile credential through its own state/keychain.
+
+After Socket Mode and the Message Relay are ready, the bridge posts `🐾 I'm up.` once at the root of
+each `SMOLPAWS_SLACK_STARTUP_CHANNEL_IDS` channel or DM, falling back to `SLACK_ALLOWED_CHANNEL_IDS`
+when the startup list is absent. This lets startup destinations be selected without narrowing ingress.
+A nonempty ingress channel allowlist also filters startup destinations. `SLACK_ALLOWED_TEAM_IDS` is
+checked against the authenticated workspace before sending. With neither list set there is no notice;
+the bridge does not discover targets from conversation history or all channels visible to the bot.
+Reconnects do not repeat it. A failed startup send is logged without retrying or stopping the bridge.
+This is a deterministic transport notice: it creates no conversation, intake, or LLM request.
 
 ## Running the canary
 

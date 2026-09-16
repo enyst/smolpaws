@@ -8,6 +8,7 @@
 import { ChannelType, Client, Events, GatewayIntentBits, Partials, type Message } from 'discord.js';
 import type { Logger } from 'pino';
 
+import { StartupNotice } from '../../../src/shared/startupNotice.js';
 import { loadConfig, type DiscordConfig } from './config.js';
 import {
   extractPrompt,
@@ -31,6 +32,7 @@ export interface DiscordClientLike {
 }
 
 export interface DiscordChannelLike {
+  guildId?: string;
   send(options: { content?: string; files?: { attachment: string; name: string }[]; allowedMentions: { parse: never[] } }): Promise<{ id: string }>;
   sendTyping?: () => Promise<unknown>;
 }
@@ -79,6 +81,7 @@ export class DiscordBridge {
   private readonly tickMs: number | undefined;
   private readonly createConversationDefaults: Record<string, unknown> | undefined;
   private readonly clientFactory: () => DiscordClientLike;
+  private readonly startupNotice: StartupNotice;
   private client: DiscordClientLike | undefined;
   private runtime: DiscordRelayRuntime | undefined;
   private botUserId = '';
@@ -94,6 +97,7 @@ export class DiscordBridge {
     this.tickMs = options.tickMs;
     this.createConversationDefaults = options.createConversationDefaults;
     this.clientFactory = options.clientFactory ?? createDiscordClient;
+    this.startupNotice = new StartupNotice(this.logger);
   }
 
   get connected(): boolean {
@@ -149,6 +153,20 @@ export class DiscordBridge {
       });
       this.runtime = runtime;
       await runtime.start();
+      if (this.config.startupPing !== false) {
+        const targets = [...(this.config.startupChannelIds ?? this.config.allowedChannels)]
+          .filter((id) => this.config.allowedChannels.size === 0 || this.config.allowedChannels.has(id));
+        await this.startupNotice.notify(targets, async (channelId, text) => {
+          const channel = await client.channels.fetch(channelId);
+          if (channel === null) throw new Error(`Discord channel not found: ${channelId}`);
+          if (this.config.allowedGuilds.size > 0 &&
+            (channel.guildId === undefined || !this.config.allowedGuilds.has(channel.guildId))) {
+            this.logger.info({ channelId }, 'Skipping startup notice outside configured Discord guilds');
+            return;
+          }
+          return channel.send({ content: text, allowedMentions: { parse: [] } });
+        });
+      }
     } catch (error) {
       await runtime.stop().catch(() => undefined);
       client.destroy();

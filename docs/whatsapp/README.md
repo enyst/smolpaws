@@ -66,6 +66,11 @@ conversation. No read-before-answer tool step or larger launch-suffix limit is n
 
 ## Errors and follow-up messages
 
+The bridge also sends `smolpaws: 🐾 I'm up.` to every registered chat after startup. It does not
+repeat that notice on ordinary socket reconnects or invoke the LLM. Set
+`SMOLPAWS_WHATSAPP_STARTUP_PING=0` only when intentionally suppressing these notices, for example
+during a silent test. See [shared startup notice behavior](../bridges.md#startup-notices).
+
 A conversation-level error produces a short WhatsApp notice. Step-limit notices identify the limit;
 other errors use a generic message without exposing raw provider details. Send a follow-up prompt to
 continue the same conversation with its saved context and a fresh run allowance. The normal limit is
