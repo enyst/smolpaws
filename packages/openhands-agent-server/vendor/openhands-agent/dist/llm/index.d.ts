@@ -26,6 +26,7 @@ export declare const llmProfileSchema: z.ZodObject<{
     timeoutSeconds: z.ZodDefault<z.ZodNullable<z.ZodNumber>>;
     reasoningEffort: z.ZodDefault<z.ZodNullable<z.ZodUnion<readonly [z.ZodLiteral<"low">, z.ZodLiteral<"medium">, z.ZodLiteral<"high">]>>>;
     reasoningSummary: z.ZodDefault<z.ZodNullable<z.ZodUnion<readonly [z.ZodLiteral<"auto">, z.ZodLiteral<"concise">, z.ZodLiteral<"detailed">]>>>;
+    cachingPrompt: z.ZodDefault<z.ZodBoolean>;
     promptCacheRetention: z.ZodDefault<z.ZodNullable<z.ZodUnion<readonly [z.ZodLiteral<"24h">, z.ZodLiteral<"disabled">]>>>;
     promptCacheKey: z.ZodDefault<z.ZodNullable<z.ZodString>>;
     headers: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodString>>;

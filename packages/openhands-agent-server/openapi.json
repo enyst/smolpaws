@@ -6264,6 +6264,10 @@
                               }
                             ]
                           },
+                          "cachingPrompt": {
+                            "default": true,
+                            "type": "boolean"
+                          },
                           "promptCacheRetention": {
                             "default": null,
                             "anyOf": [
@@ -6327,6 +6331,7 @@
                           "timeoutSeconds",
                           "reasoningEffort",
                           "reasoningSummary",
+                          "cachingPrompt",
                           "promptCacheRetention",
                           "promptCacheKey",
                           "headers",
@@ -6554,6 +6559,10 @@
                       }
                     ]
                   },
+                  "cachingPrompt": {
+                    "default": true,
+                    "type": "boolean"
+                  },
                   "promptCacheRetention": {
                     "default": null,
                     "anyOf": [
@@ -6802,6 +6811,10 @@
                         }
                       ]
                     },
+                    "cachingPrompt": {
+                      "default": true,
+                      "type": "boolean"
+                    },
                     "promptCacheRetention": {
                       "default": null,
                       "anyOf": [
@@ -6865,6 +6878,7 @@
                     "timeoutSeconds",
                     "reasoningEffort",
                     "reasoningSummary",
+                    "cachingPrompt",
                     "promptCacheRetention",
                     "promptCacheKey",
                     "headers",
@@ -7088,6 +7102,10 @@
                         }
                       ]
                     },
+                    "cachingPrompt": {
+                      "default": true,
+                      "type": "boolean"
+                    },
                     "promptCacheRetention": {
                       "default": null,
                       "anyOf": [
@@ -7151,6 +7169,7 @@
                     "timeoutSeconds",
                     "reasoningEffort",
                     "reasoningSummary",
+                    "cachingPrompt",
                     "promptCacheRetention",
                     "promptCacheKey",
                     "headers",
@@ -7370,6 +7389,10 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "cachingPrompt": {
+                    "default": true,
+                    "type": "boolean"
                   },
                   "promptCacheRetention": {
                     "default": null,
@@ -7619,6 +7642,10 @@
                         }
                       ]
                     },
+                    "cachingPrompt": {
+                      "default": true,
+                      "type": "boolean"
+                    },
                     "promptCacheRetention": {
                       "default": null,
                       "anyOf": [
@@ -7682,6 +7709,7 @@
                     "timeoutSeconds",
                     "reasoningEffort",
                     "reasoningSummary",
+                    "cachingPrompt",
                     "promptCacheRetention",
                     "promptCacheKey",
                     "headers",
@@ -8067,6 +8095,10 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "cachingPrompt": {
+                        "default": true,
+                        "type": "boolean"
                       },
                       "promptCacheRetention": {
                         "default": null,
