@@ -768,16 +768,16 @@ function toolMessage(name, toolCallId, content) {
     responses_reasoning_item: null
   };
 }
-function observationContent(observation) {
-  const toLlmContent = observation.to_llm_content;
+function observationContent(observation2) {
+  const toLlmContent = observation2.to_llm_content;
   if (Array.isArray(toLlmContent)) {
     return zod.z.array(contentSchema).parse(toLlmContent);
   }
-  const content = observation.content;
+  const content = observation2.content;
   if (Array.isArray(content)) {
     return zod.z.array(contentSchema).parse(content);
   }
-  return [textContent(JSON.stringify(observation))];
+  return [textContent(JSON.stringify(observation2))];
 }
 function isPlainUserMessage(message) {
   return message.role === "user" && message.tool_calls === null && message.tool_call_id === null && message.name === null;
@@ -1695,6 +1695,7 @@ var usageRecordSchema = zod.z.object({
   usage_id: zod.z.string().min(1),
   profile_id: zod.z.string(),
   provider_id: zod.z.string(),
+  history_origin: zod.z.string().regex(/^[a-f0-9]{64}$/u).optional(),
   model: zod.z.string(),
   requested_model: zod.z.string(),
   timestamp: zod.z.string().datetime(),
@@ -1702,6 +1703,20 @@ var usageRecordSchema = zod.z.object({
   usage: llmUsageSchema.nullable(),
   cost: costSchema.nullable()
 }).strict();
+function llmHistoryOrigin(profile) {
+  const endpoint = profile.baseUrl === null ? null : new URL(profile.baseUrl);
+  return crypto.createHash("sha256").update(JSON.stringify([
+    profile.profileId,
+    profile.providerId,
+    profile.model,
+    // URL userinfo/query and custom headers may contain credentials. They never enter this digest.
+    endpoint === null ? null : `${endpoint.origin}${endpoint.pathname}`,
+    profile.openAiApiMode,
+    profile.authType,
+    profile.subscriptionVendor,
+    profile.useProfileKeyOverride
+  ])).digest("hex");
+}
 var fields = {
   prompt_tokens: "promptTokens",
   completion_tokens: "completionTokens",
@@ -1716,12 +1731,13 @@ function createLlmUsageEvent(profile, response, timing) {
   const recordId = crypto.randomUUID();
   const reported = response.usage?.reportedCost;
   const cost = reported === void 0 ? estimateUsageCost(profile, response.usage, timing.startedAt, timing.completedAt, response.model) : { ...reported, source: "provider" };
-  const record = usageRecordSchema.parse({
+  const record2 = usageRecordSchema.parse({
     version: 1,
     record_id: recordId,
     response_id: response.responseId ?? null,
     usage_id: timing.usageId ?? `profile:${profile.profileId}`,
     profile_id: profile.profileId,
+    history_origin: llmHistoryOrigin(profile),
     provider_id: profile.providerId,
     model: response.model ?? profile.model,
     requested_model: profile.model,
@@ -1730,7 +1746,7 @@ function createLlmUsageEvent(profile, response, timing) {
     usage: structuredClone(response.usage),
     cost
   });
-  return conversationStateUpdateEventSchema.parse({ id: recordId, key: LLM_USAGE_KEY, value: record });
+  return conversationStateUpdateEventSchema.parse({ id: recordId, key: LLM_USAGE_KEY, value: record2 });
 }
 function createMetricsResetEvent() {
   return conversationStateUpdateEventSchema.parse({ key: LLM_METRICS_RESET_KEY, value: { version: 1 } });
@@ -1762,27 +1778,27 @@ function statsForEvents(events) {
         unmeasured = true;
         continue;
       }
-      const record = parsed.data;
-      const fingerprint = JSON.stringify(record);
-      if (seen.has(record.record_id)) {
-        if (seen.get(record.record_id) !== fingerprint) {
+      const record2 = parsed.data;
+      const fingerprint = JSON.stringify(record2);
+      if (seen.has(record2.record_id)) {
+        if (seen.get(record2.record_id) !== fingerprint) {
           invalid += 1;
           unmeasured = true;
         }
         continue;
       }
-      seen.set(record.record_id, fingerprint);
-      responseIds.add(record.response_id ?? record.record_id);
-      records.push(record);
+      seen.set(record2.record_id, fingerprint);
+      responseIds.add(record2.response_id ?? record2.record_id);
+      records.push(record2);
     } else if (event.kind === "ActionEvent" || event.kind === "MessageEvent" && event.source === "agent") {
       if (event.llm_response_id === null || !responseIds.has(event.llm_response_id)) unmeasured = true;
     }
   }
   const grouped = /* @__PURE__ */ new Map();
-  for (const record of records) {
-    const bucket = grouped.get(record.usage_id) ?? [];
-    bucket.push(record);
-    grouped.set(record.usage_id, bucket);
+  for (const record2 of records) {
+    const bucket = grouped.get(record2.usage_id) ?? [];
+    bucket.push(record2);
+    grouped.set(record2.usage_id, bucket);
   }
   return {
     usage_to_metrics: Object.fromEntries([...grouped].map(([id, bucket]) => [id, metricsForRecords(bucket, unmeasured)])),
@@ -1811,37 +1827,37 @@ function compactMetrics(metrics) {
     coverage: metrics.coverage
   };
 }
-function tokenUsage(record) {
-  const usage = record.usage;
+function tokenUsage(record2) {
+  const usage = record2.usage;
   const counts = Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, usage?.[field] ?? null]));
   return {
     ...counts,
-    model: record.model,
-    response_id: record.response_id,
+    model: record2.model,
+    response_id: record2.response_id,
     context_window: null,
     per_turn_token: usage?.promptTokens !== void 0 && usage.completionTokens !== void 0 ? usage.promptTokens + usage.completionTokens : null
   };
 }
 function metricsForRecords(records, unmeasured) {
-  const models = new Set(records.map((record) => record.model));
+  const models = new Set(records.map((record2) => record2.model));
   const model = models.size === 1 ? records[0].model : models.size === 0 ? "default" : "mixed";
   const tokens = records.map(tokenUsage);
   const known = { model, response_id: null, context_window: null, per_turn_token: tokens.length === 0 ? 0 : tokens.at(-1).per_turn_token };
   const totals = { ...known };
   const missing = {};
   for (const field of Object.keys(fields)) {
-    missing[field] = tokens.filter((record) => record[field] === null).length;
-    known[field] = tokens.reduce((sum, record) => sum + (record[field] ?? 0), 0);
+    missing[field] = tokens.filter((record2) => record2[field] === null).length;
+    known[field] = tokens.reduce((sum, record2) => sum + (record2[field] ?? 0), 0);
     totals[field] = unmeasured || missing[field] > 0 ? null : known[field];
   }
   if (unmeasured && records.length === 0) totals.per_turn_token = null;
   const knownCosts = /* @__PURE__ */ Object.create(null);
   const costSources = /* @__PURE__ */ Object.create(null);
-  for (const record of records) if (record.cost !== null) {
-    knownCosts[record.cost.currency] = (knownCosts[record.cost.currency] ?? 0) + record.cost.amount;
-    costSources[record.cost.source] = (costSources[record.cost.source] ?? 0) + 1;
+  for (const record2 of records) if (record2.cost !== null) {
+    knownCosts[record2.cost.currency] = (knownCosts[record2.cost.currency] ?? 0) + record2.cost.amount;
+    costSources[record2.cost.source] = (costSources[record2.cost.source] ?? 0) + 1;
   }
-  const missingCost = records.filter((record) => record.cost === null).length;
+  const missingCost = records.filter((record2) => record2.cost === null).length;
   return {
     model_name: model,
     accumulated_cost: !unmeasured && missingCost === 0 && records.every((r) => r.cost?.currency === "USD") ? knownCosts.USD ?? 0 : null,
@@ -1871,6 +1887,64 @@ function metricsForRecords(records, unmeasured) {
     })),
     response_latencies: records.map((r) => ({ model: r.model, latency: r.latency, response_id: r.response_id, record_id: r.record_id }))
   };
+}
+
+// src/llm/history.ts
+var LLM_HISTORY_ORIGIN_KEY = "llm_history_origin";
+async function ensureLlmHistoryOrigin(state, profile) {
+  if (legacyOrigin(state.events) !== null) return;
+  await state.appendEventAsync(conversationStateUpdateEventSchema.parse({
+    key: LLM_HISTORY_ORIGIN_KEY,
+    value: { version: 1, origin: llmHistoryOrigin(profile) }
+  }));
+}
+function historyForProfile(view, history, profile) {
+  if (!view.some((event) => event.kind === "ActionEvent" ? event.thinking_blocks.length > 0 || event.responses_reasoning_item !== null : event.kind === "MessageEvent" && (event.llm_message.thinking_blocks.length > 0 || event.llm_message.responses_reasoning_item !== null))) return [...view];
+  const current = llmHistoryOrigin(profile);
+  const legacy = legacyOrigin(history);
+  const legacyMatches = legacy === null || legacy === current;
+  const responses = /* @__PURE__ */ new Map();
+  const compatible = /* @__PURE__ */ new Map();
+  let anchored = false;
+  for (const event of history) {
+    if (event.kind === "ConversationStateUpdateEvent" && event.key === LLM_HISTORY_ORIGIN_KEY) {
+      anchored = true;
+    } else if (event.kind === "ConversationStateUpdateEvent" && event.key === LLM_USAGE_KEY && record(event.value)) {
+      const usage = event.value;
+      const responseId = typeof usage.response_id === "string" ? usage.response_id : event.id;
+      const sameProfile = usage.profile_id === profile.profileId && usage.provider_id === profile.providerId && usage.requested_model === profile.model;
+      const matches = sameProfile && (usage.history_origin !== void 0 ? usage.history_origin === current : legacyMatches && !anchored);
+      responses.set(responseId, matches);
+    } else if (event.kind === "ActionEvent" || event.kind === "MessageEvent") {
+      const unknownMatches = legacyMatches && !anchored;
+      compatible.set(event.id, event.llm_response_id === null ? unknownMatches : responses.get(event.llm_response_id) ?? unknownMatches);
+    }
+  }
+  return view.flatMap((event) => {
+    if (compatible.get(event.id) ?? legacyMatches) return [event];
+    if (event.kind === "ActionEvent") return [{ ...event, thinking_blocks: [], responses_reasoning_item: null }];
+    if (event.kind !== "MessageEvent" || event.llm_message.role !== "assistant") return [event];
+    const message = event.llm_message;
+    if (!hasVisibleContent(message.content) && !hasVisibleContent(event.extended_content) && !message.tool_calls?.length && (message.thinking_blocks.length > 0 || message.responses_reasoning_item !== null)) return [];
+    return [{ ...event, llm_message: { ...message, thinking_blocks: [], responses_reasoning_item: null } }];
+  });
+}
+function hasVisibleContent(content) {
+  return content.some((item) => item.type !== "text" || item.text.trim().length > 0);
+}
+function legacyOrigin(events) {
+  let result = null;
+  for (const event of events) {
+    if (event.kind !== "ConversationStateUpdateEvent" || event.key !== LLM_HISTORY_ORIGIN_KEY) continue;
+    if (!record(event.value) || event.value.version !== 1 || typeof event.value.origin !== "string" || !/^[a-f0-9]{64}$/u.test(event.value.origin) || result !== null && result !== event.value.origin) {
+      throw new Error("Invalid LLM history origin");
+    }
+    result = event.value.origin;
+  }
+  return result;
+}
+function record(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // src/llm/exceptions.ts
@@ -3309,9 +3383,9 @@ function actionObservationPairs(events) {
   const pairs = [];
   for (let index = 0; index < events.length - 1; index += 1) {
     const action = events[index];
-    const observation = events[index + 1];
-    if (action?.kind === "ActionEvent" && isObservationLike(observation)) {
-      pairs.push({ action, observation });
+    const observation2 = events[index + 1];
+    if (action?.kind === "ActionEvent" && isObservationLike(observation2)) {
+      pairs.push({ action, observation: observation2 });
     }
   }
   return pairs;
@@ -3368,15 +3442,33 @@ function stableStringify(value) {
   return `{${entries.map(([key, nested]) => `${JSON.stringify(key)}:${stableStringify(nested)}`).join(",")}}`;
 }
 
+// src/conversation/ext/step-boundary.ts
+async function applyAgentStepBoundary(agent, state, callback) {
+  if (callback === void 0) return agent;
+  await ensureLlmHistoryOrigin(state, agent.llm.profile);
+  return await callback(agent) ?? agent;
+}
+
 // src/conversation/local-conversation.ts
 var LocalConversation = class {
-  agent;
+  activeAgent;
+  onStepBoundary;
+  runInProgress = null;
+  stepUserMessageId = null;
+  get agent() {
+    return this.activeAgent;
+  }
+  /** Last user event included when an agent step began; later arrivals remain queued. */
+  get lastStepUserMessageId() {
+    return this.stepUserMessageId;
+  }
   state;
   maxIterations;
   stuckDetector;
   conversationId;
   constructor(options) {
-    this.agent = options.agent;
+    this.activeAgent = options.agent;
+    this.onStepBoundary = options.onStepBoundary;
     this.conversationId = options.conversationId ?? (options.state === void 0 && hasPersistentStore(options) ? crypto.randomUUID() : null);
     this.state = options.state ?? createConversationState(options, this.conversationId);
     this.maxIterations = options.maxIterations ?? 500;
@@ -3403,6 +3495,16 @@ var LocalConversation = class {
     }
   }
   async run() {
+    if (this.runInProgress !== null) return this.runInProgress;
+    const run = this.runOnce();
+    this.runInProgress = run;
+    try {
+      await run;
+    } finally {
+      this.runInProgress = null;
+    }
+  }
+  async runOnce() {
     if (this.state.executionStatus === conversationExecutionStatus.PAUSED) {
       return;
     }
@@ -3410,17 +3512,19 @@ var LocalConversation = class {
       this.state.executionStatus = conversationExecutionStatus.RUNNING;
     }
     let iteration = 0;
+    if (this.state.executionStatus === conversationExecutionStatus.RUNNING) {
+      this.activeAgent = await applyAgentStepBoundary(this.agent, this.state, this.onStepBoundary);
+    }
     while (this.state.executionStatus === conversationExecutionStatus.RUNNING) {
       if (this.stuckDetector !== null && this.checkStuckOrNudge()) {
         return;
       }
+      this.stepUserMessageId = latestUserMessageId(this.state.events);
       const emitted = await this.agent.step(this.state);
       iteration += 1;
       if (emitted.some(isSuccessfulFinishObservation)) {
         this.state.executionStatus = conversationExecutionStatus.FINISHED;
-        return;
-      }
-      if (iteration >= this.maxIterations) {
+      } else if (iteration >= this.maxIterations && this.state.executionStatus === conversationExecutionStatus.RUNNING) {
         this.state.executionStatus = conversationExecutionStatus.ERROR;
         await this.state.appendEventAsync(
           conversationErrorEventSchema.parse({
@@ -3429,8 +3533,8 @@ var LocalConversation = class {
             detail: `Agent reached maximum iterations limit (${this.maxIterations}).`
           })
         );
-        return;
       }
+      this.activeAgent = await applyAgentStepBoundary(this.agent, this.state, this.onStepBoundary);
     }
   }
   /**
@@ -3507,6 +3611,13 @@ function isSuccessfulFinishObservation(event) {
   }
   const isError = event.observation.is_error;
   return isError !== true;
+}
+function latestUserMessageId(events) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.kind === "MessageEvent" && event.source === "user") return event.id;
+  }
+  return null;
 }
 
 // src/conversation/parallel-executor.ts
@@ -3748,8 +3859,8 @@ function actionFromToolCall(toolCall) {
   }
   return { arguments: toolCall.arguments };
 }
-function sortedKeys(record, fields2) {
-  return Object.keys(record).filter((key) => fields2.has(key)).sort();
+function sortedKeys(record2, fields2) {
+  return Object.keys(record2).filter((key) => fields2.has(key)).sort();
 }
 function recordOrThrow(value, name) {
   if (isRecord3(value)) {
@@ -3910,7 +4021,7 @@ var Agent = class {
       state.appendEvent(condensed);
       return null;
     }
-    const messages = eventsToMessages(condensed.events.filter(isLlmConvertibleEvent));
+    const messages = eventsToMessages(historyForProfile(condensed.events.filter(isLlmConvertibleEvent), state.events, this.llm.profile));
     const system = this.renderSystemPrompt();
     if (system !== null) {
       return [systemMessage(system), ...messages];
@@ -3934,13 +4045,13 @@ var Agent = class {
         })
       ];
     }
-    const observation = tool.meta?.smolpaws_execution_context === true ? await tool.execute(action.action, { actionEventId: action.id, toolCallId: action.tool_call_id }) : await tool.execute(action.action);
+    const observation2 = tool.meta?.smolpaws_execution_context === true ? await tool.execute(action.action, { actionEventId: action.id, toolCallId: action.tool_call_id }) : await tool.execute(action.action);
     return [
       observationEventSchema.parse({
         action_id: action.id,
         tool_name: action.tool_name,
         tool_call_id: action.tool_call_id,
-        observation
+        observation: observation2
       })
     ];
   }
@@ -6598,9 +6709,11 @@ function applyOpenAIPromptCacheOptions(body, profile) {
 function buildChatCompletionsBody(profile, messages, tools = []) {
   const normalizedProfile = normalizeGenerationParamsForModel(profile);
   const sendReasoningContent = isReasoningModel(normalizedProfile);
+  const requireReasoningContent = tools.length > 0 && sendReasoningContent && normalizedProfile.model.toLowerCase().includes("deepseek");
+  const history = messages.map((message) => messageSchema.parse(message)).map((message) => requireReasoningContent && message.role === "assistant" && message.reasoning_content === null ? { ...message, reasoning_content: "" } : message);
   const body = {
     model: normalizedProfile.model,
-    messages: prepareAnthropicPromptCaching(normalizedProfile, orderCompletedToolResults(messages.map((message) => messageSchema.parse(message)))).map((message) => toOpenAIChatMessage(message, sendReasoningContent))
+    messages: prepareAnthropicPromptCaching(normalizedProfile, orderCompletedToolResults(history)).map((message) => toOpenAIChatMessage(message, sendReasoningContent))
   };
   if (tools.length > 0) {
     body.tools = tools.map(toOpenAIChatTool);
@@ -6787,8 +6900,8 @@ function isEmptySerializedContent(content) {
     if (typeof item !== "object" || item === null || !("type" in item)) {
       return false;
     }
-    const record = item;
-    return record.type === "text" && record.text === "";
+    const record2 = item;
+    return record2.type === "text" && record2.text === "";
   });
 }
 function toOpenAIChatToolCall(toolCall) {
@@ -8162,6 +8275,79 @@ var builtinToolResolvers = /* @__PURE__ */ new Map();
 function registerBuiltinResolver(name, resolver) {
   builtinToolResolvers.set(name, resolver);
 }
+var switchLLMActionSchema = zod.z.object({
+  profile_name: zod.z.string().describe("Name of the saved LLM profile to use for future agent steps."),
+  reason: zod.z.string().describe("Brief reason why this profile is a better fit for the next step.")
+}).strict();
+var switchLLMObservationSchema = zod.z.object({
+  kind: zod.z.literal("SwitchLLMObservation").default("SwitchLLMObservation"),
+  content: zod.z.array(textContentSchema).default([]),
+  is_error: zod.z.boolean().default(false),
+  profile_name: zod.z.string(),
+  reason: zod.z.string().nullable().default(null),
+  active_model: zod.z.string().nullable().default(null)
+}).strict();
+var SwitchLLMTool = class {
+  static className = "SwitchLLMTool";
+  static create(options = { profileNames: [] }) {
+    const profiles = options.profileNames.length === 0 ? "- No saved LLM profiles are currently available." : [...options.profileNames].sort().map((name) => `- ${name}`).join("\n");
+    return new ToolDefinition({
+      name: "switch_llm",
+      description: `Switch this conversation to a saved LLM profile.
+
+Use this when another available profile is better suited for the next step. The current tool call is still executed by the current model; the switch takes effect on the next LLM call.
+
+Available LLM profiles:
+${profiles}
+
+Provide the profile_name exactly as listed and include a concise reason for the switch.`,
+      inputSchema: switchLLMActionSchema,
+      outputSchema: switchLLMObservationSchema,
+      annotations: toolAnnotationsSchema.parse({
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      }),
+      executor: async (action) => {
+        if (options.switchProfile === void 0) {
+          return observation(action, "Cannot switch LLM profile without an active conversation.", true);
+        }
+        try {
+          const selected = await options.switchProfile(action.profile_name);
+          return observation(
+            action,
+            `Accepted LLM profile '${action.profile_name}' with model '${selected.model}' for the next LLM call. Reason: ${action.reason}`,
+            false,
+            selected.model
+          );
+        } catch (error) {
+          const missing = typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+          const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+          return observation(action, missing ? `LLM profile '${action.profile_name}' was not found.` : `Failed to switch LLM profile '${action.profile_name}': ${detail}`, true);
+        }
+      }
+    });
+  }
+};
+function observation(action, text, isError, model = null) {
+  return switchLLMObservationSchema.parse({
+    content: [textContent(text)],
+    is_error: isError,
+    profile_name: action.profile_name,
+    reason: action.reason,
+    active_model: model
+  });
+}
+registerBuiltinResolver("switch_llm", (params, context) => {
+  if (Object.keys(params).length > 0) throw new Error("SwitchLLMTool doesn't accept parameters");
+  return [SwitchLLMTool.create(isSwitchBinding(context) ? context : void 0)];
+});
+function isSwitchBinding(context) {
+  return typeof context === "object" && context !== null && "profileNames" in context && Array.isArray(context.profileNames) && context.profileNames.every((name) => typeof name === "string") && (!("switchProfile" in context) || context.switchProfile === void 0 || typeof context.switchProfile === "function");
+}
+
+// src/tool/builtins.ts
 var baseObservationSchema = zod.z.object({
   text: zod.z.string(),
   is_error: zod.z.boolean().default(false)
@@ -8229,7 +8415,8 @@ var ThinkTool = class {
 var BUILT_IN_TOOLS = [() => FinishTool.create(), () => ThinkTool.create()];
 var BUILT_IN_TOOL_FACTORIES = {
   FinishTool: () => FinishTool.create(),
-  ThinkTool: () => ThinkTool.create()
+  ThinkTool: () => ThinkTool.create(),
+  SwitchLLMTool: () => SwitchLLMTool.create()
 };
 registerBuiltinResolver("finish", () => [FinishTool.create()]);
 registerBuiltinResolver("think", () => [ThinkTool.create()]);
@@ -9551,6 +9738,7 @@ exports.InstallationMetadata = InstallationMetadata;
 exports.LIST_TASKS_TOOL_NAME = LIST_TASKS_TOOL_NAME;
 exports.LLMContentPolicyViolationError = LLMContentPolicyViolationError;
 exports.LLMResponseError = LLMResponseError;
+exports.LLM_HISTORY_ORIGIN_KEY = LLM_HISTORY_ORIGIN_KEY;
 exports.LLM_METRICS_RESET_KEY = LLM_METRICS_RESET_KEY;
 exports.LLM_PROFILE_ID_PATTERN = LLM_PROFILE_ID_PATTERN;
 exports.LLM_USAGE_KEY = LLM_USAGE_KEY;
@@ -9605,6 +9793,7 @@ exports.SendMediaTool = SendMediaTool;
 exports.SendMessageTool = SendMessageTool;
 exports.Skill = Skill;
 exports.StuckDetector = StuckDetector;
+exports.SwitchLLMTool = SwitchLLMTool;
 exports.TASK_SCHEDULER_TOOL_FACTORIES = TASK_SCHEDULER_TOOL_FACTORIES;
 exports.TaskTrackerExecutor = TaskTrackerExecutor;
 exports.TaskTrackerTool = TaskTrackerTool;
@@ -9683,6 +9872,7 @@ exports.dispatchLlmResponse = dispatchLlmResponse;
 exports.displayJson = displayJson;
 exports.dumps = dumps;
 exports.endRootSpan = endRootSpan;
+exports.ensureLlmHistoryOrigin = ensureLlmHistoryOrigin;
 exports.errorClassificationSchema = errorClassificationSchema;
 exports.eventSchema = eventSchema;
 exports.eventsToMessages = eventsToMessages;
@@ -9723,6 +9913,7 @@ exports.grepActionSchema = grepActionSchema;
 exports.grepMatchSchema = grepMatchSchema;
 exports.grepObservationSchema = grepObservationSchema;
 exports.handleDeprecatedModelFields = handleDeprecatedModelFields;
+exports.historyForProfile = historyForProfile;
 exports.hookEventSchema = hookEventSchema;
 exports.hookEventTypeSchema = hookEventTypeSchema;
 exports.hookExecutionEventSchema = hookExecutionEventSchema;
@@ -9748,6 +9939,7 @@ exports.listUsableTools = listUsableTools;
 exports.llmCompletionLogEventSchema = llmCompletionLogEventSchema;
 exports.llmCompletionResponseSchema = llmCompletionResponseSchema;
 exports.llmConvertibleEventSchema = llmConvertibleEventSchema;
+exports.llmHistoryOrigin = llmHistoryOrigin;
 exports.llmProfileIdSchema = llmProfileIdSchema;
 exports.llmProfileSchema = llmProfileSchema;
 exports.llmProfileSecretRef = llmProfileSecretRef;
@@ -9829,6 +10021,8 @@ exports.startRootSpan = startRootSpan;
 exports.statsForEvents = statsForEvents;
 exports.statsSnapshot = statsSnapshot;
 exports.streamingDeltaEventSchema = streamingDeltaEventSchema;
+exports.switchLLMActionSchema = switchLLMActionSchema;
+exports.switchLLMObservationSchema = switchLLMObservationSchema;
 exports.systemPromptEventSchema = systemPromptEventSchema;
 exports.taskItemSchema = taskItemSchema;
 exports.taskMutationActionSchema = taskMutationActionSchema;

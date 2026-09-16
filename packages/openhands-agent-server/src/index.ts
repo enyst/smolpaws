@@ -12,6 +12,7 @@ export * from './models.js';
 export * from './llmRouter.js';
 export * from './openapi.js';
 export * from './profileAgentFactory.js';
+export { type ProfileSelectionResolver } from './profileRuntime.js';
 export * from './profilesRouter.js';
 export * from './serverState.js';
 export * from './settingsRouter.js';

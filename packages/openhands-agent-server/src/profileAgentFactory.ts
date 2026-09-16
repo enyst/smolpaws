@@ -17,6 +17,7 @@ import {
   UpdateTaskTool,
   TerminalTool,
   ThinkTool,
+  SwitchLLMTool,
   createClientFromProfile,
   llmProfileSchema,
   validateAgentSettings,
@@ -69,7 +70,14 @@ export function createProfileAgentFactory(options: ProfileAgentFactoryOptions): 
     // server default set", preserving the behavior of the previous non-nullable default.
     const configuredTools = settings.tools ?? [];
     const toolSpecs = configuredTools.length === 0 ? defaultToolNames : configuredTools;
-    const resolvedTools = toolSpecs.flatMap((spec) => resolveProfileTool(spec, workingDir));
+    const explicitSwitch = toolSpecs.some((spec) => toolName(spec) === 'switch_llm');
+    const resolvedTools = toolSpecs.flatMap((spec) => toolName(spec) === 'switch_llm' ? [] : resolveProfileTool(spec, workingDir));
+    if (explicitSwitch || settings.enable_switch_llm_tool && context.switchProfile !== undefined) {
+      resolvedTools.push(SwitchLLMTool.create({
+        profileNames: (await options.state.listProfiles()).profiles.map((candidate) => candidate.profileId),
+        ...(context.switchProfile === undefined ? {} : { switchProfile: context.switchProfile }),
+      }));
+    }
     const tools = options.configureTools?.(resolvedTools, context) ?? resolvedTools;
     const suffix = launchAdditionsSuffix(context.stored.request);
     const existingContext = suffix === null ? null : new AgentContext({ systemMessageSuffix: suffix });
@@ -77,7 +85,7 @@ export function createProfileAgentFactory(options: ProfileAgentFactoryOptions): 
       ? existingContext
       : await options.configureContext(existingContext, context);
     return new Agent({
-      llm: await createLlmClient(profile, options.secretStore),
+      llm: context.llmClient ?? await createLlmClient(profile, options.secretStore),
       tools,
       toolConcurrencyLimit: settings.tool_concurrency_limit,
       ...(agentContext === null ? {} : { context: agentContext }),
@@ -129,6 +137,7 @@ export function resolveProfileTool(spec: unknown, workingDir: string): readonly 
     case 'grep': return [GrepTool.create({ workingDir })];
     case 'finish': return [FinishTool.create()];
     case 'think': return [ThinkTool.create()];
+    case 'switch_llm': return [SwitchLLMTool.create()];
     // SmolPaws additive tools (EXT-SDK-001/002). Pure ActionEvent emitters; delivery and
     // scheduling are owned downstream by the coordinator/scheduler, not the server.
     case 'send_media': return [SendMediaTool.create()];

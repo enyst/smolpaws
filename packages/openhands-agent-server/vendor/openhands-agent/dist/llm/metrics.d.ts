@@ -11,6 +11,7 @@ declare const usageRecordSchema: z.ZodObject<{
     usage_id: z.ZodString;
     profile_id: z.ZodString;
     provider_id: z.ZodString;
+    history_origin: z.ZodOptional<z.ZodString>;
     model: z.ZodString;
     requested_model: z.ZodString;
     timestamp: z.ZodString;
@@ -41,6 +42,8 @@ declare const usageRecordSchema: z.ZodObject<{
     }, z.core.$strict>>;
 }, z.core.$strict>;
 export type UsageRecord = z.infer<typeof usageRecordSchema>;
+/** Bind opaque provider continuation to its originating profile without persisting credentials. */
+export declare function llmHistoryOrigin(profile: LLMProfile): string;
 declare const fields: {
     readonly prompt_tokens: "promptTokens";
     readonly completion_tokens: "completionTokens";

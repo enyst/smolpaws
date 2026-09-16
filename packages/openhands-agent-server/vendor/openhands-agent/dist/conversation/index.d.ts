@@ -5,3 +5,4 @@ export * from './remote-conversation.js';
 export * from './state.js';
 export * from './restore.js';
 export * from './stuck-detector.js';
+export type { AgentStepBoundary } from './ext/step-boundary.js';

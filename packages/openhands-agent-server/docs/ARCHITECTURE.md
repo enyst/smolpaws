@@ -344,6 +344,33 @@ private files and update semantics. Native upstream memory loading (`load_memory
 characters across user/project indexes), its preference propagation, and full AgentProfile skill
 discovery remain deferred under `smolpaws-45n`; this product feature does not claim those semantics.
 
+## Native profile selection during a conversation
+
+`profileRuntime.ts` owns durable pending profile choices and active snapshot updates. The profile
+factory binds the SDK's `switch_llm` tool when `enable_switch_llm_tool` is enabled (the default), or
+when the tool is explicitly requested. It advertises saved profile names and delegates validation to
+the shared profile store/client factory. The tool queues a fully validated snapshot before returning;
+the SDK's `onStepBoundary` callback activates it only outside a model/tool batch, even when the same
+response also calls `finish`. Replacement agents retain the existing tools and context objects.
+
+Hosts may provide `createAgentServerApp({ resolveProfileSelection })` with an
+`AgentFactoryContext => string | undefined | Promise<string | undefined>` function. Selection is
+observed when work is requested, never by polling or interrupting execution. Persisted
+`llm_profile_selection.configured_ref` tracks the applicable configuration independently of tool
+choices; `pending_profile` closes the accepted-tool/restart window. Changes to unrelated host config
+or a saved profile under the same reference do not reset the effective binding. Removing a selection
+preserves the current choice. Changing it to the active profile cancels an older pending choice.
+
+`ConversationService.updateOwnedRequest` merges request updates under the ownership lease, saves
+atomically, then publishes them in memory before releasing the guard. `EventService` preserves its
+SDK conversation and uses `lastStepUserMessageId` to resume an input that arrived during the final
+completion. `whenIdle()` waits for execution, metadata saves and publication without closing event
+subscriptions. On first/restored execution, the SDK anchors old-history origin before any replacement
+snapshot is committed; the prepared replacement client enters the normal factory without requiring
+the superseded profile's credentials. A boundary failure invalidates the cached conversation: if a
+lease cleanup error followed a successful metadata commit, the next turn rebuilds the new binding;
+if commit failed, it retries the saved pending choice. See `DEV-SERVER-009` and `profileSwitch.test.ts`.
+
 ## ChatGPT subscription profiles
 
 `POST /api/llm/subscription/openai/device/start` returns the browser verification URL, user code

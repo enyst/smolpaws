@@ -24,6 +24,7 @@ import { registerSettingsRoutes } from './settingsRouter.js';
 import { registerSkillsRoutes } from './skillsRouter.js';
 import { registerSessionSocket } from './sessionSocket.js';
 import { registerSocketRoutes } from './sockets.js';
+import type { ProfileSelectionResolver } from './profileRuntime.js';
 
 const startedAt = Date.now();
 
@@ -37,6 +38,7 @@ export interface AgentServerAppOptions extends ConversationServiceOptions {
   readonly configureContext?: ProfileContextConfigurator;
   readonly logger?: boolean;
   readonly subscriptionAuth?: OpenAISubscriptionAuth;
+  readonly resolveProfileSelection?: ProfileSelectionResolver;
 }
 
 export interface AgentServerApp {
@@ -52,6 +54,8 @@ export async function createAgentServerApp(options: AgentServerAppOptions = {}):
     || options.ownerInstanceId !== undefined
     || options.leaseTtlMs !== undefined
     || options.config?.conversationsPath !== undefined
+    || options.resolveProfileSelection !== undefined
+    || options.profileRuntime !== undefined
   )) {
     throw new Error('conversationService cannot be combined with managed conversation-service options');
   }
@@ -76,6 +80,9 @@ export async function createAgentServerApp(options: AgentServerAppOptions = {}):
   const subscriptionAuth = options.subscriptionAuth ?? new OpenAISubscriptionAuth();
   const llmClientFactory: ProfileLlmClientFactory = options.llmClientFactory ?? ((profile, store) => createClientFromProfile(profile, store, { subscriptionAuth }));
   const usesProfileAgentFactory = options.agentFactory === undefined && options.conversationService === undefined;
+  if (options.agentFactory !== undefined && options.resolveProfileSelection !== undefined) {
+    throw new Error('resolveProfileSelection requires the profile agent factory');
+  }
   const agentFactory = options.agentFactory ?? createProfileAgentFactory({
     state: serverStateService,
     secretStore,
@@ -87,6 +94,11 @@ export async function createAgentServerApp(options: AgentServerAppOptions = {}):
     persistenceDir: config.conversationsPath,
     secretStore,
     agentFactory,
+    ...(usesProfileAgentFactory ? { profileRuntime: {
+      getProfile: (name: string) => serverStateService.getProfile(name),
+      createClient: (profile: Parameters<ProfileLlmClientFactory>[0]) => llmClientFactory(profile, secretStore),
+      ...(options.resolveProfileSelection === undefined ? {} : { resolveProfileSelection: options.resolveProfileSelection }),
+    } } : options.profileRuntime === undefined ? {} : { profileRuntime: options.profileRuntime }),
     ...(options.ownerInstanceId === undefined ? {} : { ownerInstanceId: options.ownerInstanceId }),
     ...(options.leaseTtlMs === undefined ? {} : { leaseTtlMs: options.leaseTtlMs }),
   };

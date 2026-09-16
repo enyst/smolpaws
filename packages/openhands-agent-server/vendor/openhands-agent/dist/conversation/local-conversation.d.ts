@@ -3,6 +3,7 @@ import { type FileStore } from '../io/index.js';
 import type { Agent } from '../agent/index.js';
 import { ConversationState } from './state.js';
 import { StuckDetector, type StuckDetectionThresholds } from './stuck-detector.js';
+import { type AgentStepBoundary } from './ext/step-boundary.js';
 export interface LocalConversationOptions {
     readonly agent: Agent;
     readonly state?: ConversationState;
@@ -11,9 +12,17 @@ export interface LocalConversationOptions {
     readonly conversationId?: string;
     readonly conversationsDir?: string;
     readonly fileStore?: FileStore;
+    /** Runs before the first step and after each fully persisted step, including finish. */
+    readonly onStepBoundary?: AgentStepBoundary;
 }
 export declare class LocalConversation {
-    readonly agent: Agent;
+    private activeAgent;
+    private readonly onStepBoundary;
+    private runInProgress;
+    private stepUserMessageId;
+    get agent(): Agent;
+    /** Last user event included when an agent step began; later arrivals remain queued. */
+    get lastStepUserMessageId(): string | null;
     readonly state: ConversationState;
     readonly maxIterations: number;
     readonly stuckDetector: StuckDetector | null;
@@ -24,6 +33,7 @@ export declare class LocalConversation {
     pause(): void;
     resume(): void;
     run(): Promise<void>;
+    private runOnce;
     /**
      * Nudge once on a repeating action-error streak, otherwise apply isStuck().
      * Returns true when STUCK was set and the run loop should stop.

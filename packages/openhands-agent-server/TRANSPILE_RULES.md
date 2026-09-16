@@ -162,6 +162,36 @@ awaiting approval from interrupted execution before extending this restoration r
 
 Source, historical review correction and evidence: [restart recovery](transpile/interrupted-tools.md).
 
+### DEV-SERVER-009 — profile-first conversation rebinding at quiescent step boundaries
+
+Native `switch_llm` selects a saved `LLMProfile` through the SDK tool contract. The server validates
+and constructs the replacement client, durably queues its secret-free profile snapshot, and returns
+from the tool without waiting for its own run. Activation occurs only after the complete model/tool
+step and all parallel results settle, including a step that also finishes the conversation. The
+existing conversation state, history, workspace, context, tools, limits and accounting remain intact.
+Configuration and activation errors stop the affected run; failed tool preparation returns an error
+observation while retaining the working binding. Before-commit failures preserve the old
+effective snapshot and any accepted pending choice. Cleanup can fail after committing a new snapshot;
+the cached conversation is invalidated on boundary failure so the next turn reconstructs from that
+durable binding instead of continuing with an old client. Neither recovery path repeats paid calls.
+
+An optional TypeScript host hook, `resolveProfileSelection`, selects the applicable profile reference
+when conversation work is requested. The server persists the last observed configured reference
+separately from the effective choice: unchanged configuration cannot undo a tool selection, including
+after restart. Same-reference profile edits retain the existing snapshot; explicit tool reselection
+may refresh it. Removing a host selection leaves the effective/pending choice intact. Changing the
+configured reference to the active one cancels a previously pending tool choice. Without the hook,
+ordinary settings/profile edits retain existing conversation snapshots.
+
+On first execution or restart, a configured replacement does not require credentials for the old
+profile. The SDK anchors old-history provenance from the saved original profile before the server
+commits the replacement snapshot and constructs the active agent. Provider replay/normalization and
+usage accounting stay SDK-owned. Pending selections and snapshots remain server-owned fields stripped
+from public creation requests. No HTTP switching route or ACP runtime is added; `DEV-SERVER-001` remains.
+
+Evidence: `src/__tests__/profileSwitch.test.ts` covers configuration/tool selection, active-step races,
+parallel tool completion, finish, failure, restart, bootstrap credentials, public fields and accounting.
+
 ## Tests-first rule
 
 For compatibility work:

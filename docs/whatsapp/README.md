@@ -64,6 +64,10 @@ Select private memory explicitly for each authorized scope (for example `whatsap
 `whatsapp:openhands`). The full selected files are always-on SDK context, captured once beside each
 conversation. No read-before-answer tool step or larger launch-suffix limit is needed.
 
+Choose each chat's LLM profile in the shared [model configuration](../models.md), using scope keys
+such as `whatsapp:main`. A changed selection applies to the existing conversation at a safe boundary;
+the agent's `switch_llm` tool uses that same activation path. The bridge keeps no separate profile map.
+
 ## Errors and follow-up messages
 
 The bridge also sends `smolpaws: 🐾 I'm up.` to every registered chat after startup. It does not

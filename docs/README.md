@@ -5,6 +5,7 @@ Current docs:
 - [`smolpaws/SOUL.md`](smolpaws/SOUL.md) - canonical SmolPaws personality, voice, and behavioral design
 - [`smolpaws/README.md`](smolpaws/README.md) - OpenClaw-style SmolPaws context-file set and which pieces are live today
 - [`context-files.md`](context-files.md) - server-owned identity and memory files, scope configuration, and immutable conversation snapshots
+- [`models.md`](models.md) - shared role and channel profile selections, safe runtime switching, and `switch_llm`
 - [`SPEC.md`](SPEC.md) - current system shape and runtime model
 - [`REQUIREMENTS.md`](REQUIREMENTS.md) - architecture decisions and constraints
 - [`SECURITY.md`](SECURITY.md) - security model
