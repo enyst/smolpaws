@@ -1,10 +1,10 @@
 import type { MediaSender } from '../../../src/coordinator/outboundMedia.js';
 import type { Logger } from 'pino';
 
-import { sendMessageExtractor, terminalResponseExtractor } from '../../../src/coordinator/messageRelay.js';
+import { bridgeResponseExtractor } from '../../../src/coordinator/messageRelay.js';
 import { RelayRuntime, defaultRelayDbPath } from '../../../src/coordinator/relayRuntime.js';
 import type { MessageWorkStore } from '../../../src/coordinator/store.js';
-import type { AgentEvent, DeliverableExtractor, LaneDescriptor } from '../../../src/coordinator/types.js';
+import type { LaneDescriptor } from '../../../src/coordinator/types.js';
 import { WhatsAppDeliveryTarget, type WhatsAppTextSender } from './deliveryTarget.js';
 
 export interface WhatsAppRelayRuntimeOptions {
@@ -23,12 +23,12 @@ export interface WhatsAppRelayRuntimeOptions {
 }
 
 /**
- * WhatsApp delivers both kinds of outbound intent: explicit `send_message` tool actions (EXT-SDK-001, the
+ * WhatsApp delivers explicit `send_message` tool actions (EXT-SDK-001, the
  * cat talking mid-task) and the terminal response (a finish observation or the end-of-turn assistant
- * text). Each delivery stays keyed to one durable agent event id, so replay safety is unchanged.
+ * text), plus conversation-error notices. Each delivery stays keyed to one durable agent event id, so
+ * replay safety is unchanged.
  */
-export const whatsappExtractor: DeliverableExtractor = (event: AgentEvent) =>
-  sendMessageExtractor(event) ?? terminalResponseExtractor(event);
+export const whatsappExtractor = bridgeResponseExtractor;
 
 /** One relay per WhatsApp account/process with its own SQLite store. */
 export class WhatsAppRelayRuntime {

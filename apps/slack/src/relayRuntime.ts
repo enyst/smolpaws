@@ -35,9 +35,7 @@ export class SlackRelayRuntime {
     // The authoritative relay deliberately owns a new database and a versioned conversation-id
     // namespace. Earlier shadow experiments used different state but unversioned conversation ids;
     // reusing those identities could replay historical shadow responses on first cutover.
-    // Deliver the agent's terminal response to Slack: the default extractor delivers either a finish
-    // observation OR end-of-turn assistant text, so ordinary chat replies reach Slack without a
-    // Slack-specific send tool.
+    // The shared extractor delivers explicit sends, terminal replies, and conversation-error notices.
     this.runtime = new RelayRuntime({
       platform: 'slack',
       deriveConversationId: (lane) => slackRelayConversationId(lane.laneKey),

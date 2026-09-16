@@ -64,6 +64,14 @@ Select private memory explicitly for each authorized scope (for example `whatsap
 `whatsapp:openhands`). The full selected files are always-on SDK context, captured once beside each
 conversation. No read-before-answer tool step or larger launch-suffix limit is needed.
 
+## Errors and follow-up messages
+
+A conversation-level error produces a short WhatsApp notice. Step-limit notices identify the limit;
+other errors use a generic message without exposing raw provider details. Send a follow-up prompt to
+continue the same conversation with its saved context and a fresh run allowance. The normal limit is
+500 steps per run. See [conversation failure delivery](../bridges.md#conversation-failures-and-continuation)
+for the shared outbox and configuration rules.
+
 ## Setup
 
 ### 1. Dependencies

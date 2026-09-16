@@ -61,7 +61,15 @@ agent-server EventLog
 
 Delivery rows are inserted before the catch-up cursor advances. If the process crashes between those operations, replay is safe because the unique work identity makes re-insertion a no-op.
 
-The extraction policy is explicit. The reusable Message Relay supports explicit outbound-intent events; the Slack path uses `terminalResponseExtractor`, which delivers either a successful `finish` observation or an end-of-turn assistant text message. A plain assistant `MessageEvent` with no tool calls is terminal in this SDK: it sets the conversation to `FINISHED` and ends the turn. The run loop also stops on `finish`, cancellation, error, or another terminal state.
+The extraction policy is explicit. The reusable Message Relay supports explicit outbound-intent events; relay bridges use `bridgeResponseExtractor`, which also delivers successful `finish` observations, end-of-turn assistant text and conversation-error notices. A plain assistant `MessageEvent` with no tool calls is terminal in this SDK: it sets the conversation to `FINISHED` and ends the turn. The run loop also stops on `finish`, cancellation, error, or another terminal state.
+
+Conversation-level failures are outbound events too. `conversationErrorExtractor` projects every
+`ConversationErrorEvent` into a safe user notice; `bridgeResponseExtractor` composes that with explicit
+sends and terminal replies for the shared bridge runtime. Errors are kept separate from terminal-reply
+echo suppression. Their durable event IDs provide the same replay and restart deduplication as normal
+replies. `AgentErrorEvent` and failed tool observations remain in the agent's recovery loop rather than
+being presented as conversation termination. A later user message resumes the existing conversation;
+the relay does not automatically rerun failed work or rewind historical projection cursors.
 
 ### Delivery Dispatcher
 

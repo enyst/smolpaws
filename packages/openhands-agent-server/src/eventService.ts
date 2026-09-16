@@ -9,12 +9,14 @@ import {
   EVENTS_DIR,
   LocalConversation,
   LocalFileStore,
+  conversationErrorEventSchema,
   conversationStateUpdateEventSchema,
   DuplicateEventError,
   interruptEventSchema,
   llmProfileSchema,
   messageEventSchema,
   pauseEventSchema,
+  redactTextSecrets,
   type Event,
   type LLMClient,
   type Message,
@@ -168,11 +170,11 @@ export class EventService {
     if (this.runPromise !== null) {
       throw new Error('conversation_already_running');
     }
-    const runPromise = this.runAndPublish().catch((error: unknown) => this.handleRunError(error));
+    const runPromise = this.runAndPublish();
     this.runPromise = runPromise;
     void runPromise
       .catch((error: unknown) => {
-        console.error('conversation_run_error_cleanup', error);
+        console.error('conversation_run_error_cleanup', safeRunError(error));
       })
       .finally(() => {
         this.runPromise = null;
@@ -291,25 +293,43 @@ export class EventService {
   }
 
   private async runAndPublish(): Promise<void> {
-    const conversation = await this.conversation();
     do {
       this.rerunRequested = false;
       const startIndex = this.events().length;
-      await conversation.run();
-      this.touch();
-      await this.saveConversation(this.stored);
-      const newEvents = this.events().slice(startIndex);
-      for (const event of newEvents) {
-        await this.publishEventOnce(event);
+      try {
+        const conversation = await this.conversation();
+        await conversation.run();
+        this.touch();
+        await this.saveConversation(this.stored);
+        for (const event of this.events().slice(startIndex)) {
+          await this.publishEventOnce(event);
+        }
+      } catch (error) {
+        await this.handleRunError(error, startIndex);
+      } finally {
+        await this.pubSub.publish(this.createStateUpdateEvent());
       }
-      await this.pubSub.publish(this.createStateUpdateEvent());
     } while (this.rerunRequested);
   }
 
-  private async handleRunError(error: unknown): Promise<void> {
-    console.error('conversation_run_error', error);
+  private async handleRunError(error: unknown, startIndex: number): Promise<void> {
+    const failure = safeRunError(error);
+    console.error('conversation_run_error', failure);
     this.state.executionStatus = conversationExecutionStatus.ERROR;
-    await this.pubSub.publish(this.createStateUpdateEvent());
+    // Python skips ConversationRunError when its SDK already emitted an error. The TS SDK has no
+    // wrapper: inspect this run's durable events, so old failures never suppress a later failure.
+    if (!this.events().slice(startIndex).some((event) => event.kind === 'ConversationErrorEvent')) {
+      await this.appendStateEvent(conversationErrorEventSchema.parse({ source: 'environment', ...failure }));
+    }
+    this.touch();
+    try {
+      await this.saveConversation(this.stored);
+    } finally {
+      // An exception must not hide the error (or earlier completed work) from live subscribers.
+      for (const event of this.events().slice(startIndex)) {
+        await this.publishEventOnce(event);
+      }
+    }
   }
 
   private async appendAndPublish(event: Event): Promise<void> {
@@ -379,6 +399,16 @@ export class EventService {
   private touch(): void {
     this.stored.updated_at = new Date().toISOString();
   }
+}
+
+function safeRunError(error: unknown): { code: string; detail: string } {
+  // Never serialize arbitrary thrown objects, causes, or attached requests/responses.
+  if (!(error instanceof Error)) return { code: 'Error', detail: 'Conversation run failed.' };
+  const name = error.constructor.name;
+  const code = /^[A-Za-z_$][\w$]{0,79}$/u.test(name) ? name : 'Error';
+  const detail = redactTextSecrets(error.message)
+    .replace(/\b(Bearer|Basic)\s+[^\s"',;]+/giu, '$1 <redacted>');
+  return { code, detail };
 }
 
 function createEventLog(stored: StoredConversation): EventLog {

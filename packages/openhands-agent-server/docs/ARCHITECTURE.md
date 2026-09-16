@@ -49,6 +49,11 @@ Primary upstream modules for this package:
    `EventService` wraps an SDK `EventLog` and `ConversationState`; appends go
    through `ConversationState.appendEvent()`, and reads/search/count use the
    EventLog-backed state.
+   Uncaught run/factory exceptions are converted to an SDK `ConversationErrorEvent` unless the
+   current invocation already appended one. New durable events are published before the final state
+   update. Exception messages are redacted; arbitrary exception objects are never serialized.
+   A later user prompt can run the same saved conversation again. See the
+   [upstream port correction](../transpile/conversation-errors.md).
 6. **Server metadata may remain server-owned.** Conversation `meta.json` is stored
    by this package because upstream keeps server-side conversation metadata too.
    Metadata is not the event source of truth.

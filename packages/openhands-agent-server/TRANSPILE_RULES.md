@@ -26,6 +26,12 @@ Preserve the upstream REST/WebSocket contract and observable behavior unless an 
 
 Target-language implementation differences are not deviations when the observable contract is preserved.
 
+Uncaught conversation-run failures must persist and publish the SDK's `ConversationErrorEvent`,
+including failures during agent construction. An error already emitted by that run must not be
+duplicated. Preserve subsequent-prompt continuation and apply `DEV-SERVER-003` to exception details.
+Channel notices and delivery deduplication belong to the coordinator. See the
+[focused run-error port correction](transpile/conversation-errors.md) and its regression evidence.
+
 ## Change dispositions
 
 Use the same update vocabulary as the SDK transpilation:
