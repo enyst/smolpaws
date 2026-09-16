@@ -159,6 +159,19 @@ forks remain independent from the source. These behaviors and the intentional wi
 differences from Python are described by `DEV-SERVER-007` in `TRANSPILE_RULES.md` and
 covered by `src/__tests__/metrics.test.ts`.
 
+Anthropic prompt caching is owned by the vendored SDK, including OpenAI-compatible
+Anthropic proxy profiles. The default profile factory passes the snapshotted profile
+and configured context through that SDK path; it must not add a separate server cache
+implementation. Supported models enable explicit cache breakpoints by default, even
+when an older stored profile has no `cachingPrompt` field. Set `cachingPrompt:false` in
+a profile to opt out. Cache reads and writes remain provider-reported measurements;
+sending a breakpoint alone does not establish a cache hit. The
+[SDK port correction](https://github.com/smolpaws/openhands-agent/blob/main/transpile/anthropic-cache.md)
+documents the upstream behavior and provider-specific serialization. The server
+regression `src/__tests__/promptCaching.test.ts` exercises profile creation, full
+configured context, outgoing requests, cache accounting and conversation restore
+without replacing the normal Agent or profile factory.
+
 ## Implemented surface in the first buildable slices
 
 Server details:

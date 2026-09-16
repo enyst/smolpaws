@@ -386,6 +386,7 @@ function defaultState(): PersistedState {
     timeoutSeconds: null,
     reasoningEffort: null,
     reasoningSummary: null,
+    cachingPrompt: true,
     promptCacheRetention: null,
     promptCacheKey: null,
     headers: {},

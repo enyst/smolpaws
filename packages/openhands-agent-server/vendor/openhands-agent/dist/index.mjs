@@ -139,6 +139,7 @@ var llmProfileSchema = z.object({
   timeoutSeconds: z.number().positive().nullable().default(null),
   reasoningEffort: reasoningEffortSchema.nullable().default(null),
   reasoningSummary: reasoningSummarySchema.nullable().default(null),
+  cachingPrompt: z.boolean().default(true),
   promptCacheRetention: promptCacheRetentionSchema.nullable().default(null),
   promptCacheKey: z.string().min(1).nullable().default(null),
   headers: z.record(z.string(), z.string()).default({}),
@@ -3912,12 +3913,8 @@ var Agent = class {
   }
   renderSystemPrompt() {
     const suffix = this.context?.getSystemMessageSuffix() ?? null;
-    if (this.systemPrompt !== null && suffix !== null) {
-      return `${this.systemPrompt}
-
-${suffix}`;
-    }
-    return this.systemPrompt ?? suffix;
+    const blocks = [this.systemPrompt, suffix].filter((text) => text !== null).map((text) => textContent(text));
+    return blocks.length > 0 ? blocks : null;
   }
   async runTool(action) {
     const tool = this.tools.find((candidate) => candidate.name === action.tool_name);
@@ -3945,10 +3942,10 @@ ${suffix}`;
 function isLlmConvertibleEvent(event) {
   return event.kind === "SystemPromptEvent" || event.kind === "MessageEvent" || event.kind === "ActionEvent" || event.kind === "ObservationEvent" || event.kind === "UserRejectObservation" || event.kind === "AgentErrorEvent" || event.kind === "CondensationSummaryEvent";
 }
-function systemMessage(text) {
+function systemMessage(content) {
   return {
     role: "system",
-    content: [textContent(text)],
+    content,
     tool_calls: null,
     tool_call_id: null,
     name: null,
@@ -5730,7 +5727,9 @@ var PROMPT_CACHE_MODELS = [
   "claude-opus-4-5",
   "claude-opus-4-6",
   "claude-opus-4-7",
-  "claude-sonnet-5"
+  "claude-sonnet-5",
+  "claude-opus-5",
+  "claude-fable-5"
 ];
 function isGpt5Model(model) {
   return model?.trim().toLowerCase().includes("gpt-5") === true;
@@ -5825,6 +5824,42 @@ function normalizeGenerationParamsForModel(profile) {
   return profile;
 }
 
+// src/llm/anthropic-prompt-cache.ts
+var ANTHROPIC_CACHE_CONTROL = { type: "ephemeral" };
+function prepareAnthropicPromptCaching(profile, messages) {
+  const enabled = profile.cachingPrompt !== false && profile.authType !== "subscription" && supportsPromptCaching(profile);
+  const prepared = messages.map((message) => ({
+    ...message,
+    content: message.content.map((content) => ({ ...content, cache_prompt: enabled && content.cache_prompt && cacheable(content) }))
+  }));
+  if (!enabled) return prepared;
+  const system = prepared[0];
+  if (system?.role === "system") {
+    const first = system.content[0];
+    if (first && cacheable(first)) first.cache_prompt = true;
+    const dynamic = system.content[1];
+    if (dynamic) dynamic.cache_prompt = false;
+  }
+  const latest = [...prepared].reverse().find((message) => message.role === "user" || message.role === "tool");
+  const last = latest && [...latest.content].reverse().find(cacheable);
+  if (last) last.cache_prompt = true;
+  return prepared;
+}
+function cacheable(content) {
+  return content.type === "text" ? content.text.length > 0 : content.image_urls.length > 0;
+}
+function validateAnthropicCacheBreakpoints(body) {
+  const system = Array.isArray(body.system) ? body.system : [];
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const blocks = [...system, ...messages.flatMap((message) => [
+    message,
+    ...Array.isArray(message.content) ? message.content : []
+  ])];
+  if (blocks.filter((block) => block.cache_control !== void 0).length > 4) {
+    throw new Error("Anthropic prompt caching supports at most 4 cache breakpoints per request.");
+  }
+}
+
 // src/llm/anthropic.ts
 var DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com";
 var DEFAULT_ANTHROPIC_VERSION = "2023-06-01";
@@ -5874,22 +5909,20 @@ async function createAnthropicClientFromProfile(profile, store, options = {}) {
 }
 function buildAnthropicMessagesBody(profile, messages, tools) {
   const normalizedProfile = normalizeGenerationParamsForModel(profile);
-  const parsedMessages = orderCompletedToolResults(messages.map((message) => messageSchema.parse(message)));
+  const parsedMessages = prepareAnthropicPromptCaching(normalizedProfile, orderCompletedToolResults(messages.map((message) => messageSchema.parse(message))));
   const systemMessages = parsedMessages.filter((message) => message.role === "system");
-  const system = systemMessages.flatMap((message) => contentToString(message.content));
-  const shouldCacheSystem = supportsPromptCaching(normalizedProfile) && systemMessages.some((message) => message.content.some((content) => content.cache_prompt));
+  const system = systemMessages.flatMap((message) => message.content.flatMap(toAnthropicContentBlocks));
   const maxTokens = normalizedProfile.maxOutputTokens ?? DEFAULT_MAX_TOKENS;
   const thinkingBudget = getAnthropicThinkingBudget(normalizedProfile, maxTokens);
   const body = {
     model: normalizedProfile.model,
     max_tokens: maxTokens,
     messages: toAnthropicMessages(
-      normalizedProfile,
       parsedMessages.filter((message) => message.role !== "system")
     )
   };
   if (system.length > 0) {
-    body.system = shouldCacheSystem ? [{ type: "text", text: system.join("\n"), cache_control: { type: "ephemeral" } }] : system.join("\n");
+    body.system = system;
   }
   if (tools && tools.length > 0) {
     body.tools = tools.map(toAnthropicTool);
@@ -5907,6 +5940,7 @@ function buildAnthropicMessagesBody(profile, messages, tools) {
   if (thinkingBudget !== void 0) {
     body.thinking = { type: "enabled", budget_tokens: thinkingBudget };
   }
+  validateAnthropicCacheBreakpoints(body);
   return body;
 }
 function toAnthropicTool(tool) {
@@ -5917,11 +5951,11 @@ function toAnthropicTool(tool) {
     input_schema: responsesTool.parameters
   };
 }
-function toAnthropicMessages(profile, messages) {
+function toAnthropicMessages(messages) {
   const result = [];
   for (const message of messages) {
     if (message.role !== "tool") {
-      result.push(toAnthropicMessage(profile, message));
+      result.push(toAnthropicMessage(message));
       continue;
     }
     const toolResult = toAnthropicToolResultBlock(message);
@@ -5934,7 +5968,7 @@ function toAnthropicMessages(profile, messages) {
   }
   return result;
 }
-function toAnthropicMessage(profile, message) {
+function toAnthropicMessage(message) {
   if (message.role === "assistant") {
     return { role: "assistant", content: toAnthropicAssistantContent(message) };
   }
@@ -5943,7 +5977,7 @@ function toAnthropicMessage(profile, message) {
   }
   return {
     role: "user",
-    content: message.content.map((content) => toAnthropicContentBlock(profile, content))
+    content: message.content.flatMap(toAnthropicContentBlocks)
   };
 }
 function toAnthropicAssistantContent(message) {
@@ -5955,10 +5989,7 @@ function toAnthropicAssistantContent(message) {
       blocks.push({ type: "thinking", thinking: block.thinking, signature: block.signature });
     }
   }
-  const text = reduceTextContent(message);
-  if (text.length > 0) {
-    blocks.push({ type: "text", text });
-  }
+  blocks.push(...message.content.filter((content) => content.type !== "text" || content.text.length > 0).flatMap(toAnthropicContentBlocks));
   if (message.tool_calls !== null) {
     blocks.push(...message.tool_calls.map(toAnthropicToolUseBlock));
   }
@@ -5979,21 +6010,15 @@ function toAnthropicToolResultBlock(message) {
   return {
     type: "tool_result",
     tool_use_id: message.tool_call_id,
-    content: reduceTextContent(message)
+    content: message.content.every((content) => content.type === "text") ? reduceTextContent(message) : message.content.flatMap((content) => toAnthropicContentBlocks({ ...content, cache_prompt: false })),
+    ...message.content.some((content) => content.cache_prompt) ? { cache_control: ANTHROPIC_CACHE_CONTROL } : {}
   };
 }
-function toAnthropicContentBlock(profile, content) {
-  const block = content.type === "text" ? { type: "text", text: content.text } : {
-    type: "image",
-    source: {
-      type: "url",
-      url: content.image_urls[0] ?? ""
-    }
-  };
-  if (content.cache_prompt && supportsPromptCaching(profile)) {
-    block.cache_control = { type: "ephemeral" };
-  }
-  return block;
+function toAnthropicContentBlocks(content) {
+  const blocks = content.type === "text" ? [{ type: "text", text: content.text }] : content.image_urls.map((url) => ({ type: "image", source: { type: "url", url } }));
+  const last = blocks.at(-1);
+  if (last && content.cache_prompt) last.cache_control = ANTHROPIC_CACHE_CONTROL;
+  return blocks;
 }
 function parseToolArguments2(toolCall) {
   let parsed;
@@ -6569,7 +6594,7 @@ function buildChatCompletionsBody(profile, messages, tools = []) {
   const sendReasoningContent = isReasoningModel(normalizedProfile);
   const body = {
     model: normalizedProfile.model,
-    messages: orderCompletedToolResults(messages.map((message) => messageSchema.parse(message))).map((message) => toOpenAIChatMessage(message, sendReasoningContent))
+    messages: prepareAnthropicPromptCaching(normalizedProfile, orderCompletedToolResults(messages.map((message) => messageSchema.parse(message)))).map((message) => toOpenAIChatMessage(message, sendReasoningContent))
   };
   if (tools.length > 0) {
     body.tools = tools.map(toOpenAIChatTool);
@@ -6590,6 +6615,7 @@ function buildChatCompletionsBody(profile, messages, tools = []) {
     body.reasoning_effort = normalizedProfile.reasoningEffort;
   }
   applyOpenAIPromptCacheOptions(body, normalizedProfile);
+  validateAnthropicCacheBreakpoints(body);
   return body;
 }
 function buildOpenAIResponsesBody(profile, messages, tools = []) {
@@ -6706,8 +6732,11 @@ function toOpenAIChatTool(tool) {
 function toOpenAIChatMessage(message, sendReasoningContent = false) {
   const out = {
     role: message.role,
-    content: serializeContent(message.content)
+    content: serializeContent(message.content, message.role !== "tool")
   };
+  if (message.role === "tool" && message.content.some((content) => content.cache_prompt)) {
+    out.cache_control = ANTHROPIC_CACHE_CONTROL;
+  }
   if (message.tool_calls !== null) {
     out.tool_calls = message.tool_calls.map(toOpenAIChatToolCall);
     if (isEmptySerializedContent(out.content)) {
@@ -6730,15 +6759,15 @@ function toOpenAIChatMessage(message, sendReasoningContent = false) {
   }
   return out;
 }
-function serializeContent(content) {
-  if (content.every((item) => item.type === "text")) {
+function serializeContent(content, includeCacheControl = false) {
+  if (content.every((item) => item.type === "text") && !(includeCacheControl && content.some((item) => item.cache_prompt))) {
     return contentToString(content).join("\n");
   }
-  return content.map((item) => {
-    if (item.type === "text") {
-      return { type: "text", text: item.text };
-    }
-    return { type: "image_url", image_url: { url: item.image_urls[0] ?? "" } };
+  return content.flatMap((item) => {
+    const blocks = item.type === "text" ? [{ type: "text", text: item.text }] : item.image_urls.map((url) => ({ type: "image_url", image_url: { url } }));
+    const last = blocks.at(-1);
+    if (last && includeCacheControl && item.cache_prompt) last.cache_control = ANTHROPIC_CACHE_CONTROL;
+    return blocks;
   });
 }
 function isEmptySerializedContent(content) {
@@ -6773,6 +6802,7 @@ function parseChatCompletionsMetadata(raw, profile) {
   const parsed = openAIChatCompletionResponseSchema.pick({ id: true, model: true, usage: true }).parse(raw);
   const usage = parsed.usage;
   const isOpenRouter = profile.providerId === "openrouter" || new URL(resolveBaseUrl3(profile)).hostname === "openrouter.ai";
+  const isAnthropic = isAnthropicModel(profile);
   return llmResponseMetadataSchema.parse({
     // Input/output totals already include their cache/reasoning breakdowns.
     // DeepSeek's two cached-token fields are aliases, not separate usage.
@@ -6780,8 +6810,8 @@ function parseChatCompletionsMetadata(raw, profile) {
       promptTokens: usage.prompt_tokens,
       completionTokens: usage.completion_tokens,
       totalTokens: usage.total_tokens,
-      cacheReadTokens: usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens,
-      cacheWriteTokens: usage.prompt_tokens_details?.cache_write_tokens,
+      cacheReadTokens: usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens ?? (isAnthropic ? usage.cache_read_input_tokens ?? void 0 : void 0),
+      cacheWriteTokens: usage.prompt_tokens_details?.cache_write_tokens ?? (isAnthropic ? usage.cache_creation_input_tokens ?? usage.prompt_tokens_details?.cache_creation_tokens ?? void 0 : void 0),
       cacheMissTokens: usage.prompt_cache_miss_tokens,
       reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
       reportedCost: isOpenRouter && typeof usage.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? { amount: usage.cost, currency: "credits" } : void 0,
@@ -6932,9 +6962,12 @@ var openAIChatCompletionResponseSchema = z.object({
     total_tokens: z.number().int().min(0).optional(),
     prompt_cache_hit_tokens: z.number().int().min(0).optional(),
     prompt_cache_miss_tokens: z.number().int().min(0).optional(),
+    cache_read_input_tokens: z.number().int().min(0).nullish(),
+    cache_creation_input_tokens: z.number().int().min(0).nullish(),
     prompt_tokens_details: z.object({
       cached_tokens: z.number().int().min(0).optional(),
-      cache_write_tokens: z.number().int().min(0).optional()
+      cache_write_tokens: z.number().int().min(0).optional(),
+      cache_creation_tokens: z.number().int().min(0).nullish()
     }).passthrough().nullish(),
     completion_tokens_details: z.object({
       reasoning_tokens: z.number().int().min(0).optional()
