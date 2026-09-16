@@ -213,6 +213,12 @@ npm run whatsapp:typecheck
 npm run whatsapp:test
 ```
 
+Inbound images use the SDK content shape, `{ "type": "image", "image_urls": ["data:..."] }`.
+The SDK converts this to each provider's wire format. OpenAI-style `image_url` blocks are not
+accepted by the agent-server; sending them fails intake and holds later messages in that lane.
+The image contract test sends actual `buildPrompt()` output through the server's HTTP route
+and verifies the saved text and image bytes, without calling a model.
+
 The suite covers the trigger/scope policy, transcript building with images and documents, ledger
 cursors, delivery chunking, and an end-to-end run through a fake Baileys socket, the real in-process
 TypeScript agent-server with a deterministic test LLM, the durable relay store, and the delivery

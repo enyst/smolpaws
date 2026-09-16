@@ -95,10 +95,10 @@ test('inline images become a text+image content array, bounded by size', async (
     );
     assert.equal(prompt.images.length, 1);
     assert.ok(prompt.text.includes('has_image="true"'));
-    const content = prompt.content as Array<{ type: string; image_url?: { url: string } }>;
+    const content = prompt.content as Array<{ type: string; image_urls?: string[] }>;
     assert.equal(content[0]?.type, 'text');
-    assert.equal(content[1]?.type, 'image_url');
-    assert.ok(content[1]?.image_url?.url.startsWith('data:image/png;base64,'));
+    assert.equal(content[1]?.type, 'image');
+    assert.deepEqual(content[1]?.image_urls, ['data:image/png;base64,dGlueQ==']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
