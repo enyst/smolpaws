@@ -1946,6 +1946,56 @@ function legacyOrigin(events) {
 function record(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+var LLM_REQUEST_BOUNDARY_KEY = "llm_request_boundary";
+var boundarySchema = zod.z.object({
+  version: zod.z.literal(1),
+  // Event serialization omits nulls, so an omitted ID also means an empty input log.
+  input_event_id: zod.z.string().nullable().default(null),
+  response_event_ids: zod.z.array(zod.z.string()).min(1)
+}).strict();
+function requestBoundaryEvent(inputEventId, responseEvents) {
+  return conversationStateUpdateEventSchema.parse({
+    key: LLM_REQUEST_BOUNDARY_KEY,
+    value: boundarySchema.parse({ version: 1, input_event_id: inputEventId, response_event_ids: responseEvents.map((event) => event.id) })
+  });
+}
+function historyForRequests(view, history) {
+  let ordered = [...view];
+  const indices = new Map(history.map((event, index) => [event.id, index]));
+  for (const marker of history) {
+    if (marker.kind !== "ConversationStateUpdateEvent" || marker.key !== LLM_REQUEST_BOUNDARY_KEY) continue;
+    const boundary = boundarySchema.parse(marker.value);
+    const inputIndex = boundary.input_event_id === null ? -1 : indices.get(boundary.input_event_id);
+    const responseIds = new Set(boundary.response_event_ids);
+    const responseIndices = boundary.response_event_ids.map((id) => indices.get(id));
+    if (inputIndex === void 0 || responseIds.size !== responseIndices.length || responseIndices.some((index) => index === void 0 || index <= inputIndex)) continue;
+    const firstResponseIndex = Math.min(...responseIndices);
+    const markerIndex = indices.get(marker.id);
+    if (inputIndex >= markerIndex || firstResponseIndex <= markerIndex) continue;
+    const lateIds = new Set(history.slice(inputIndex + 1, firstResponseIndex).filter(
+      (event) => event.kind === "MessageEvent" && event.source === "user" && event.llm_message.role === "user"
+    ).map((event) => event.id));
+    if (lateIds.size === 0) continue;
+    const retainedResponseIndices = ordered.flatMap((event, index) => responseIds.has(event.id) ? [index] : []);
+    if (retainedResponseIndices.length === 0) continue;
+    const firstRetainedResponse = retainedResponseIndices[0];
+    const lastRetainedResponse = retainedResponseIndices.at(-1);
+    let barrier = -1;
+    for (let index = 0; index <= lastRetainedResponse; index += 1) {
+      const event = ordered[index];
+      if (event.kind === "CondensationSummaryEvent" || !responseIds.has(event.id) && (event.kind === "ActionEvent" || event.kind === "MessageEvent" && event.llm_message.role === "assistant")) barrier = index;
+    }
+    const late = ordered.slice(barrier + 1, firstRetainedResponse).filter((event) => lateIds.has(event.id));
+    if (late.length === 0) continue;
+    const movedIds = new Set(late.map((event) => event.id));
+    ordered = [
+      ...ordered.slice(0, lastRetainedResponse + 1).filter((event) => !movedIds.has(event.id)),
+      ...late,
+      ...ordered.slice(lastRetainedResponse + 1)
+    ];
+  }
+  return ordered;
+}
 
 // src/llm/exceptions.ts
 var CONTENT_POLICY_PATTERNS = [
@@ -3899,7 +3949,7 @@ async function dispatchLlmResponse(response, state, runner, options = {}) {
   const responseType = classifyResponse(message);
   if (responseType === llmResponseType.TOOL_CALLS) {
     const actions = actionEventsFromMessage(message, options.llmResponseId ?? null);
-    for (const event of await state.appendEventsAsync(actions)) {
+    for (const event of await appendResponseEvents(state, actions, options.inputEventId)) {
       emitted.push(event);
     }
     const executor = options.executor ?? new ParallelToolExecutor(options.maxConcurrency === void 0 ? {} : { maxConcurrency: options.maxConcurrency });
@@ -3911,31 +3961,22 @@ async function dispatchLlmResponse(response, state, runner, options = {}) {
     }
     return emitted;
   }
-  emitted.push(
-    await state.appendEventAsync(
-      messageEventSchema.parse({
-        source: "agent",
-        llm_message: maskMessageSecrets(message, options.maskSecretsInOutput ?? null),
-        llm_response_id: options.llmResponseId ?? null
-      })
-    )
-  );
+  const assistant = messageEventSchema.parse({
+    source: "agent",
+    llm_message: maskMessageSecrets(message, options.maskSecretsInOutput ?? null),
+    llm_response_id: options.llmResponseId ?? null
+  });
   if (responseType === llmResponseType.CONTENT) {
+    emitted.push(...await appendResponseEvents(state, [assistant], options.inputEventId));
     state.executionStatus = conversationExecutionStatus.FINISHED;
     return emitted;
   }
-  emitted.push(
-    await state.appendEventAsync(
-      messageEventSchema.parse({
-        source: "environment",
-        llm_message: {
-          role: "user",
-          content: [textContent(CORRECTIVE_NUDGE)]
-        },
-        llm_response_id: options.llmResponseId ?? null
-      })
-    )
-  );
+  const nudge = messageEventSchema.parse({
+    source: "environment",
+    llm_message: { role: "user", content: [textContent(CORRECTIVE_NUDGE)] },
+    llm_response_id: options.llmResponseId ?? null
+  });
+  emitted.push(...await appendResponseEvents(state, [assistant, nudge], options.inputEventId));
   return emitted;
 }
 function maskMessageSecrets(message, mask) {
@@ -3950,6 +3991,10 @@ function maskMessageSecrets(message, mask) {
 }
 function isTextContent(part) {
   return part.type === "text";
+}
+async function appendResponseEvents(state, events, inputEventId) {
+  await state.appendEventsAsync(inputEventId === void 0 ? events : [requestBoundaryEvent(inputEventId, events), ...events]);
+  return events;
 }
 
 // src/agent/agent.ts
@@ -3972,7 +4017,9 @@ var Agent = class {
     this.usageId = options.usageId;
   }
   async step(state) {
-    const messages = this.messagesForState(state);
+    const history = [...state.events];
+    const inputEventId = history.at(-1)?.id ?? null;
+    const messages = this.messagesForState(state, history);
     if (messages === null) {
       return [state.events.at(-1)].filter((event) => event !== void 0);
     }
@@ -4011,17 +4058,18 @@ var Agent = class {
     await state.appendEventAsync(accounting);
     return dispatchLlmResponse(response, state, (action) => this.runTool(action), {
       llmResponseId: response.responseId ?? accounting.id,
-      maxConcurrency: this.toolConcurrencyLimit
+      maxConcurrency: this.toolConcurrencyLimit,
+      inputEventId
     });
   }
-  messagesForState(state) {
-    const view = View.fromEvents(state.events);
+  messagesForState(state, history) {
+    const view = View.fromEvents(history);
     const condensed = this.condenser?.condense(view, this.llm) ?? view;
     if (!(condensed instanceof View)) {
       state.appendEvent(condensed);
       return null;
     }
-    const messages = eventsToMessages(historyForProfile(condensed.events.filter(isLlmConvertibleEvent), state.events, this.llm.profile));
+    const messages = eventsToMessages(historyForProfile(historyForRequests(condensed.events.filter(isLlmConvertibleEvent), history), history, this.llm.profile));
     const system = this.renderSystemPrompt();
     if (system !== null) {
       return [systemMessage(system), ...messages];

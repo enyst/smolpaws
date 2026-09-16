@@ -29,6 +29,7 @@ test('product host loads full scoped memory before the first completion and rest
   let server: Awaited<ReturnType<typeof createRelayServerApp>> | undefined;
   const open = async () => createRelayServerApp({
     context: { configPath, repoRoot, homeDir: root },
+    models: { homeDir: root },
     config: {
       conversationsPath: path.join(root, 'conversations'), statePath: path.join(root, 'state'),
       bashEventsPath: path.join(root, 'bash'), workspaceRoot: repoRoot,

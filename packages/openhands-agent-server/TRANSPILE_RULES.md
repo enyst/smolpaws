@@ -141,6 +141,17 @@ Evidence: `src/__tests__/metrics.test.ts`, adapted from pinned
 exercises provider responses, idempotent append, event publication, restart, changed response
 models, fork reset/preservation, missing usage, and older unmeasured history.
 
+### Concurrent input and SDK request history
+
+The SDK's `DEV-SDK-009` records which input a completion consumed, and projects messages received
+during that completion after its response in subsequent model requests. Its durable
+`llm_request_boundary` state updates use the existing event envelope; they are metadata, not agent
+replies. The server preserves arrival order and idempotent append, and still schedules a follow-up
+for an unseen user message. Do not suppress that follow-up or implement a second provider-history
+projection here. Restart replays the SDK evidence; unannotated old history is not reconstructed.
+`src/__tests__/concurrentMessages.test.ts` and `profileSwitch.test.ts` cover text/image arrivals,
+tool-time input, deduplication, restore, and profile changes at the completed-step boundary.
+
 ### DEV-SERVER-008 — restore interrupted calls without automatic tool replay
 
 After claiming exclusive ownership of a disk-restored conversation, the server appends an SDK

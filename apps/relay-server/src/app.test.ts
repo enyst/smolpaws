@@ -22,6 +22,7 @@ for (const platform of ['whatsapp', 'slack', 'discord', 'agent-server']) test(`$
   if (platform === 'agent-server') process.env.SMOLPAWS_RELAY_DB_PATH = path.join(root, 'whatsapp-relay.db');
   let created = 0;
   const { app, scheduler } = await createRelayServerApp({
+    models: { homeDir: root },
     config: { conversationsPath: path.join(root, 'conversations'), statePath: path.join(root, 'state'), workspaceRoot: workspace, sessionApiKey: 'test' },
     secretStore: new InMemorySecretStore(),
     llmClientFactory: async () => TestLLM.fromMessages(++created === 1 ? [
