@@ -6,6 +6,10 @@ export interface DiscordConfig {
   allowedUserIds: Set<string>;
   allowedGuilds: Set<string>;
   allowedChannels: Set<string>;
+  /** Announce readiness in explicitly configured channels; default true. */
+  startupPing?: boolean;
+  /** Explicit startup destinations; falls back to allowedChannels when absent. */
+  startupChannelIds?: Set<string>;
   logLevel: string;
 }
 
@@ -34,6 +38,8 @@ export function loadConfig(
     allowedUserIds,
     allowedGuilds: parseSet(env.DISCORD_ALLOWED_GUILDS),
     allowedChannels: parseSet(env.DISCORD_ALLOWED_CHANNELS),
+    startupPing: env.SMOLPAWS_DISCORD_STARTUP_PING !== '0',
+    startupChannelIds: parseSet(env.SMOLPAWS_DISCORD_STARTUP_CHANNEL_IDS ?? env.DISCORD_ALLOWED_CHANNELS),
     logLevel: env.LOG_LEVEL || 'info',
   };
 }

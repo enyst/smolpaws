@@ -31,6 +31,11 @@ DISCORD_ALLOWED_USER_IDS=123456789012345678,234567890123456789
 # DISCORD_ALLOWED_GUILDS=123456789012345678
 # DISCORD_ALLOWED_CHANNELS=123456789012345678
 
+# Startup announces "🐾 I'm up." in explicitly listed channels. Set 0 to disable.
+# SMOLPAWS_DISCORD_STARTUP_PING=0
+# Or select startup destinations without narrowing ingress channels:
+# SMOLPAWS_DISCORD_STARTUP_CHANNEL_IDS=123456789012345678
+
 # TypeScript OpenHands agent-server (defaults to local :8790)
 # SMOLPAWS_RELAY_SERVER_URL=http://127.0.0.1:8790
 # SMOLPAWS_RELAY_SERVER_API_KEY=only-if-the-server-enforces-it
@@ -68,6 +73,15 @@ uses the legacy `/turns` runner on `:8788` or the shared bridge loader.
 - Shows typing indicator while the agent is working
 - Splits long responses (>2000 chars) across multiple messages
 
+After the Gateway and Message Relay are ready, the bridge sends the deterministic message
+`🐾 I'm up.` once to each `SMOLPAWS_DISCORD_STARTUP_CHANNEL_IDS` target, falling back to
+`DISCORD_ALLOWED_CHANNELS` when the startup list is absent. This selects startup destinations without
+narrowing ingress. A nonempty ingress channel allowlist and any guild filter also apply to startup
+destinations. With neither channel list set there is no startup notice;
+the bridge does not discover recipients from old conversations or all bot-visible channels. Gateway
+reconnects do not repeat it. Set `SMOLPAWS_DISCORD_STARTUP_PING=0` to disable it. Failed startup sends
+are logged without retrying or preventing normal message handling, and never call the LLM.
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |
@@ -77,8 +91,10 @@ uses the legacy `/turns` runner on `:8788` or the shared bridge loader.
 | `DISCORD_ALLOWED_USER_IDS` | ✅ | (none → deny all) | Comma-separated immutable Discord account IDs allowed to trigger the bot. **Fails closed:** empty authorizes nobody |
 | `DISCORD_ALLOWED_GUILDS` | — | (all) | Comma-separated guild IDs to respond in (narrows *where* an authorized user is served) |
 | `DISCORD_ALLOWED_CHANNELS` | — | (all) | Comma-separated channel IDs to respond in (narrows *where* an authorized user is served) |
-| `SMOLPAWS_RUNNER_URL` | — | `http://127.0.0.1:8788` | Agent server URL |
-| `SMOLPAWS_RUNNER_TOKEN` | — | — | Agent server auth token |
+| `SMOLPAWS_DISCORD_STARTUP_PING` | — | `1` | Announce readiness once in explicitly listed channels; `0` disables |
+| `SMOLPAWS_DISCORD_STARTUP_CHANNEL_IDS` | — | `DISCORD_ALLOWED_CHANNELS` | Comma-separated startup destinations; does not change ingress authorization |
+| `SMOLPAWS_RELAY_SERVER_URL` | — | `http://127.0.0.1:8790` | Agent server URL |
+| `SMOLPAWS_RELAY_SERVER_API_KEY` | — | — | Agent server session API key |
 | `LOG_LEVEL` | — | `info` | Log level (debug, info, warn, error) |
 
 ## Conversation Threading

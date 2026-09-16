@@ -69,16 +69,24 @@ async function waitFor(predicate: () => boolean, drive: () => Promise<void>, tim
 
 class FakeClient implements DiscordClientLike {
   readonly sent: Array<{ channelId: string; content: string }> = [];
+  readonly fetched: string[] = [];
+  readonly guilds = new Map<string, string>();
+  readonly failedChannels = new Set<string>();
   readonly handlers = new Map<string, Array<(payload: never) => void>>();
   /** When false, `login` resolves without ever emitting `clientReady` until `emitReady()` is called. */
   autoReady = true;
   channels = {
-    fetch: async (channelId: string) => ({
-      send: async ({ content = '' }: { content?: string }) => {
-        this.sent.push({ channelId, content });
-        return { id: `D-${this.sent.length}` };
-      },
-    }),
+    fetch: async (channelId: string) => {
+      this.fetched.push(channelId);
+      return {
+        guildId: this.guilds.get(channelId),
+        send: async ({ content = '' }: { content?: string }) => {
+          if (this.failedChannels.has(channelId)) throw new Error('Channel unavailable');
+          this.sent.push({ channelId, content });
+          return { id: `D-${this.sent.length}` };
+        },
+      };
+    },
   };
 
   async login(): Promise<void> {
@@ -144,9 +152,114 @@ test('config fails closed without an allowlist and rejects the removed variable 
   const warnings: string[] = [];
   const config = loadConfig({ DISCORD_BOT_TOKEN: 't' }, (m) => warnings.push(m));
   assert.equal(config.allowedUserIds.size, 0);
+  assert.equal(config.startupPing, true);
+  assert.equal(loadConfig({ DISCORD_BOT_TOKEN: 't', SMOLPAWS_DISCORD_STARTUP_PING: '0' }).startupPing, false);
   assert.ok(warnings.some((w) => w.includes('fail closed')));
   assert.throws(() => loadConfig({ DISCORD_BOT_TOKEN: 't', DISCORD_ALLOWED_USERS: 'a', DISCORD_ALLOWED_USER_IDS: '1' }));
   assert.throws(() => loadConfig({}));
+});
+
+test('Discord startup notices wait for Gateway readiness and respect explicit channel and guild targets', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'discord-startup-'));
+  const client = new FakeClient();
+  client.autoReady = false;
+  client.guilds.set('C1', 'G1');
+  client.guilds.set('C2', 'G2');
+  client.guilds.set('C4', 'G1');
+  client.failedChannels.add('C1');
+  const bridge = new DiscordBridge({
+    logger: pino({ level: 'silent' }),
+    serverUrl: 'http://127.0.0.1:1',
+    config: loadConfig({
+      DISCORD_BOT_TOKEN: 'token', DISCORD_ALLOWED_USER_IDS: 'U1',
+      DISCORD_ALLOWED_CHANNELS: 'C1,C2,C3,C4,C4', DISCORD_ALLOWED_GUILDS: 'G1',
+    }),
+    dbPath: path.join(root, 'relay.db'),
+    tickMs: 60_000,
+    clientFactory: () => client,
+  });
+  try {
+    const starting = bridge.start();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(bridge.connected, false);
+    assert.deepEqual(client.fetched, []);
+    client.emitReady();
+    await starting;
+    assert.equal(bridge.connected, true);
+    assert.deepEqual(client.fetched, ['C1', 'C2', 'C3', 'C4']);
+    assert.deepEqual(client.sent, [{ channelId: 'C4', content: "🐾 I'm up." }]);
+    // A missing or disallowed guild is skipped, and a failed send does not block another target.
+    await bridge.start();
+    client.emitReady();
+    assert.equal(client.sent.length, 1);
+    await bridge.stop();
+    client.autoReady = true;
+    await bridge.start();
+    assert.deepEqual(client.fetched, ['C1', 'C2', 'C3', 'C4'], 'do not retry notices after reconnect');
+    const db = new Database(path.join(root, 'relay.db'), { readonly: true });
+    try {
+      assert.equal((db.prepare('SELECT COUNT(*) AS count FROM work').get() as { count: number }).count, 0);
+      assert.equal((db.prepare('SELECT COUNT(*) AS count FROM lanes').get() as { count: number }).count, 0);
+    } finally {
+      db.close();
+    }
+  } finally {
+    await bridge.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Discord has no startup announcement without explicit targets or when disabled', async () => {
+  for (const env of [
+    {},
+    { DISCORD_ALLOWED_CHANNELS: 'C1', SMOLPAWS_DISCORD_STARTUP_PING: '0' },
+  ]) {
+    const root = mkdtempSync(path.join(tmpdir(), 'discord-startup-filter-'));
+    const client = new FakeClient();
+    const bridge = new DiscordBridge({
+      logger: pino({ level: 'silent' }),
+      serverUrl: 'http://127.0.0.1:1',
+      config: loadConfig({ DISCORD_BOT_TOKEN: 'token', DISCORD_ALLOWED_USER_IDS: 'U1', ...env }),
+      dbPath: path.join(root, 'relay.db'),
+      tickMs: 60_000,
+      clientFactory: () => client,
+    });
+    try {
+      await bridge.start();
+      assert.equal(bridge.connected, true);
+      assert.deepEqual(client.fetched, []);
+      assert.deepEqual(client.sent, []);
+    } finally {
+      await bridge.stop();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('Discord startup targets are independent of ingress and cannot bypass a channel allowlist', async () => {
+  for (const { env, expected } of [
+    { env: { SMOLPAWS_DISCORD_STARTUP_CHANNEL_IDS: 'C1,C2' }, expected: ['C1', 'C2'] },
+    { env: { SMOLPAWS_DISCORD_STARTUP_CHANNEL_IDS: 'C1,C2', DISCORD_ALLOWED_CHANNELS: 'C2,C3' }, expected: ['C2'] },
+    { env: { SMOLPAWS_DISCORD_STARTUP_CHANNEL_IDS: '', DISCORD_ALLOWED_CHANNELS: 'C1' }, expected: [] },
+  ]) {
+    const root = mkdtempSync(path.join(tmpdir(), 'discord-startup-targets-'));
+    const client = new FakeClient();
+    const bridge = new DiscordBridge({
+      logger: pino({ level: 'silent' }),
+      serverUrl: 'http://127.0.0.1:1',
+      config: loadConfig({ DISCORD_BOT_TOKEN: 'token', DISCORD_ALLOWED_USER_IDS: 'U1', ...env }),
+      dbPath: path.join(root, 'relay.db'),
+      tickMs: 60_000,
+      clientFactory: () => client,
+    });
+    try {
+      await bridge.start();
+      assert.deepEqual(client.sent.map(({ channelId }) => channelId), expected);
+    } finally {
+      await bridge.stop();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
 });
 
 test('Discord ingress reaches the real TypeScript agent-server and returns through the durable relay', async () => {
