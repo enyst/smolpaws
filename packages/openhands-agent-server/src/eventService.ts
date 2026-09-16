@@ -29,9 +29,13 @@ import { conversationSecretRef, extractConversationSecretUpdates } from './conve
 import { type ConfirmationResponseRequest, type EventPage, type EventSortOrder, textFromContent } from './models.js';
 import type { StoredConversation } from './models.js';
 import { PubSub, type Subscriber } from './pubSub.js';
+import { ConversationProfileRuntime, type ProfileRuntimeOptions, type UpdateConversationRequest } from './profileRuntime.js';
 
 export interface AgentFactoryContext {
   readonly stored: StoredConversation;
+  readonly switchProfile?: (name: string) => Promise<{ model: string }>;
+  /** A validated, already prepared initial replacement; never supplied by an HTTP caller. */
+  readonly llmClient?: LLMClient;
 }
 
 export type AgentFactory = (requestAgent: unknown, context: AgentFactoryContext) => Agent | Promise<Agent>;
@@ -43,6 +47,8 @@ export interface EventServiceOptions {
   readonly eventLog?: EventLog;
   readonly saveConversation?: (stored: StoredConversation) => Promise<void>;
   readonly secretStore?: SecretStore;
+  readonly profileRuntime?: ProfileRuntimeOptions;
+  readonly updateRequest?: UpdateConversationRequest;
 }
 
 export class EventService {
@@ -57,6 +63,9 @@ export class EventService {
   private readonly publishedEventIds = new Set<string>();
   private runPromise: Promise<void> | null = null;
   private rerunRequested = false;
+  private selectionRequested = false;
+  private lastStepUserMessageId: string | null = null;
+  private readonly profileRuntime: ConversationProfileRuntime | undefined;
 
   constructor(options: EventServiceOptions) {
     this.stored = options.stored;
@@ -65,6 +74,13 @@ export class EventService {
     this.saveConversation = options.saveConversation ?? (async () => undefined);
     this.secretStore = options.secretStore;
     this.agentFactory = options.agentFactory;
+    this.profileRuntime = options.profileRuntime === undefined ? undefined : new ConversationProfileRuntime(
+      this.stored, options.profileRuntime, options.updateRequest ?? (async (update) => {
+        const request = update(this.stored.request);
+        await this.saveConversation({ ...this.stored, request });
+        this.stored.request = request;
+      }),
+    );
   }
 
   /** Called only while restoring an exclusively owned conversation, before exposing it. */
@@ -196,6 +212,7 @@ export class EventService {
   }
 
   async run(): Promise<void> {
+    this.selectionRequested = true;
     if (this.runPromise !== null) {
       throw new Error('conversation_already_running');
     }
@@ -207,6 +224,10 @@ export class EventService {
       })
       .finally(() => {
         this.runPromise = null;
+        // A message may arrive after the final loop condition but before cleanup.
+        if (this.rerunRequested) void this.run().catch((error: unknown) => {
+          console.error('conversation_rerun_error', safeRunError(error));
+        });
       });
   }
 
@@ -297,8 +318,13 @@ export class EventService {
   }
 
   async close(): Promise<void> {
-    await this.runPromise?.catch(() => undefined);
+    await this.whenIdle();
     await this.pubSub.close();
+  }
+
+  /** Wait for execution and its publication/metadata cleanup, without closing subscriptions. */
+  async whenIdle(): Promise<void> {
+    while (this.runPromise !== null) await this.runPromise.catch(() => undefined);
   }
 
   private conversation(): Promise<LocalConversation> {
@@ -312,22 +338,50 @@ export class EventService {
   }
 
   private async createConversation(): Promise<LocalConversation> {
-    const agent = this.agentFactory === undefined ? defaultUnconfiguredAgent() : await this.agentFactory(this.stored.request.agent, { stored: this.stored });
+    if (this.selectionRequested) {
+      this.selectionRequested = false;
+      await this.profileRuntime?.observeConfiguration();
+    }
+    const llmClient = await this.profileRuntime?.prepareInitial(this.state);
+    const agent = this.agentFactory === undefined ? defaultUnconfiguredAgent() : await this.agentFactory(this.stored.request.agent, {
+      stored: this.stored,
+      ...(this.profileRuntime === undefined ? {} : { switchProfile: (name: string) => this.profileRuntime!.switchProfile(name) }),
+      ...(llmClient === undefined ? {} : { llmClient }),
+    });
     return new LocalConversation({
       agent,
       state: this.state,
       maxIterations: this.stored.request.max_iterations,
       stuckDetection: this.stored.request.stuck_detection,
+      onStepBoundary: async (currentAgent: Agent) => {
+        try {
+          if (this.selectionRequested) {
+            this.selectionRequested = false;
+            await this.profileRuntime?.observeConfiguration();
+          }
+          return await this.profileRuntime?.activate(currentAgent);
+        } catch (error) {
+          // Lease cleanup can fail after committing a replacement snapshot. Stop this run;
+          // a later turn must reconstruct from durable metadata instead of reusing the old agent.
+          this.conversationPromise = null;
+          throw error;
+        }
+      },
     });
   }
 
   private async runAndPublish(): Promise<void> {
     do {
       this.rerunRequested = false;
+      if (this.state.executionStatus === conversationExecutionStatus.FINISHED
+        && this.latestUserMessageId() !== this.lastStepUserMessageId) {
+        this.state.executionStatus = conversationExecutionStatus.IDLE;
+      }
       const startIndex = this.events().length;
       try {
         const conversation = await this.conversation();
         await conversation.run();
+        this.lastStepUserMessageId = conversation.lastStepUserMessageId;
         this.touch();
         await this.saveConversation(this.stored);
         for (const event of this.events().slice(startIndex)) {
@@ -339,6 +393,10 @@ export class EventService {
         await this.pubSub.publish(this.createStateUpdateEvent());
       }
     } while (this.rerunRequested);
+  }
+
+  private latestUserMessageId(): string | null {
+    return [...this.events()].reverse().find((event) => event.kind === 'MessageEvent' && event.source === 'user')?.id ?? null;
   }
 
   private async handleRunError(error: unknown, startIndex: number): Promise<void> {

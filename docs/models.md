@@ -1,0 +1,87 @@
+# Model selection
+
+SmolPaws selects saved LLM profiles by name. The profile owns the provider, model,
+API options and secret references. The product configuration only chooses which
+profile a role uses.
+
+Put selections in `~/.smolpaws/models.json` (or set `SMOLPAWS_MODELS_CONFIG` on the
+product server). `SMOLPAWS_HOME_DIR` changes the default directory. For example,
+using profiles already saved on that server:
+
+```json
+{
+  "version": 1,
+  "scopes": {
+    "whatsapp:main": { "agent": "eval-fable-5-1" },
+    "whatsapp:openhands": { "agent": "deepseek-v4-flash" },
+    "whatsapp:hunting": { "agent": "deepseek-v4-flash" }
+  }
+}
+```
+
+`scopes` uses the registered bridge platform and scope ID, joined by `:`. For
+WhatsApp, the scope ID is the group's configured folder. Slack and other relay
+bridges use their registered scope IDs. Scheduled runs keep their originating
+scope, including isolated runs. Incoming message tags cannot select another
+channel's configuration.
+
+An optional `roles` object supplies defaults across scopes:
+
+```json
+{
+  "version": 1,
+  "roles": {
+    "agent": "my-general-profile",
+    "condenser": "my-small-profile",
+    "oracle": "my-consultation-profile"
+  },
+  "scopes": {
+    "whatsapp:main": { "agent": "my-main-profile" }
+  }
+}
+```
+
+An exact scope selection wins over the shared role selection. Omitted roles stay
+unconfigured; a specialist role never implicitly borrows `agent`. **Only `agent`
+currently consumes these selections.** The new stack still needs its LLM
+summarizing condenser and oracle implementations (Beads `smolpaws-w2d.7` and
+`smolpaws-w2d.8`). Storing those role names does not enable the features.
+
+## Changing a running conversation
+
+Save edits atomically: write a complete temporary file and rename it over
+`models.json`. The server reads the applicable selection when a conversation
+runs. A changed selection applies at a safe boundary before a model call; it
+does not interrupt a call or outstanding tools. The same conversation ID,
+messages, tools, context snapshot and accumulated usage remain in place.
+
+The agent can also use `switch_llm` with a saved `profile_name` and a `reason`.
+The tool queues the selection for the next model call after the current tool
+batch finishes. It does not wait for itself to finish. The selected profile is
+durable across server restarts, including a switch in the final tool batch.
+
+The latest applicable **change** wins. An unchanged channel setting does not
+undo the agent's tool selection. Editing another channel or another role does
+not reset this conversation. Changing the channel's selected name again does
+override the earlier tool choice. Removing a scope override reveals the shared
+`roles.agent` selection, if present. Removing the last applicable mapping leaves
+the current conversation's choice intact; a new conversation uses its ordinary
+creation settings (an explicit profile or the server default) when no mapping applies.
+
+Editing a profile record without changing its selected name leaves existing
+conversation snapshots intact. Explicitly selecting it again with `switch_llm`
+can load the current record. Profile names must exist on each server using the
+configuration. A missing configured profile or invalid explicit configuration
+reports a conversation error instead of silently running a different model.
+A rejected `switch_llm` request returns an error tool observation and keeps the
+working selection. REST creation still validates its initial requested profile
+or server default, so that reference must name an existing profile.
+
+Per-call usage retains the profile/model that served that call. Switching never
+resets accumulated metrics. Provider-specific opaque reasoning is reused only
+when its recorded origin is compatible with the selected profile; the durable
+conversation history is preserved.
+
+This is product policy in `apps/relay-server/src/models.ts`. The shared server
+owns profile resolution and durable activation; the SDK owns the tool and safe
+step boundary. The bridges do not each implement a model-switching mechanism.

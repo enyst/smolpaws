@@ -92,12 +92,19 @@ const startConversationRequestBaseSchema = z
   .passthrough();
 
 export const publicStartConversationRequestSchema = startConversationRequestBaseSchema.transform(stripServerOwnedStartFields);
-export const startConversationRequestSchema = startConversationRequestBaseSchema.extend({ llm_profile_snapshot: llmProfileSchema.optional() });
+export const startConversationRequestSchema = startConversationRequestBaseSchema.extend({
+  llm_profile_snapshot: llmProfileSchema.optional(),
+  llm_profile_selection: z.object({
+    configured_ref: z.string().nullable(),
+    pending_profile: llmProfileSchema.nullable(),
+  }).strict().optional(),
+});
 export type StartConversationRequest = z.infer<typeof startConversationRequestSchema>;
 
 function stripServerOwnedStartFields(request: z.infer<typeof startConversationRequestBaseSchema>): z.infer<typeof startConversationRequestBaseSchema> {
   const publicRequest = { ...request } as Record<string, unknown>;
   delete publicRequest.llm_profile_snapshot;
+  delete publicRequest.llm_profile_selection;
   return publicRequest as z.infer<typeof startConversationRequestBaseSchema>;
 }
 
@@ -166,7 +173,7 @@ export type AgentResponseResult = z.infer<typeof agentResponseResultSchema>;
 
 export interface StoredConversation {
   readonly id: string;
-  readonly request: StartConversationRequest;
+  request: StartConversationRequest;
   readonly workspace: WorkspacePayload;
   title: string | null;
   tags: Record<string, string>;

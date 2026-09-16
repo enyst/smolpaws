@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ToolDefinition } from './index.js';
+export * from './switch-llm.js';
 export declare const baseObservationSchema: z.ZodObject<{
     text: z.ZodString;
     is_error: z.ZodDefault<z.ZodBoolean>;
@@ -45,5 +46,30 @@ export declare const BUILT_IN_TOOL_FACTORIES: {
     }, z.core.$strict>, z.ZodObject<{
         text: z.ZodString;
         is_error: z.ZodDefault<z.ZodBoolean>;
+    }, z.core.$strict>>;
+    SwitchLLMTool: () => ToolDefinition<z.ZodObject<{
+        profile_name: z.ZodString;
+        reason: z.ZodString;
+    }, z.core.$strict>, z.ZodObject<{
+        kind: z.ZodDefault<z.ZodLiteral<"SwitchLLMObservation">>;
+        content: z.ZodDefault<z.ZodArray<z.ZodPipe<z.ZodObject<{
+            cache_prompt: z.ZodDefault<z.ZodBoolean>;
+            enable_truncation: z.ZodOptional<z.ZodBoolean>;
+            type: z.ZodDefault<z.ZodLiteral<"text">>;
+            text: z.ZodString;
+        }, z.core.$strict>, z.ZodTransform<{
+            cache_prompt: boolean;
+            type: "text";
+            text: string;
+        }, {
+            cache_prompt: boolean;
+            type: "text";
+            text: string;
+            enable_truncation?: boolean | undefined;
+        }>>>>;
+        is_error: z.ZodDefault<z.ZodBoolean>;
+        profile_name: z.ZodString;
+        reason: z.ZodDefault<z.ZodNullable<z.ZodString>>;
+        active_model: z.ZodDefault<z.ZodNullable<z.ZodString>>;
     }, z.core.$strict>>;
 };

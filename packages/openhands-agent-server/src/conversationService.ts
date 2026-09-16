@@ -6,6 +6,7 @@ import { ConversationLease, ConversationLeaseHeldError, defaultLeaseTtlMs } from
 import { conversationDirectory, ConversationMetadataStore } from './conversationMetadata.js';
 import { conversationSecretRef, extractConversationSecrets, withoutConversationSecrets } from './conversationSecrets.js';
 import { EventService, type AgentFactory, type EventServiceOptions } from './eventService.js';
+import type { ProfileRuntimeOptions, UpdateConversationRequest as UpdateStoredRequest } from './profileRuntime.js';
 import {
   type ConversationInfo,
   type ConversationPage,
@@ -26,6 +27,7 @@ export interface ConversationServiceOptions {
   readonly secretStore?: SecretStore;
   readonly ownerInstanceId?: string;
   readonly leaseTtlMs?: number;
+  readonly profileRuntime?: ProfileRuntimeOptions;
 }
 
 interface ClaimedLease {
@@ -357,6 +359,8 @@ export class ConversationService {
     return {
       stored,
       saveConversation: (conversation) => this.saveOwnedConversation(conversation),
+      updateRequest: (update) => this.updateOwnedRequest(stored, update),
+      ...(this.options.profileRuntime === undefined ? {} : { profileRuntime: this.options.profileRuntime }),
       ...(this.options.agentFactory === undefined ? {} : { agentFactory: this.options.agentFactory }),
       ...(events === undefined ? {} : { events }),
       ...(this.options.secretStore === undefined ? {} : { secretStore: this.options.secretStore }),
@@ -370,6 +374,19 @@ export class ConversationService {
       throw new Error(`conversation ${stored.id} is not owned by this server instance`);
     }
     await claimed.lease.guardedWrite(claimed.generation, () => this.metadataStore.saveConversation(stored));
+  }
+
+  private async updateOwnedRequest(stored: StoredConversation, update: Parameters<UpdateStoredRequest>[0]): Promise<void> {
+    const claimed = this.leases.get(stored.id);
+    if (claimed === undefined) throw new Error(`conversation ${stored.id} is not owned by this server instance`);
+    await claimed.lease.guardedWrite(claimed.generation, async () => {
+      const request = startConversationRequestSchema.parse(update(stored.request));
+      const updated_at = new Date().toISOString();
+      await this.metadataStore.saveConversation({ ...stored, request, updated_at });
+      // Publish in memory before releasing the guard, so queued metadata saves see the new request.
+      stored.request = request;
+      stored.updated_at = updated_at;
+    });
   }
 
   private async claimLease(stored: StoredConversation): Promise<void> {
