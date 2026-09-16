@@ -273,7 +273,9 @@ export class ConversationService {
   }
 
   async close(): Promise<void> {
-    await this.readyPromise;
+    // Teardown must still release ownership if loading or repairing a stored
+    // conversation failed (for example, when the disk is full).
+    await this.readyPromise.catch(() => undefined);
     await Promise.all([...this.eventServices.values()].map((service) => service.close()));
     await Promise.all([...this.leases.keys()].map((conversationId) => this.releaseLease(conversationId)));
     this.eventServices.clear();
@@ -315,17 +317,39 @@ export class ConversationService {
   }
 
   private async loadPersistedConversations(): Promise<void> {
-    const persisted = await this.metadataStore.loadAll();
-    for (const stored of persisted) {
-      if (this.conversations.has(stored.id)) continue;
-      try {
-        await this.claimLease(stored);
-      } catch (error) {
-        if (error instanceof ConversationLeaseHeldError) continue;
-        throw error;
+    try {
+      const persisted = await this.metadataStore.loadAll();
+      for (const stored of persisted) {
+        if (this.conversations.has(stored.id)) continue;
+        try {
+          await this.claimLease(stored);
+        } catch (error) {
+          if (error instanceof ConversationLeaseHeldError) continue;
+          throw error;
+        }
+        const service = new EventService(this.eventServiceOptions(stored));
+        try {
+          // The lease establishes that no other server owns execution. Repair only
+          // disk-restored histories, before requests can append a retry or run them.
+          const claimed = this.leases.get(stored.id)!;
+          await claimed.lease.guardedWrite(claimed.generation, async () => {
+            if (await service.recoverInterruptedTools()) {
+              await this.metadataStore.saveConversation(stored);
+            }
+          });
+          this.conversations.set(stored.id, stored);
+          this.eventServices.set(stored.id, service);
+        } catch (error) {
+          await service.close();
+          throw error;
+        }
       }
-      this.conversations.set(stored.id, stored);
-      this.eventServices.set(stored.id, new EventService(this.eventServiceOptions(stored)));
+    } catch (error) {
+      await Promise.all([...this.eventServices.values()].map((service) => service.close()));
+      await Promise.all([...this.leases.keys()].map((id) => this.releaseLease(id)));
+      this.eventServices.clear();
+      this.conversations.clear();
+      throw error;
     }
   }
 

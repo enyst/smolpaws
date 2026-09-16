@@ -123,7 +123,14 @@ without changing durable arrival order. If an older build failed on this orderin
 after the tool completed, deploy the corrected SDK and use the existing conversation's
 `POST /api/conversations/{conversation_id}/run`. Do not append the accepted user input
 again or remove its completed observation. This recovery requires every tool result
-to be present; missing results are a separate interrupted-tool recovery case.
+to be present. On server startup, after claiming exclusive conversation ownership,
+`EventService.recoverInterruptedTools()` appends an internal tool-error result for every
+action whose outcome was not saved before the restart. It never reruns the interrupted
+command, rewrites previous events, or makes a provider request. SDK request serialization
+places these results next to their calls, ahead of user retries already in the log.
+Repeated restoration adds no duplicate results or usage. A subsequent prompt or explicit
+run continues the saved conversation. See [DEV-SERVER-008](../TRANSPILE_RULES.md#dev-server-008--restore-interrupted-calls-without-automatic-tool-replay)
+and the [upstream correction](../transpile/interrupted-tools.md).
 
 ## LLM usage and costs
 
