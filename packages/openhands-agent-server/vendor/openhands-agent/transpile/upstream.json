@@ -199,6 +199,20 @@
       ]
     },
     {
+      "id": "DEV-SDK-009",
+      "kind": "DEVIATION",
+      "target": "sdk",
+      "prefixes": [
+        "openhands-sdk/openhands/sdk/context/condenser/",
+        "tests/sdk/context/condenser/"
+      ],
+      "paths": [
+        "openhands-sdk/openhands/sdk/agent/agent.py",
+        "openhands-sdk/openhands/sdk/conversation/impl/local_conversation.py",
+        "openhands-sdk/openhands/sdk/event/base.py"
+      ]
+    },
+    {
       "id": "EXC-SDK-001",
       "kind": "EXCLUDED",
       "target": "sdk",

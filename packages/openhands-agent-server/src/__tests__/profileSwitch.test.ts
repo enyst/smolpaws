@@ -146,7 +146,11 @@ test('a message received during a final completion is answered by the newly sele
   await expect.poll(() => f.observed.length).toBe(2);
   await settled(f.server, f.id);
   expect(f.observed.map((call) => call.profile)).toEqual(['a', 'b']);
-  expect(JSON.stringify(f.observed[1]!.messages)).toContain('arrived during completion');
+  expect(f.observed[1]!.messages.filter((message) => message.role !== 'system')).toMatchObject([
+    { role: 'user', content: messageSchema.parse({ role: 'user', content: 'first' }).content },
+    { role: 'assistant', content: reply('done').content },
+    { role: 'user', content: messageSchema.parse({ role: 'user', content: 'arrived during completion' }).content },
+  ]);
 });
 
 test('invalid config selection fails the run without changing the effective snapshot or invoking another client', async () => {

@@ -12,6 +12,8 @@ export type LLMResponseType = (typeof llmResponseType)[keyof typeof llmResponseT
 export interface DispatchLlmResponseOptions {
     readonly llmResponseId?: string | null;
     readonly maxConcurrency?: number;
+    /** Last event in the immutable request snapshot; null for an empty input log. */
+    readonly inputEventId?: string | null;
     readonly executor?: ParallelToolExecutor;
     readonly maskSecretsInOutput?: ((text: string) => string) | null;
 }
