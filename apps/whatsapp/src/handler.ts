@@ -121,10 +121,11 @@ export async function buildPrompt(
   }
 
   const text = `<messages>\n${lines.join('\n')}\n</messages>`;
+  // The agent-server accepts SDK content; the SDK owns conversion to provider wire formats.
   const content =
     images.length === 0
       ? text
-      : [{ type: 'text', text }, ...images.map((image) => ({ type: 'image_url', image_url: { url: image.dataUrl } }))];
+      : [{ type: 'text', text }, ...images.map((image) => ({ type: 'image', image_urls: [image.dataUrl] }))];
   return { text, images, content, documentCount };
 }
 
