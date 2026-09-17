@@ -136,3 +136,18 @@ accounting. They did not wait a full hour. The production setting applies to
 future requests; the rollout did not warm or extend an existing provider cache.
 See the [LLM profile notebook](https://enyst.github.io/arch/llm-profiles.html#anthropic-cache-ttl)
 for the implementation, policy, and verification record.
+
+### Optional-field correction — 2026-09-17
+
+[SDK #44](https://github.com/smolpaws/openhands-agent/pull/44) and
+[server #205](https://github.com/smolpaws/smolpaws/pull/205) made the field optional
+without inserting a schema default. The corrected server build is `6e53dc6`,
+with SDK `4212592`. Omission now stays absent through profile parsing, REST,
+storage and conversation restore; Anthropic's omitted-duration wire behavior is unchanged.
+
+The idle rollout removed automatically inserted `5m` fields from three DeepSeek
+snapshots. Read-only verification found all 42 non-Anthropic saved profiles without
+the field, while all five Anthropic snapshots retained their explicit `1h`.
+All 47 conversations, 2,713 event files, 24 context snapshots and accumulated metrics
+were preserved. WhatsApp kept its process. The rollout sent no provider requests
+or Main test prompts; the earlier Haiku live proof remains historical.
