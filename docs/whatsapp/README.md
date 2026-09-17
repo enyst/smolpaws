@@ -5,15 +5,26 @@ primary channel between the cat and its human, rebuilt in the shape `apps/slack`
 `smolpaws-kxa`, epic `smolpaws-zlo`): its own process, the shared Message Relay, the TypeScript
 OpenHands agent-server on `:8790`, no `/turns`.
 
-The legacy root process (`src/index.ts`, `npm start`) still exists as the documented rollback until
-this bridge has soaked. Run one or the other for a given WhatsApp account, never both.
+The legacy root process (`src/index.ts`, `npm start`) remains reference and rollback code. Normal
+operation uses the standalone bridge. Run only one WhatsApp bridge for a given account.
 
 ## Deployment status
+
+Since the verified September 17 promotion, `com.smolpaws.bridge.whatsapp` uses the shared product host
+`com.smolpaws.relay-server` on `:8790`, retaining the conversations and scheduled work from the canary.
+The old canary services on `:8791` and legacy `com.smolpaws` remain disabled. See the
+[dated promotion record](READINESS.md#september-17-production-promotion) for preservation counts and
+startup evidence; it does not claim a new user-confirmed reply after the move.
+
+Current TypeScript conversations live in `~/.smolpaws/conversations/<uuid>/events/`. The older Main
+transcripts remain separately at `~/.openhands/conversations/main-*/events.jsonl`. The WhatsApp auth
+and ledger remain under `~/.smolpaws/whatsapp/`; promotion does not recreate the device link or Main
+conversation. Normal relay/scheduler state is under `~/.smolpaws/coordinator/`.
 
 Before starting on an existing WhatsApp account, follow [Readiness and cutover gates](READINESS.md).
 The bridge imports the actual legacy `data/router_state.json` once into its shared message-identity journal.
 A fresh relay database alone does not isolate reused server conversations. The setup below describes
-configuration, not a complete production migration or rollback procedure.
+configuration; follow the dated migration and rollback procedure when transferring an existing account.
 
 ## Flow
 
@@ -34,7 +45,7 @@ WhatsApp (Baileys socket)
 Identity:
 
 - lane: `whatsapp:{account}:{chat_jid}`, one agent-server conversation per registered chat;
-- conversation id: derived deterministically from the lane key (legacy `data/sessions.json` ids are never reused);
+- conversation id: the existing relay binding is authoritative; a new lane defaults to a deterministic id derived from its key (legacy `data/sessions.json` ids are never reused);
 - intake source key: `whatsapp:{account}:{newest WhatsApp message id in the batch}`;
 - delivery source key: `{agent event id}:{lane}`.
 
@@ -233,5 +244,7 @@ use a durable local spool and the normal delivery dispatcher.
 
 Both updated host generations share message-identity progress. After draining and stopping the bridge,
 run `npm run whatsapp:handoff -- legacy` before starting the updated legacy host. The command checks
-in-flight work and exports scheduler changes; a simple service swap is insufficient. Follow the full
+in-flight work and exports scheduler changes; a simple service swap is insufficient. Always use the
+latest production state, including changes since promotion; a frozen canary backup would lose that
+progress and can replay effects. Follow the full
 [readiness and rollback checklist](READINESS.md), including state isolation and the live test gates.
