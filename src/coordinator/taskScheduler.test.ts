@@ -74,3 +74,25 @@ test('scheduler handoff exports edits and cancellation, refuses active runs, and
     scheduler.due('whatsapp'); assert.throws(() => scheduler.exportLegacy(ledger, 'ledger'), /reconcile/);
   } finally { scheduler.close(); ledger.close(); }
 });
+
+test('isolated task provenance requires a durable run distinct from the task owner', () => {
+  const scheduler = new TaskScheduler(':memory:', () => 1000);
+  try {
+    scheduler.register(lane('whatsapp', 'openhands'));
+    const created = scheduler.execute('whatsapp-openhands', 'schedule_task', {
+      ...taskAction, schedule_type: 'once', schedule_value: new Date(1000).toISOString(),
+    }, 'checker');
+    const taskId = JSON.parse(created.text).task_id;
+    assert.equal(scheduler.isolatedTask('whatsapp-openhands'), undefined);
+    const [run] = scheduler.due('whatsapp');
+    assert.equal(scheduler.isolatedTask(run.conversation_id)!.id, taskId);
+    assert.equal(scheduler.isolatedTask(run.conversation_id)!.conversation_id, 'whatsapp-openhands');
+    const owner = scheduler.lane('whatsapp-openhands')!;
+    scheduler.register({ ...owner, conversationId: 'forged', lane: { ...owner.lane, laneKey: `whatsapp:openhands:scheduled:${run.id}` } });
+    assert.equal(scheduler.isolatedTask('forged'), undefined);
+    scheduler.db.prepare('UPDATE scheduler_tasks SET context_mode=? WHERE id=?').run('group', taskId);
+    assert.equal(scheduler.isolatedTask(run.conversation_id), undefined);
+    scheduler.db.prepare('UPDATE scheduler_tasks SET context_mode=?, conversation_id=? WHERE id=?').run('isolated', run.conversation_id, taskId);
+    assert.equal(scheduler.isolatedTask(run.conversation_id), undefined);
+  } finally { scheduler.close(); }
+});

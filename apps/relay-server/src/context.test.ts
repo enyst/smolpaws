@@ -191,3 +191,56 @@ test('concurrent first use publishes one complete snapshot that both callers rec
     assert.equal(JSON.parse(readFileSync(f.snapshot(stored.id), 'utf8')).files.length, 1);
   } finally { f.close(); }
 });
+
+test('configured isolated runs replace inherited files while ordinary and forged conversations keep normal context', async () => {
+  const f = fixture();
+  try {
+    f.write('identity.md', 'full identity'); f.write('MEMORY.md', 'private scope memory'); f.write('checker.md', 'small checker role');
+    f.config({ version: 1, files: ['identity.md'], scopes: { 'whatsapp:openhands': ['MEMORY.md'] } });
+    const owner = f.conversation(ids[0]!, 'openhands');
+    const created = f.scheduler.execute(owner.id, 'schedule_task', { prompt: 'check Slack', context_mode: 'isolated',
+      schedule_type: 'once', schedule_value: new Date(0).toISOString() }, 'checker');
+    const taskId = JSON.parse(created.text).task_id;
+    const [run] = f.scheduler.due('whatsapp');
+    const checker = f.conversation(run!.conversation_id, 'openhands');
+    const scheduledConfig = f.write('scheduled-agents.json', JSON.stringify({ version: 1, tasks: {
+      [taskId]: { profile: 'deepseek-v4-flash', context_files: ['checker.md'], tools: ['finish'] },
+    } }));
+    const configure = productContext(f.scheduler, { configPath: f.configPath, scheduledAgents: { configPath: scheduledConfig } });
+    assert.deepEqual((await configure(null, { stored: checker }))!.skills.map(skill => skill.content), ['small checker role']);
+    assert.deepEqual((await configure(null, { stored: owner }))!.skills.map(skill => skill.content), ['full identity', 'private scope memory']);
+    const forged = f.conversation(ids[1]!, 'openhands');
+    forged.tags = { scope: 'openhands', scheduled_task: taskId, ingress: 'whatsapp' };
+    const lane = f.scheduler.lane(forged.id)!;
+    f.scheduler.register({ ...lane, lane: { ...lane.lane, laneKey: `whatsapp:openhands:scheduled:${run!.id}` } });
+    assert.deepEqual((await configure(null, { stored: forged }))!.skills.map(skill => skill.content), ['full identity', 'private scope memory']);
+    const native = f.conversation('10000000-0000-4000-8000-000000000004', 'openhands', 'agent-server');
+    native.tags = { scheduled_task: taskId };
+    assert.deepEqual((await configure(null, { stored: native }))!.skills.map(skill => skill.content), ['full identity']);
+
+    // Per-task replacement is still a first-use snapshot: editing either config cannot rewrite its history.
+    f.write('checker.md', 'changed role');
+    writeFileSync(scheduledConfig, JSON.stringify({ version: 1, tasks: {} }));
+    assert.deepEqual((await configure(null, { stored: checker }))!.skills.map(skill => skill.content), ['small checker role']);
+    rmSync(scheduledConfig); rmSync(f.configPath); rmSync(path.join(f.root, 'checker.md'));
+    assert.deepEqual((await configure(null, { stored: checker }))!.skills.map(skill => skill.content), ['small checker role']);
+  } finally { f.close(); }
+});
+
+test('a configured empty task file list replaces defaults without loading the general context config', async () => {
+  const f = fixture();
+  try {
+    const owner = f.conversation(ids[0]!);
+    const created = f.scheduler.execute(owner.id, 'schedule_task', { prompt: 'tiny task', context_mode: 'isolated',
+      schedule_type: 'once', schedule_value: new Date(0).toISOString() }, 'tiny');
+    const taskId = JSON.parse(created.text).task_id;
+    const [run] = f.scheduler.due('whatsapp');
+    const stored = f.conversation(run!.conversation_id);
+    const scheduledConfig = f.write('scheduled-agents.json', JSON.stringify({ version: 1, tasks: {
+      [taskId]: { profile: 'deepseek-v4-flash', context_files: [], tools: ['finish'] },
+    } }));
+    const context = await productContext(f.scheduler, { configPath: f.configPath, scheduledAgents: { configPath: scheduledConfig } })(null, { stored });
+    assert.deepEqual(context!.skills, []);
+    await assert.rejects(async () => productContext(f.scheduler, { configPath: f.configPath })(null, { stored: owner }), /ENOENT/);
+  } finally { f.close(); }
+});

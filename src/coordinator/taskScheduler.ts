@@ -58,6 +58,12 @@ export class TaskScheduler {
     const row = this.db.prepare('SELECT value_json FROM scheduler_lanes WHERE conversation_id = ?').get(conversationId) as { value_json: string } | undefined;
     return row ? JSON.parse(row.value_json) as ScheduledLane : null;
   }
+  /** Trusted provenance for product configuration and handoff to an isolated run's owner. */
+  isolatedTask(conversationId: string): ScheduledTask | undefined {
+    return this.db.prepare(`SELECT t.* FROM scheduler_tasks t JOIN scheduler_runs r ON r.task_id=t.id
+      WHERE r.conversation_id=? AND t.context_mode='isolated' AND r.conversation_id<>t.conversation_id
+      LIMIT 1`).get(conversationId) as ScheduledTask | undefined;
+  }
   private visible(scope: string, target: string): boolean { return scope === 'main' || scope === target; }
   private next(type: string, value: string): string {
     if (type === 'interval') {

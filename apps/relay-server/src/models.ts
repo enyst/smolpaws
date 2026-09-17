@@ -4,8 +4,9 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import type { ProfileSelectionResolver } from '../../../packages/openhands-agent-server/src/profileRuntime.js';
 import type { TaskScheduler } from '../../../src/coordinator/taskScheduler.js';
+import { loadScheduledAgent, type ScheduledAgentOptions } from './scheduledAgents.js';
 
-export interface ProductModelOptions { configPath?: string; homeDir?: string }
+export interface ProductModelOptions { configPath?: string; homeDir?: string; scheduledAgents?: ScheduledAgentOptions }
 export interface ModelSelections {
   version: 1;
   roles?: Record<string, string>;
@@ -55,6 +56,8 @@ export function productProfileSelection(scheduler: TaskScheduler, options: Produ
   return async ({ stored }) => {
     const lane = scheduler.lane(stored.id);
     if (!lane) throw new Error('Model selection requires a registered scheduler lane');
+    const scheduled = loadScheduledAgent(stored.id, scheduler, { homeDir: options.homeDir, ...options.scheduledAgents });
+    if (scheduled) return scheduled.profile;
     return selectRoleProfile(await loadModelSelections(options), 'agent', `${lane.lane.platform}:${lane.scopeId}`);
   };
 }

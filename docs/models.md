@@ -25,6 +25,11 @@ bridges use their registered scope IDs. Scheduled runs keep their originating
 scope, including isolated runs. Incoming message tags cannot select another
 channel's configuration.
 
+An explicitly configured isolated task can select its own saved profile through
+[`scheduled-agents.json`](scheduled-agents.md). That task selection takes precedence
+over the scope's `agent` selection. It also provides the helper's exact tools and
+context files; it does not change the owner channel's conversation or profile.
+
 An optional `roles` object supplies defaults across scopes:
 
 ```json

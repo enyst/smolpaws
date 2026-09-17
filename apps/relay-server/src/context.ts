@@ -9,9 +9,10 @@ import type { ProfileContextConfigurator } from '../../../packages/openhands-age
 import type { TaskScheduler } from '../../../src/coordinator/taskScheduler.js';
 import { loadSmolpawsContextDocs } from '../../../src/shared/smolpawsContext.js';
 import type * as Sdk from '../../../packages/openhands-agent-server/vendor/openhands-agent/dist/index.js';
+import { loadScheduledAgent, type ScheduledAgentOptions } from './scheduledAgents.js';
 
 const sdk = createRequire(import.meta.url)('../../../packages/openhands-agent-server/vendor/openhands-agent/dist/index.cjs') as typeof Sdk;
-export interface ProductContextOptions { configPath?: string; repoRoot?: string; homeDir?: string }
+export interface ProductContextOptions { configPath?: string; repoRoot?: string; homeDir?: string; scheduledAgents?: ScheduledAgentOptions }
 interface ContextConfig { version: 1; files?: string[]; scopes?: Record<string, string[]> }
 interface ContextFile { path: string; name: string; sha256: string; content: string }
 interface ContextSnapshot { version: 1; createdAt: string; scope: string; files: ContextFile[] }
@@ -56,18 +57,18 @@ async function readSnapshot(file: string, scope: string): Promise<ContextSnapsho
   catch (error) { if (errno(error, 'ENOENT')) return null; throw error; }
 }
 
-async function capture(scope: string, options: ProductContextOptions): Promise<ContextSnapshot> {
+async function capture(scope: string, options: ProductContextOptions, taskFiles?: string[]): Promise<ContextSnapshot> {
   const home = options.homeDir ?? (process.env.SMOLPAWS_HOME_DIR?.trim() || path.join(homedir(), '.smolpaws'));
   const explicit = options.configPath ?? (process.env.SMOLPAWS_CONTEXT_CONFIG?.trim() || undefined);
   const configPath = resolveFile(explicit ?? path.join(home, 'context.json'), process.cwd());
   let config: ContextConfig;
-  try { config = parseConfig(JSON.parse(await fs.readFile(configPath, 'utf8'))); }
+  try { config = taskFiles === undefined ? parseConfig(JSON.parse(await fs.readFile(configPath, 'utf8'))) : { version: 1, files: [] }; }
   catch (error) {
     if (explicit !== undefined || !errno(error, 'ENOENT')) throw error;
     config = { version: 1 };
   }
   const defaults = config.files === undefined ? loadSmolpawsContextDocs({ repoRoot: options.repoRoot }).map(doc => doc.path) : config.files;
-  const selected = [...defaults, ...(config.scopes?.[scope] ?? [])];
+  const selected = taskFiles ?? [...defaults, ...(config.scopes?.[scope] ?? [])];
   const files: ContextFile[] = [];
   const seen = new Set<string>();
   for (const selectedPath of selected) {
@@ -101,7 +102,8 @@ export function productContext(scheduler: TaskScheduler, options: ProductContext
     if (!lane) throw new Error('Context requires a registered scheduler lane');
     const scope = `${lane.lane.platform}:${lane.scopeId}`;
     const snapshotPath = path.join(conversationDirectory(stored, 'workspace/conversations'), 'smolpaws-context.json');
-    const snapshot = await readSnapshot(snapshotPath, scope) ?? await publishSnapshot(snapshotPath, await capture(scope, options));
+    const snapshot = await readSnapshot(snapshotPath, scope) ?? await publishSnapshot(snapshotPath, await capture(scope, options,
+      loadScheduledAgent(stored.id, scheduler, { homeDir: options.homeDir, ...options.scheduledAgents })?.context_files));
     const skills = [...(existing?.skills ?? [])];
     const names = new Set(skills.map(skill => skill.name));
     for (const file of snapshot.files) {
