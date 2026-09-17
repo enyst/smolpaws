@@ -370,7 +370,7 @@ export class ServerStateService {
 }
 
 function defaultState(): PersistedState {
-  const profile: LLMProfile = {
+  const profile = llmProfileSchema.parse({
     profileId: defaultProfileId,
     providerId: 'openai',
     model: 'gpt-5-nano',
@@ -391,7 +391,7 @@ function defaultState(): PersistedState {
     promptCacheKey: null,
     headers: {},
     useProfileKeyOverride: false,
-  };
+  });
   return {
     llmProfiles: { [profile.profileId]: profile },
     agentProfiles: {},

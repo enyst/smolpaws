@@ -7,6 +7,10 @@ export declare const openAiApiModeSchema: z.ZodUnion<readonly [z.ZodLiteral<"cha
 export declare const reasoningEffortSchema: z.ZodUnion<readonly [z.ZodLiteral<"low">, z.ZodLiteral<"medium">, z.ZodLiteral<"high">]>;
 export declare const reasoningSummarySchema: z.ZodUnion<readonly [z.ZodLiteral<"auto">, z.ZodLiteral<"concise">, z.ZodLiteral<"detailed">]>;
 export declare const promptCacheRetentionSchema: z.ZodUnion<readonly [z.ZodLiteral<"24h">, z.ZodLiteral<"disabled">]>;
+export declare const anthropicCacheTtlSchema: z.ZodEnum<{
+    "5m": "5m";
+    "1h": "1h";
+}>;
 export declare const llmProfileSchema: z.ZodObject<{
     profileId: z.ZodString;
     providerId: z.ZodString;
@@ -27,6 +31,10 @@ export declare const llmProfileSchema: z.ZodObject<{
     reasoningEffort: z.ZodDefault<z.ZodNullable<z.ZodUnion<readonly [z.ZodLiteral<"low">, z.ZodLiteral<"medium">, z.ZodLiteral<"high">]>>>;
     reasoningSummary: z.ZodDefault<z.ZodNullable<z.ZodUnion<readonly [z.ZodLiteral<"auto">, z.ZodLiteral<"concise">, z.ZodLiteral<"detailed">]>>>;
     cachingPrompt: z.ZodDefault<z.ZodBoolean>;
+    anthropicCacheTtl: z.ZodDefault<z.ZodEnum<{
+        "5m": "5m";
+        "1h": "1h";
+    }>>;
     promptCacheRetention: z.ZodDefault<z.ZodNullable<z.ZodUnion<readonly [z.ZodLiteral<"24h">, z.ZodLiteral<"disabled">]>>>;
     promptCacheKey: z.ZodDefault<z.ZodNullable<z.ZodString>>;
     headers: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodString>>;
@@ -37,6 +45,7 @@ export type OpenAiApiMode = z.infer<typeof openAiApiModeSchema>;
 export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
 export type ReasoningSummary = z.infer<typeof reasoningSummarySchema>;
 export type PromptCacheRetention = z.infer<typeof promptCacheRetentionSchema>;
+export type AnthropicCacheTtl = z.infer<typeof anthropicCacheTtlSchema>;
 export declare function resolveLlmProfileApiKeyRef(profile: LLMProfile, store: SecretStore): Promise<SecretRef | null>;
 export declare const thinkingBlockSchema: z.ZodObject<{
     type: z.ZodDefault<z.ZodLiteral<"thinking">>;

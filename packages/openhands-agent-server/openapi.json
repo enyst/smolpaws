@@ -6268,6 +6268,14 @@
                             "default": true,
                             "type": "boolean"
                           },
+                          "anthropicCacheTtl": {
+                            "default": "5m",
+                            "type": "string",
+                            "enum": [
+                              "5m",
+                              "1h"
+                            ]
+                          },
                           "promptCacheRetention": {
                             "default": null,
                             "anyOf": [
@@ -6332,6 +6340,7 @@
                           "reasoningEffort",
                           "reasoningSummary",
                           "cachingPrompt",
+                          "anthropicCacheTtl",
                           "promptCacheRetention",
                           "promptCacheKey",
                           "headers",
@@ -6563,6 +6572,14 @@
                     "default": true,
                     "type": "boolean"
                   },
+                  "anthropicCacheTtl": {
+                    "default": "5m",
+                    "type": "string",
+                    "enum": [
+                      "5m",
+                      "1h"
+                    ]
+                  },
                   "promptCacheRetention": {
                     "default": null,
                     "anyOf": [
@@ -6815,6 +6832,14 @@
                       "default": true,
                       "type": "boolean"
                     },
+                    "anthropicCacheTtl": {
+                      "default": "5m",
+                      "type": "string",
+                      "enum": [
+                        "5m",
+                        "1h"
+                      ]
+                    },
                     "promptCacheRetention": {
                       "default": null,
                       "anyOf": [
@@ -6879,6 +6904,7 @@
                     "reasoningEffort",
                     "reasoningSummary",
                     "cachingPrompt",
+                    "anthropicCacheTtl",
                     "promptCacheRetention",
                     "promptCacheKey",
                     "headers",
@@ -7106,6 +7132,14 @@
                       "default": true,
                       "type": "boolean"
                     },
+                    "anthropicCacheTtl": {
+                      "default": "5m",
+                      "type": "string",
+                      "enum": [
+                        "5m",
+                        "1h"
+                      ]
+                    },
                     "promptCacheRetention": {
                       "default": null,
                       "anyOf": [
@@ -7170,6 +7204,7 @@
                     "reasoningEffort",
                     "reasoningSummary",
                     "cachingPrompt",
+                    "anthropicCacheTtl",
                     "promptCacheRetention",
                     "promptCacheKey",
                     "headers",
@@ -7393,6 +7428,14 @@
                   "cachingPrompt": {
                     "default": true,
                     "type": "boolean"
+                  },
+                  "anthropicCacheTtl": {
+                    "default": "5m",
+                    "type": "string",
+                    "enum": [
+                      "5m",
+                      "1h"
+                    ]
                   },
                   "promptCacheRetention": {
                     "default": null,
@@ -7646,6 +7689,14 @@
                       "default": true,
                       "type": "boolean"
                     },
+                    "anthropicCacheTtl": {
+                      "default": "5m",
+                      "type": "string",
+                      "enum": [
+                        "5m",
+                        "1h"
+                      ]
+                    },
                     "promptCacheRetention": {
                       "default": null,
                       "anyOf": [
@@ -7710,6 +7761,7 @@
                     "reasoningEffort",
                     "reasoningSummary",
                     "cachingPrompt",
+                    "anthropicCacheTtl",
                     "promptCacheRetention",
                     "promptCacheKey",
                     "headers",
@@ -8099,6 +8151,14 @@
                       "cachingPrompt": {
                         "default": true,
                         "type": "boolean"
+                      },
+                      "anthropicCacheTtl": {
+                        "default": "5m",
+                        "type": "string",
+                        "enum": [
+                          "5m",
+                          "1h"
+                        ]
                       },
                       "promptCacheRetention": {
                         "default": null,

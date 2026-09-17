@@ -62,6 +62,15 @@ Do not port Fernet/cipher/plaintext secret-storage implementation details. Use t
 
 Prefer profile-oriented settings and secret references. Raw LLM/API-key fields may exist only where compatibility genuinely requires them, and must not become the normal product path. Any new addition of raw fields requires human approval.
 
+The SDK's profile-first Anthropic cache duration setting, `anthropicCacheTtl`, also flows
+through server CRUD, validation, generated OpenAPI and saved conversation profiles.
+Its accepted values (`5m`, `1h`), backward-compatible default (`5m`), provider serialization
+and accounting belong to the SDK. This is target profile policy under `DEV-SDK-004`,
+not a claim that the pinned Python server exposes an equivalent TTL field. Do not add
+bridge-specific cache settings or a second server-side marker implementation. Preserve
+snapshot semantics: a catalog edit alone cannot alter the TTL of a saved conversation;
+explicit profile reselection uses `DEV-SERVER-009`. Evidence: `src/__tests__/promptCaching.test.ts`.
+
 ### DEV-SERVER-005 — no deferred-init flow
 
 Do not implement upstream deferred-init behavior as active product behavior.

@@ -143,7 +143,11 @@
       ],
       "paths": [
         "openhands-sdk/openhands/sdk/llm/llm_profile_store.py",
-        "openhands-sdk/openhands/sdk/llm/llm_registry.py"
+        "openhands-sdk/openhands/sdk/llm/llm_registry.py",
+        "openhands-sdk/openhands/sdk/llm/llm.py",
+        "openhands-sdk/openhands/sdk/llm/message.py",
+        "tests/sdk/llm/test_message.py",
+        "tests/sdk/llm/test_prompt_caching_cross_conversation.py"
       ]
     },
     {
