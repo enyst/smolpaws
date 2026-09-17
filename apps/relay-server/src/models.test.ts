@@ -91,3 +91,36 @@ test('invalid config fails clearly and never accepts inline provider settings or
       error instanceof Error && error.message === 'Invalid SmolPaws model configuration');
   } finally { f.close(); }
 });
+
+test('isolated task profile stays selected across scope edits while owner and group runs keep normal selection', async () => {
+  const f = fixture();
+  try {
+    f.register('whatsapp', 'openhands');
+    const create = (context_mode: string, command: string) => {
+      const result = f.scheduler.execute(f.stored.id, 'schedule_task', { prompt: 'check Slack', context_mode,
+        schedule_type: 'once', schedule_value: new Date(0).toISOString() }, command);
+      assert.equal(result.is_error, false);
+      return JSON.parse(result.text).task_id as string;
+    };
+    const taskId = create('isolated', 'checker');
+    const groupId = create('group', 'group');
+    const run = f.scheduler.due('whatsapp').find(item => item.task_id === taskId)!;
+    const stored = { ...f.stored, id: run.conversation_id, request: { ...f.stored.request, id: run.conversation_id } };
+    const scheduledPath = path.join(f.root, 'scheduled-agents.json');
+    const tasks = {
+      [taskId]: { profile: 'deepseek-v4-flash', context_files: [], tools: ['finish'] },
+      [groupId]: { profile: 'must-not-override-group', context_files: [], tools: ['finish'] },
+    };
+    writeFileSync(scheduledPath, JSON.stringify({ version: 1, tasks }));
+    f.write({ version: 1, scopes: { 'whatsapp:openhands': { agent: 'eval-fable-5-1' } } });
+    const select = productProfileSelection(f.scheduler, { configPath: f.configPath, scheduledAgents: { configPath: scheduledPath } });
+    assert.equal(await select({ stored }), 'deepseek-v4-flash');
+    assert.equal(await select({ stored: f.stored }), 'eval-fable-5-1');
+    f.write({ version: 1, scopes: { 'whatsapp:openhands': { agent: 'another-full-agent-profile' } } });
+    assert.equal(await select({ stored }), 'deepseek-v4-flash');
+    assert.equal(await select({ stored: f.stored }), 'another-full-agent-profile');
+    tasks[taskId]!.profile = 'updated-checker-profile';
+    writeFileSync(scheduledPath, JSON.stringify({ version: 1, tasks }));
+    assert.equal(await select({ stored }), 'updated-checker-profile');
+  } finally { f.close(); }
+});
