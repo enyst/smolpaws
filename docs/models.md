@@ -115,3 +115,22 @@ Cache hits and writes must still be measured from provider responses. A requeste
 cache duration does not prove reuse or a particular billed cost. See the
 [server cache and accounting contract](../packages/openhands-agent-server/docs/ARCHITECTURE.md#llm-usage-and-costs)
 for profile persistence and regression coverage.
+
+### Verified local rollout — 2026-09-17
+
+[SDK #42](https://github.com/smolpaws/openhands-agent/pull/42) and
+[server #202](https://github.com/smolpaws/smolpaws/pull/202) added the setting and
+re-vendored SDK `8c25a50`; the deployed server build is `61e5fed`.
+The authorized idle rollout set one hour in the local Fable catalog record and
+all five saved Anthropic conversation profiles. Verification preserved all 45
+conversations, 2,666 event files, 22 context snapshots, and accumulated metrics.
+The WhatsApp bridge process remained running; no production conversation was prompted.
+
+Isolated Haiku checks through the eval proxy passed locally and in the GitHub
+`LLM` environment with `ANTHROPIC_CACHE_TTL=1h`:
+[Live LLM run](https://github.com/smolpaws/openhands-agent/actions/runs/35171163557).
+They proved provider-reported one-hour writes, warm cache hits and restored
+accounting. They did not wait a full hour. The production setting applies to
+future requests; the rollout did not warm or extend an existing provider cache.
+See the [LLM profile notebook](https://enyst.github.io/arch/llm-profiles.html#anthropic-cache-ttl)
+for the implementation, policy, and verification record.
