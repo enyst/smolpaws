@@ -99,11 +99,13 @@ For native Anthropic profiles and Anthropic models through compatible proxies, u
 ```
 
 These are profile fields, not entries in `models.json` or a bridge registration file.
-`anthropicCacheTtl` accepts `"5m"` and `"1h"`. Omitting it keeps the five-minute default
-for older profiles. `"1h"` requests one-hour cache entries on the SDK's automatic
-Anthropic breakpoints; `cachingPrompt:false` disables those markers. This setting is
-separate from OpenAI's `promptCacheRetention` and does not enable caching for an
-unsupported model.
+`anthropicCacheTtl` is optional and accepts `"5m"` and `"1h"`. When omitted, it stays
+absent from profiles, API responses and saved conversation snapshots. For Anthropic
+models, including compatible proxies, cache serialization treats omission as the
+provider's five-minute behavior; other providers do not acquire an Anthropic TTL.
+`"1h"` requests one-hour cache entries on the SDK's automatic Anthropic breakpoints; `cachingPrompt:false`
+disables those markers. This setting is separate from OpenAI's `promptCacheRetention`
+and does not enable caching for an unsupported model.
 
 Update the complete saved profile through `POST /api/profiles/{name}`, preserving its
 other fields. The catalog change affects new conversations. Existing conversations
@@ -120,7 +122,7 @@ for profile persistence and regression coverage.
 
 [SDK #42](https://github.com/smolpaws/openhands-agent/pull/42) and
 [server #202](https://github.com/smolpaws/smolpaws/pull/202) added the setting and
-re-vendored SDK `8c25a50`; the deployed server build is `61e5fed`.
+re-vendored SDK `8c25a50`; that rollout deployed server build `61e5fed`.
 The authorized idle rollout set one hour in the local Fable catalog record and
 all five saved Anthropic conversation profiles. Verification preserved all 45
 conversations, 2,666 event files, 22 context snapshots, and accumulated metrics.
