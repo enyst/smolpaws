@@ -4,5 +4,5 @@ export declare const ANTHROPIC_CACHE_CONTROL: {
 };
 /** Python LLM._apply_prompt_caching, applied to request copies, never history. */
 export declare function prepareAnthropicPromptCaching(profile: LLMProfile, messages: readonly Message[]): Message[];
-/** Count wire locations, including lifted tool-result markers, not nested data. */
-export declare function validateAnthropicCacheBreakpoints(body: Record<string, unknown>): void;
+/** Apply one profile duration to actual wire breakpoints, including lifted tool results. */
+export declare function finalizeAnthropicCacheBreakpoints(profile: LLMProfile, body: Record<string, unknown>): void;

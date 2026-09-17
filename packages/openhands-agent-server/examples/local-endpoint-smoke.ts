@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { Agent, FinishTool, InMemorySecretStore, TestLLM, ToolDefinition, messageSchema, type LLMProfile, type Message } from '@smolpaws/openhands-agent';
+import { Agent, FinishTool, InMemorySecretStore, TestLLM, ToolDefinition, llmProfileSchema, messageSchema, type LLMProfile, type Message } from '@smolpaws/openhands-agent';
 import { z } from 'zod';
 
 import { createAgentServerApp } from '../src/app.js';
@@ -27,7 +27,7 @@ const delayTool = new ToolDefinition({
   },
 });
 
-const llmProfile: LLMProfile = {
+const llmProfile = llmProfileSchema.parse({
   authType: 'api_key',
   subscriptionVendor: null,
   profileId: 'local-endpoint-smoke-profile',
@@ -48,7 +48,7 @@ const llmProfile: LLMProfile = {
   promptCacheKey: null,
   headers: {},
   useProfileKeyOverride: false,
-};
+});
 
 let root = '';
 let workspaceRoot = '';

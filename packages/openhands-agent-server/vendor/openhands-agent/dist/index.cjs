@@ -129,6 +129,7 @@ var openAiApiModeSchema = zod.z.union([zod.z.literal("chat_completions"), zod.z.
 var reasoningEffortSchema = zod.z.union([zod.z.literal("low"), zod.z.literal("medium"), zod.z.literal("high")]);
 var reasoningSummarySchema = zod.z.union([zod.z.literal("auto"), zod.z.literal("concise"), zod.z.literal("detailed")]);
 var promptCacheRetentionSchema = zod.z.union([zod.z.literal("24h"), zod.z.literal("disabled")]);
+var anthropicCacheTtlSchema = zod.z.enum(["5m", "1h"]);
 var llmProfileSchema = zod.z.object({
   profileId: llmProfileIdSchema,
   providerId: llmProviderIdSchema,
@@ -146,6 +147,7 @@ var llmProfileSchema = zod.z.object({
   reasoningEffort: reasoningEffortSchema.nullable().default(null),
   reasoningSummary: reasoningSummarySchema.nullable().default(null),
   cachingPrompt: zod.z.boolean().default(true),
+  anthropicCacheTtl: anthropicCacheTtlSchema.default("5m"),
   promptCacheRetention: promptCacheRetentionSchema.nullable().default(null),
   promptCacheKey: zod.z.string().min(1).nullable().default(null),
   headers: zod.z.record(zod.z.string(), zod.z.string()).default({}),
@@ -6013,15 +6015,19 @@ function prepareAnthropicPromptCaching(profile, messages) {
 function cacheable(content) {
   return content.type === "text" ? content.text.length > 0 : content.image_urls.length > 0;
 }
-function validateAnthropicCacheBreakpoints(body) {
+function finalizeAnthropicCacheBreakpoints(profile, body) {
   const system = Array.isArray(body.system) ? body.system : [];
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const blocks = [...system, ...messages.flatMap((message) => [
     message,
     ...Array.isArray(message.content) ? message.content : []
   ])];
-  if (blocks.filter((block) => block.cache_control !== void 0).length > 4) {
+  const breakpoints = blocks.filter((block) => block.cache_control !== void 0);
+  if (breakpoints.length > 4) {
     throw new Error("Anthropic prompt caching supports at most 4 cache breakpoints per request.");
+  }
+  if (profile.anthropicCacheTtl === "1h") {
+    for (const block of breakpoints) block.cache_control = { type: "ephemeral", ttl: "1h" };
   }
 }
 
@@ -6105,7 +6111,7 @@ function buildAnthropicMessagesBody(profile, messages, tools) {
   if (thinkingBudget !== void 0) {
     body.thinking = { type: "enabled", budget_tokens: thinkingBudget };
   }
-  validateAnthropicCacheBreakpoints(body);
+  finalizeAnthropicCacheBreakpoints(normalizedProfile, body);
   return body;
 }
 function toAnthropicTool(tool) {
@@ -6782,7 +6788,7 @@ function buildChatCompletionsBody(profile, messages, tools = []) {
     body.reasoning_effort = normalizedProfile.reasoningEffort;
   }
   applyOpenAIPromptCacheOptions(body, normalizedProfile);
-  validateAnthropicCacheBreakpoints(body);
+  finalizeAnthropicCacheBreakpoints(normalizedProfile, body);
   return body;
 }
 function buildOpenAIResponsesBody(profile, messages, tools = []) {
@@ -9877,6 +9883,7 @@ exports.actionEventsFromMessage = actionEventsFromMessage;
 exports.agentErrorEventSchema = agentErrorEventSchema;
 exports.agentProfileSchema = agentProfileSchema;
 exports.agentSettingsSchema = agentSettingsSchema;
+exports.anthropicCacheTtlSchema = anthropicCacheTtlSchema;
 exports.baseObservationSchema = baseObservationSchema;
 exports.baseToolObservationSchema = baseToolObservationSchema;
 exports.browserActionSchema = browserActionSchema;

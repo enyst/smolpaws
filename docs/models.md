@@ -85,3 +85,33 @@ conversation history is preserved.
 This is product policy in `apps/relay-server/src/models.ts`. The shared server
 owns profile resolution and durable activation; the SDK owns the tool and safe
 step boundary. The bridges do not each implement a model-switching mechanism.
+
+## Anthropic prompt-cache duration
+
+Cache policy belongs to the saved LLM profile, alongside its model and API options.
+For native Anthropic profiles and Anthropic models through compatible proxies, use:
+
+```json
+{
+  "cachingPrompt": true,
+  "anthropicCacheTtl": "1h"
+}
+```
+
+These are profile fields, not entries in `models.json` or a bridge registration file.
+`anthropicCacheTtl` accepts `"5m"` and `"1h"`. Omitting it keeps the five-minute default
+for older profiles. `"1h"` requests one-hour cache entries on the SDK's automatic
+Anthropic breakpoints; `cachingPrompt:false` disables those markers. This setting is
+separate from OpenAI's `promptCacheRetention` and does not enable caching for an
+unsupported model.
+
+Update the complete saved profile through `POST /api/profiles/{name}`, preserving its
+other fields. The catalog change affects new conversations. Existing conversations
+keep their snapshots, including cache duration, after restart; explicitly reselecting
+the same name with `switch_llm` adopts the updated profile at the next complete-step
+boundary. Changing a profile's TTL does not reset its conversation or usage counters.
+
+Cache hits and writes must still be measured from provider responses. A requested
+cache duration does not prove reuse or a particular billed cost. See the
+[server cache and accounting contract](../packages/openhands-agent-server/docs/ARCHITECTURE.md#llm-usage-and-costs)
+for profile persistence and regression coverage.
