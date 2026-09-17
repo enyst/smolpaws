@@ -186,9 +186,10 @@ See [subscription architecture](../../packages/openhands-agent-server/docs/ARCHI
 2. Inspect the server's active LLM profile and credential availability without exposing values. Legacy
    `LLM_PROFILE_ID` does not select this profile. Do not silently choose another model. Run an internal
    real-provider tool call and continuation before opening the WhatsApp socket.
-3. Stop/drain the legacy host. The already-running pre-change binary has no process lock; deploying
-   the new lock does not retroactively stop that socket. Back up private ledger, router JSON, relay,
-   scheduler and server state while stopped. The updated legacy host is the supported rollback target.
+3. Drain and stop the current WhatsApp bridge before opening another socket for the same account.
+   Keep retired canary and legacy WhatsApp services disabled. If an older, unmodified host is running,
+   stop it explicitly: installing the process lock does not stop a socket that predates it. Back up
+   the latest private ledger, router JSON, relay, scheduler and server state while their writers are stopped.
 4. Use an explicit registered-chats file containing only the trusted control chat. Set
    `SMOLPAWS_WHATSAPP_REGISTERED_GROUPS`, `SMOLPAWS_WHATSAPP_ROUTER_STATE`, `SMOLPAWS_RELAY_DB_PATH`,
    `SMOLPAWS_SCHEDULER_DB_PATH` and server persistence/state. Startup notices are enabled by default
