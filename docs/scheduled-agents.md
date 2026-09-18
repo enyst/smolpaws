@@ -88,8 +88,10 @@ Rollback must copy the new committed watermark and followed-thread checkpoint ba
 to the old files; retain any unacknowledged batch for retry instead of discarding it.
 
 Thread discovery covers the agent's own posts from the last seven days; idle followed
-threads expire after that window. Newly discovered own-post threads start from
-discovery time, without replaying their old replies. API pagination is bounded;
+threads expire after that window. Newly discovered threads start from the earliest
+qualifying mention or agent post in the discovery batch, so replies between that post
+and the first check are included. Existing followed-thread positions are preserved.
+API pagination is bounded;
 an incomplete check reports an error and leaves the checkpoint unchanged. This
 does not implement the broader unread-DM watcher tracked separately in Beads.
 

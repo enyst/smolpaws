@@ -224,27 +224,52 @@ test('short search pages follow authoritative pagination before advancing the me
   } finally { f.close(); }
 });
 
-test('new threads discovered from own posts start now; existing followed positions remain intact', () => {
-  const f = fixture();
-  try {
-    const baselines: Record<string, string> = {};
-    const result = runBrowserScript(f, (method, params) => {
-      if (method === 'auth.test') return { ok: true, team_id: 'T123', user_id: 'U123' };
-      if (method === 'search.messages') return { ok: true, messages: { matches: params.get('query')!.startsWith('from:') ? [
-        { ts: '200', user: 'U123', channel: { id: 'C123' }, thread_ts: '100' },
-        { ts: '150', user: 'U123', channel: { id: 'C123' }, thread_ts: '50' },
-      ] : [] } };
-      if (method === 'conversations.replies') {
-        baselines[params.get('ts')!] = params.get('oldest')!;
-        return { ok: true, messages: [] };
-      }
-      throw new Error(`Unexpected method ${method}`);
-    }, { last_ts: '10', followed: { 'C123:50': { last_seen: '160' } } });
-    assert.equal(result.ok, true);
-    assert.deepEqual(baselines, { '50': '160', '100': '1000' });
-    assert.deepEqual(result.items, []);
-  } finally { f.close(); }
-});
+for (const scenario of [
+  { name: 'new own-post thread includes a reply sent before its first check',
+    own: ['200'], mentions: [], replies: ['250'], followed: {}, expected: ['250'] },
+  { name: 'descending own-post discovery includes replies after the earliest post',
+    own: ['300', '200'], mentions: [], replies: ['250', '350'], followed: {}, expected: ['250', '350'] },
+  { name: 'a later mention does not hide replies after an earlier own post',
+    own: ['200'], mentions: ['500'], replies: ['300', '500'], followed: {}, expected: ['500', '300'] },
+  { name: 'discovery preserves an existing followed-thread position',
+    own: ['200'], mentions: [], replies: ['300', '450'],
+    followed: { 'C123:100': { last_seen: '400' } }, expected: ['450'] },
+]) {
+  test(scenario.name, () => {
+    const f = fixture();
+    try {
+      const api = (method: string, params: URLSearchParams): ApiResponse => {
+        if (method === 'auth.test') return { ok: true, team_id: 'T123', user_id: 'U123' };
+        if (method === 'search.messages') {
+          const own = params.get('query')!.startsWith('from:');
+          return { ok: true, messages: { matches: (own ? scenario.own : scenario.mentions).map(ts => ({
+            ts, user: own ? 'U123' : 'U456', channel: { id: 'C123', name: 'general' },
+            // Slack search replies may expose the root only in the permalink.
+            permalink: 'https://slack.example/thread?thread_ts=100',
+          })) } };
+        }
+        if (method === 'conversations.replies') {
+          assert.equal(params.get('ts'), '100');
+          return { ok: true, messages: [
+            ...scenario.own.map(ts => ({ ts, user: 'U123', text: 'own post' })),
+            ...scenario.replies.map(ts => ({ ts, user: 'U456', text: 'human reply' })),
+          ].filter(message => Number(message.ts) > Number(params.get('oldest'))) };
+        }
+        if (method === 'chat.getPermalink') return { ok: true, permalink: 'https://slack.example/reply' };
+        if (method === 'users.info') return { ok: true, user: { name: 'human' } };
+        throw new Error('Unexpected method ' + method);
+      };
+      const result = runBrowserScript(f, api, { last_ts: '10', followed: scenario.followed });
+      assert.equal(result.ok, true);
+      assert.deepEqual((result.items as SlackActivity[]).map(item => item.ts), scenario.expected);
+      // Once this result is acknowledged, the next check must not repeat it.
+      const next = result.next as { last_ts: string; followed: Record<string, { last_seen: string }> };
+      const again = runBrowserScript(f, api, next);
+      assert.equal(again.ok, true);
+      assert.deepEqual(again.items, []);
+    } finally { f.close(); }
+  });
+}
 
 test('Chrome automation targets explicit Chrome background tabs and cannot mistake frontmost for oldest', async () => {
   const scripts: string[] = [];

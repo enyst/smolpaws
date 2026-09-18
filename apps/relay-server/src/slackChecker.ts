@@ -195,12 +195,19 @@ export function slackCheckScript(options: SlackCheckerOptions, state: Checkpoint
         }
         throw new Error('search.messages:pagination_limit');
       }
-      function thread(message, ownPost) {
+      var newlyDiscovered = new Set();
+      function thread(message) {
         var channel = (message.channel || {}).id;
         if (!channel || !message.ts) throw new Error('search.messages:invalid_message');
         var root = message.thread_ts || ((message.permalink || '').match(/thread_ts=([0-9.]+)/) || [])[1] || message.ts;
         var key = channel + ':' + root;
-        if (!followed[key]) followed[key] = {last_seen:ownPost ? String(now) : message.ts,added:now,channel:channel,name:(message.channel || {}).name || ''};
+        if (!followed[key]) {
+          followed[key] = {last_seen:message.ts,added:now,channel:channel,name:(message.channel || {}).name || ''};
+          newlyDiscovered.add(key);
+        } else if (newlyDiscovered.has(key) && Number(message.ts) < Number(followed[key].last_seen)) {
+          // Include replies after the earliest discovery message, but never rewind an existing checkpoint.
+          followed[key].last_seen = message.ts;
+        }
         return key;
       }
       var items = [];
@@ -220,7 +227,7 @@ export function slackCheckScript(options: SlackCheckerOptions, state: Checkpoint
         if (Number(message.ts) > Number(newest)) newest = message.ts;
         add('mention', message, message.channel.id, message.channel.name, message.permalink);
       });
-      search('from:<@' + input.user + '>', cutoff).forEach(function(message) { thread(message, true); });
+      search('from:<@' + input.user + '>', cutoff).forEach(function(message) { thread(message); });
       Object.keys(followed).forEach(function(key) {
         var parts = key.split(':');
         var value = followed[key];
