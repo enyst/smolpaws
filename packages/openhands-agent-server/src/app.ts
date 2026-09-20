@@ -3,7 +3,7 @@ import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
-import { MacOSKeychainSecretStore, OpenAISubscriptionAuth, createClientFromProfile, type SecretStore } from '@smolpaws/openhands-agent';
+import { AgentControlledCondensationError, MacOSKeychainSecretStore, OpenAISubscriptionAuth, createClientFromProfile, type SecretStore } from '@smolpaws/openhands-agent';
 
 import { registerAgentProfileRoutes } from './agentProfilesRouter.js';
 import { BashEventService } from './bashService.js';
@@ -51,6 +51,7 @@ export interface AgentServerApp {
 export async function createAgentServerApp(options: AgentServerAppOptions = {}): Promise<AgentServerApp> {
   if (options.conversationService !== undefined && (
     options.agentFactory !== undefined
+    || options.getDefaultAgentSettings !== undefined
     || options.persistenceDir !== undefined
     || options.ownerInstanceId !== undefined
     || options.leaseTtlMs !== undefined
@@ -100,6 +101,9 @@ export async function createAgentServerApp(options: AgentServerAppOptions = {}):
     persistenceDir: config.conversationsPath,
     secretStore,
     agentFactory,
+    ...(usesProfileAgentFactory
+      ? { getDefaultAgentSettings: () => serverStateService.agentSettings() }
+      : options.getDefaultAgentSettings === undefined ? {} : { getDefaultAgentSettings: options.getDefaultAgentSettings }),
     ...(usesProfileAgentFactory ? { profileRuntime: {
       getProfile: (name: string) => serverStateService.getProfile(name),
       createClient: (profile: Parameters<ProfileLlmClientFactory>[0]) => llmClientFactory(profile, secretStore),
@@ -176,6 +180,10 @@ function registerErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
       reply.status(422).send({ detail: error.issues.map((issue) => ({ path: issue.path, message: issue.message })) });
+      return;
+    }
+    if (error instanceof AgentControlledCondensationError) {
+      reply.status(409).send({ code: 'agent_controlled_condensation', detail: error.message });
       return;
     }
     if (error instanceof ConversationLeaseHeldError || error instanceof ConversationLeaseInvalidError || error instanceof ConversationOwnershipLostError) {
