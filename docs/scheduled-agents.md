@@ -53,7 +53,11 @@ the configured workspace and agent account, reads new mentions and replies in
 followed threads, resolves authors and returns stable source IDs. It does not
 post Slack messages or add reactions. Comet is the human's browser and is excluded.
 
-Successful quiet checks finish with an empty message. Failures remain visible;
+Successful quiet checks finish with an empty message. The Slack helper also treats
+a finish message containing only serialized empty arguments (such as `{"message":""}`)
+as empty. This product adaptation preserves the original action in the event log
+and produces a successful, empty finish observation. It does not parse ordinary
+conversation replies or suppress useful checker messages. Failures remain visible;
 they are never treated as proof that nothing happened. Other matching Slack tabs
 are tried before window recovery. Closing windows is an explicit recovery action,
 never part of an ordinary successful check. Chrome does not expose creation times;
