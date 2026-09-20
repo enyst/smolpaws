@@ -11,6 +11,17 @@ const sdk = createRequire(import.meta.url)('../../../packages/openhands-agent-se
 export type SlackCheckerPort = Pick<SlackChecker, 'check' | 'recover' | 'pendingSourceIds' | 'acknowledge'>;
 export type SlackCheckerFactory = (options: SlackCheckerOptions) => SlackCheckerPort;
 
+/** Some checker responses put serialized finish arguments inside message itself. */
+function slackFinishMessage(message: string): string {
+  try {
+    const value: unknown = JSON.parse(message);
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)
+      && Object.keys(value).length === 1 && 'message' in value
+      && typeof value.message === 'string' && value.message.trim().length === 0) return '';
+  } catch { /* Ordinary finish text is not JSON. */ }
+  return message;
+}
+
 export function scheduledAgentTools(
   scheduler: TaskScheduler,
   conversationId: string,
@@ -20,6 +31,12 @@ export function scheduledAgentTools(
   const checker = config.slack === undefined ? undefined : createChecker(config.slack);
   const tools: Sdk.ToolDefinition[] = [];
   if (checker) {
+    const finish = sdk.FinishTool.create();
+    // Scope the adaptation to Slack helpers; keep the SDK schemas and finish semantics.
+    tools.push(new sdk.ToolDefinition({
+      ...finish,
+      executor: (action, context) => finish.execute({ ...action, message: slackFinishMessage(action.message) }, context),
+    }));
     tools.push(new sdk.ToolDefinition({
       name: 'check_slack',
       description: 'Check new Slack mentions and followed-thread replies in the existing Google Chrome Slack tab. Background tabs work. Returns quiet, activity with source_ids and links, or an error. Activity remains pending until notify_smolpaws accepts it. Does not wake SmolPaws or send Slack messages.',

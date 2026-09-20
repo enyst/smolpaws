@@ -13,9 +13,17 @@ import type { SlackCheckerPort } from './scheduledAgentTools.js';
 const sdk = createRequire(import.meta.url)('../../../packages/openhands-agent-server/vendor/openhands-agent/dist/index.cjs') as typeof Sdk;
 const call = (name: string, args: unknown) => sdk.messageSchema.parse({ role: 'assistant', content: [], tool_calls: [{ id: `${name}-${Math.random()}`, name, arguments: JSON.stringify(args), origin: 'completion' }] });
 
+const quietFinishes = [
+  { name: 'empty message', message: '' },
+  { name: 'serialized empty message', message: '{"message":""}' },
+  { name: 'serialized blank message with whitespace', message: ' \n{ "message": " \\t\\n " }\t ' },
+];
+
+for (const quietFinish of quietFinishes)
 for (const mode of ['disabled', 'llm_summarizing', 'agent_reset'] as const)
-for (const activity of [false, true]) test(`${mode} isolated checker gets lean context and exact tools; ${activity ? 'handoff reaches full owner and WhatsApp' : 'quiet completion sends nothing'}`, async () => {
+for (const activity of [false, true]) test(`${mode} ${quietFinish.name} isolated checker gets lean context and exact tools; ${activity ? 'handoff reaches full owner and WhatsApp' : 'quiet completion sends nothing'}`, async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'slack-checker-integration-'));
+  const ownerHandoffReply = quietFinish.message || 'handled Slack activity';
   const workspace = path.join(root, 'workspace'); mkdirSync(workspace);
   const configPath = path.join(root, 'scheduled-agents.json');
   writeFileSync(configPath, JSON.stringify({ version: 1, tasks: {} }));
@@ -45,7 +53,7 @@ for (const activity of [false, true]) test(`${mode} isolated checker gets lean c
     secretStore: new sdk.InMemorySecretStore(),
     llmClientFactory: async profile => {
       const helper = profile.profileId === 'cheap-checker';
-      const llm = sdk.TestLLM.fromMessages(helper ? [call('check_slack', {}), ...(activity ? [call('notify_smolpaws', { message: 'Slack needs attention: https://app.slack.com/archives/CTEST/p100001', source_ids: sourceIds }), call('notify_smolpaws', { message: 'Retry after lost observation: same Slack activity', source_ids: sourceIds })] : []), call('finish', { message: '' })] : [call('finish', { message: 'initial reply' }), call('finish', { message: 'handled Slack activity' })], { profile });
+      const llm = sdk.TestLLM.fromMessages(helper ? [call('check_slack', {}), ...(activity ? [call('notify_smolpaws', { message: 'Slack needs attention: https://app.slack.com/archives/CTEST/p100001', source_ids: sourceIds }), call('notify_smolpaws', { message: 'Retry after lost observation: same Slack activity', source_ids: sourceIds })] : []), call('finish', { message: quietFinish.message })] : [call('finish', { message: 'initial reply' }), call('finish', { message: ownerHandoffReply })], { profile });
       return { profile, async complete(messages, tools) {
         assert.notEqual(profile.profileId, 'summary', 'small scheduled runs must not call the summarizer');
         requests.push({ profile: profile.profileId, system: messages.filter(m => m.role === 'system').flatMap(m => m.content).filter(c => c.type === 'text').map(c => c.text).join('\n'), tools: tools?.map(t => t.name) ?? [] });
@@ -76,10 +84,20 @@ for (const activity of [false, true]) test(`${mode} isolated checker gets lean c
     const expectedTools = ['terminal', 'check_slack', 'recover_slack', 'notify_smolpaws', 'finish'];
     writeFileSync(configPath, JSON.stringify({ version: 1, tasks: { [taskId]: { profile: 'cheap-checker', context_files: ['checker.md'], tools: expectedTools,
       slack: { workspace_id: 'TTEST', user_id: 'UTEST', workspace_url: 'https://app.slack.com/client/TTEST', state_dir: 'slack' } } } }));
-    await until(() => (scheduler.db.prepare('SELECT status FROM scheduler_tasks WHERE id=?').get(taskId) as { status: string }).status === 'completed' && (!activity || deliveries.some(d => d.text === 'handled Slack activity')));
+    await until(() => (scheduler.db.prepare('SELECT status FROM scheduler_tasks WHERE id=?').get(taskId) as { status: string }).status === 'completed' && (!activity || deliveries.some(d => d.text === ownerHandoffReply)));
     await runtime.runOnce();
     assert.equal(checks, 1); assert.equal(acknowledgements, activity ? 2 : 0);
-    assert.deepEqual(deliveries.map(d => d.text), activity ? ['initial reply', 'handled Slack activity'] : ['initial reply']);
+    const helperRun = scheduler.db.prepare('SELECT conversation_id, status FROM scheduler_runs WHERE task_id=?').get(taskId) as { conversation_id: string; status: string };
+    assert.equal(helperRun.status, 'done');
+    const helperEvents = (await (await server.conversationService.getEventService(helperRun.conversation_id))!.searchEvents()).items;
+    const finishAction = helperEvents.find(event => event.kind === 'ActionEvent' && event.tool_name === 'finish');
+    assert.ok(finishAction?.kind === 'ActionEvent' && finishAction.action !== null);
+    assert.equal(finishAction.action.message, quietFinish.message, 'durable action retains the original model arguments');
+    const finishObservation = helperEvents.find(event => event.kind === 'ObservationEvent' && event.tool_name === 'finish');
+    assert.ok(finishObservation?.kind === 'ObservationEvent');
+    assert.equal(finishObservation.observation.text, '', 'quiet completion produces no user-visible text');
+    assert.equal(finishObservation.observation.is_error, false);
+    assert.deepEqual(deliveries.map(d => d.text), activity ? ['initial reply', ownerHandoffReply] : ['initial reply']);
     const helperRequests = requests.filter(r => r.profile === 'cheap-checker'); assert.equal(helperRequests.length, activity ? 4 : 2);
     for (const request of helperRequests) { assert.deepEqual(request.tools, mode === 'agent_reset' ? [...expectedTools, 'condense'] : expectedTools); assert.match(request.system, /LEAN_SLACK_CHECKER_MARKER/); assert.doesNotMatch(request.system, /FULL_SMOLPAWS_MEMORY_MARKER/); }
     for (const request of requests.filter(r => r.profile === 'full-owner')) { assert.match(request.system, /FULL_SMOLPAWS_MEMORY_MARKER/); assert.ok(!request.tools.includes('notify_smolpaws')); }
