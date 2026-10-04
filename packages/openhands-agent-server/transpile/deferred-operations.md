@@ -16,4 +16,4 @@ A deferred operation must remain visible in generated parity output. This file i
 
 ## Bounded runtime expansion
 
-Bead `smolpaws-09ou` explicitly tracks new conversation-scoped runtime, file/git/bash and VSCode operations in the reviewed intervals. Each has its own policy entry; this is an explicit expansion. Profile secret authorization, local runtime_info/persisted reads, Docker lifecycle and search-limit422 validation remain documented in the interval records.
+Bead `smolpaws-09ou` explicitly tracks new conversation-scoped runtime, file/git/bash and VSCode operations in the reviewed intervals. Each has its own policy entry; this is an explicit expansion. Profile secret metadata filtering is now ported; see [secret scoping correction](secret-scoping.md). Local runtime_info/persisted reads, Docker lifecycle and search-limit422 validation remain documented in the interval records.

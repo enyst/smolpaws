@@ -5874,7 +5874,17 @@
           "Settings"
         ],
         "summary": "List secret metadata",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "agent_profile_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -5915,6 +5925,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Error"
           }
         }
       },

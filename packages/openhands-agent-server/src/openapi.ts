@@ -219,7 +219,7 @@ export const routeSpecs = [
   { method: 'post', path: '/api/settings/mcp/{settings_key}', tags: ['Settings'], summary: 'Create Mcp Server', requestBody: mcpServerSchema, responses: { 201: settingsResponseSchema, 422: null } },
   { method: 'patch', path: '/api/settings/mcp/{settings_key}', tags: ['Settings'], summary: 'Patch Mcp Server', requestBody: mcpServerPatchSchema, responses: { 200: settingsResponseSchema, 422: null } },
   { method: 'delete', path: '/api/settings/mcp/{settings_key}', tags: ['Settings'], summary: 'Delete Mcp Server', responses: { 200: settingsResponseSchema, 422: null } },
-  { method: 'get', path: '/api/settings/secrets', tags: ['Settings'], summary: 'List secret metadata', responses: { 200: secretsListResponseSchema } },
+  { method: 'get', path: '/api/settings/secrets', tags: ['Settings'], summary: 'List secret metadata', query: [{ name: 'agent_profile_id', schema: { type: 'string', nullable: true } }], responses: { 200: secretsListResponseSchema, 404: null } },
   { method: 'put', path: '/api/settings/secrets', tags: ['Settings'], summary: 'Create or update a keychain-backed secret', requestBody: secretCreateRequestSchema, responses: { 200: secretItemResponseSchema, 422: null } },
   { method: 'get', path: '/api/settings/secrets/{name}', tags: ['Settings'], summary: 'Get redacted secret metadata', responses: { 200: secretItemResponseSchema, 404: null } },
   { method: 'delete', path: '/api/settings/secrets/{name}', tags: ['Settings'], summary: 'Delete a keychain-backed secret', responses: { 200: successSchema, 404: null } },

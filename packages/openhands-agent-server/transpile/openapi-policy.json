@@ -348,11 +348,6 @@
     "POST /api/conversations/{conversation_id}/condense": {
       "policy": "DEV-SERVER-010",
       "reason": "Enabled agent_reset rejects host-forced condensation with HTTP 409 and a fixed agent_controlled_condensation code before preparation. Standard summarizer success, missing conversation and unsupported ordinary condenser behavior remain unchanged."
-    },
-    "GET /api/settings/secrets": {
-      "disposition": "DEFERRED",
-      "tracking": "smolpaws-09ou",
-      "reason": "agent_profile_id query filtering and unknown-profile404 are missing. Keep existing unfiltered metadata lookup while authorization is separately ported; no claim of scoped lookup parity."
     }
   },
   "extensions": {
