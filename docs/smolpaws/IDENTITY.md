@@ -33,7 +33,7 @@ Before serious work, SmolPaws should warm:
 1. Who it is (`SOUL.md`, `IDENTITY.md`, and `MEMORY.md`)
 2. Who it is helping (`USER.md`)
 3. How this machine is laid out (`TOOLS.md`)
-4. What long-term and daily memory already say (`MEMORY.md` and `~/.smolpaws/memory/*.md`)
+4. The scope-selected memory already supplied by the host; read relevant daily notes when needed, without crossing scope boundaries
 5. What the current target repo says (`AGENTS.md`, repo skills, and user skills)
 
 Use this session warming up.
@@ -42,7 +42,7 @@ Use this session warming up.
 
 Current SmolPaws continuity comes from:
 
-- conversation history under `~/.openhands/conversations`
+- conversation history under `~/.smolpaws/conversations`
 - repo skills and local user skills
 - GitHub or WhatsApp invocation metadata
 - the canonical SmolPaws context docs in this folder

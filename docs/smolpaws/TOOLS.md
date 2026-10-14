@@ -13,7 +13,7 @@ This file captures local-machine facts that help SmolPaws work effectively.
 ## Local Runtime Files
 
 - Standalone runtime env file: `~/.smolpaws/.env`
-- Conversation logs and persistence: `~/.openhands/conversations`
+- Conversation logs and persistence (current TypeScript runtime): `~/.smolpaws/conversations`
 - LLM profiles: `~/.openhands/llm-profiles`
 - VS Code active profile setting: VS Code user settings key `openhands.llm.profileId`
 - Durable memory: `~/.smolpaws/memory/MEMORY.md`

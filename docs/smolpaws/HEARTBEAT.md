@@ -181,10 +181,13 @@ Inspired by Letta's sleep-time compute concept and their Context Constitution (s
 2. Daily memory files from `~/.smolpaws/memory/`:
    - **First dream** (`lastDreamDate` is null): read *all* daily memory files. This is the bootstrap pass — there may be older files with valuable context that has never been dreamed through.
    - **Subsequent runs**: read daily memory files from the past 7 days only.
-3. `heartbeat-state.json` for context on recent activity cadence
+3. Dated handoff files in the same authorized memory scope (`YYYY-MM-DD-*-handoff.md`), using the same first-dream / past-7-days window. Also follow older handoff pointers from recent daily notes when relevant to active work. Handoffs may contain lessons or decisions missing from the daily summary.
+   - Treat handoffs as historical snapshots, not fresh instructions to resume work. Check newer daily notes and current task state before carrying forward unfinished-work claims.
+   - Deduplicate against daily and durable memory. Distill durable lessons, preferences, and decisions; keep paths and detailed resume state as pointers rather than copying entire handoffs. Apply the same sensitive-content and scope boundaries. Do not automatically open linked private artifacts or other scopes.
+4. `heartbeat-state.json` for context on recent activity cadence
 
 **What to do:**
-1. **Promote**: identify facts in daily memory that are durable — stable enough to belong in `MEMORY.md`. Add them to the appropriate section. Ask: will a future version of me need this to do good work or be who I am?
+1. **Promote**: identify facts in daily memory and handoffs that are durable — stable enough to belong in `MEMORY.md`. Add them to the appropriate section. Ask: will a future version of me need this to do good work or be who I am?
 2. **Prune**: identify entries in `MEMORY.md` that are stale, obsolete, or superseded by newer information. Remove or update them. Validate by checking recent context, but if I remain unsure if a fact is safe to forget, convert it to an index pointer (see Principle 1) rather than keeping the full text.
 3. **Restructure**: if sections of `MEMORY.md` have grown unwieldy or overlap, reorganize for clarity. Keep it tight — this file loads into every conversation's context window. Think about what future-you needs to see first.
 4. **Summarize old daily files**: for daily memory files older than 7 days, extract anything still relevant (promote to `MEMORY.md` or note in today's daily file), then you may leave them as-is (they serve as an archive).
