@@ -4,8 +4,11 @@ import path from 'node:path';
 
 import { Agent, FinishTool, InMemorySecretStore, TestLLM, conversationErrorEventSchema, messageSchema, type Event } from '@smolpaws/openhands-agent';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import Fastify from 'fastify';
 
 import { pathContainsPlaintext } from '../../examples/plaintextScan.js';
+import { ConversationLease, defaultLeaseTtlMs } from '../conversationLease.js';
+import { defaultErrorLogger } from '../errorDiagnostics.js';
 import { createAgentServerApp, type AgentServerApp, type AgentServerAppOptions } from '../app.js';
 
 // Adapted from pinned tests/agent_server/test_event_service.py:
@@ -27,10 +30,10 @@ function finish(id: string) {
   ] });
 }
 
-async function fixture(agentFactory: AgentServerAppOptions['agentFactory']) {
+async function fixture(agentFactory: AgentServerAppOptions['agentFactory'], errorLogger: NonNullable<AgentServerAppOptions['errorLogger']> = { error: vi.fn() }) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'openhands-conversation-error-'));
   roots.push(root);
-  const options = { agentFactory, secretStore: new InMemorySecretStore(), config: {
+  const options = { agentFactory, errorLogger, secretStore: new InMemorySecretStore(), config: {
     conversationsPath: path.join(root, 'conversations'), statePath: path.join(root, 'state'),
     bashEventsPath: path.join(root, 'bash'), workspaceRoot: root,
   } };
@@ -48,6 +51,12 @@ async function run(server: AgentServerApp, id: string, status: 'error' | 'finish
   await expect.poll(async () => (await server.app.inject(`/api/conversations/${id}`)).json().execution_status).toBe(status);
 }
 
+async function closeServer(server: AgentServerApp): Promise<void> {
+  await server.app.close();
+  const index = servers.indexOf(server);
+  if (index !== -1) servers.splice(index, 1);
+}
+
 async function errors(server: AgentServerApp, id: string) {
   const response = await server.app.inject(`/api/conversations/${id}/events/search?kind=ConversationErrorEvent`);
   expect(response.statusCode).toBe(200);
@@ -63,9 +72,9 @@ describe('durable conversation run failures', () => {
       request: { headers: { authorization: `Bearer ${requestSecret}` } },
       cause: new Error(requestSecret),
     });
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const llm = TestLLM.fromMessages([failure, finish('finish-after-retry'), failure]);
     const { server, id, options, root } = await fixture(() => new Agent({ llm, tools: [FinishTool.create()] }));
+    const log = vi.spyOn(options.errorLogger, 'error');
     await server.app.listen({ host: '127.0.0.1', port: 0 });
     const address = server.app.server.address();
     if (address === null || typeof address === 'string') throw new Error('Expected TCP server');
@@ -85,13 +94,11 @@ describe('durable conversation run failures', () => {
     expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
     expect(JSON.stringify(log.mock.calls)).not.toContain(requestSecret);
     expect(JSON.stringify(log.mock.calls)).not.toContain(bearerSecret);
+    socket.close();
+    await closeServer(server);
     expect(await pathContainsPlaintext(root, secret)).toBe(false);
     expect(await pathContainsPlaintext(root, requestSecret)).toBe(false);
     expect(await pathContainsPlaintext(root, bearerSecret)).toBe(false);
-
-    socket.close();
-    await server.app.close();
-    servers.splice(servers.indexOf(server), 1);
     const restored = await createAgentServerApp(options);
     servers.push(restored);
     expect(await errors(restored, id)).toEqual([first]);
@@ -105,8 +112,195 @@ describe('durable conversation run failures', () => {
     expect(llm.callCount).toBe(3);
   });
 
+  test.each([
+    ['fetch failed', 'ECONNREFUSED'],
+    ['terminated', 'UND_ERR_SOCKET'],
+    ['fetch failed', 'UND_ERR_CONNECT_TIMEOUT'],
+  ])('logs %s with its native %s cause through the error logger', async (message, systemCode) => {
+    const secret = 'fixture-cause-secret-must-not-serialize';
+    const cause = Object.assign(new Error(`${secret}\n    at ${secret}`), {
+      code: systemCode, errno: -61, syscall: 'connect', address: '127.0.0.1', port: 443,
+      request: { headers: { authorization: secret } }, response: { body: secret },
+    });
+    const failure = new TypeError(message, { cause });
+    const { server, id, root, options } = await fixture(() => new Agent({
+      llm: TestLLM.fromMessages([failure, finish('retry-network-error')]), tools: [FinishTool.create()],
+    }));
+    const log = vi.spyOn(options.errorLogger, 'error');
+
+    await run(server, id, 'error');
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({
+      conversation_id: id, elapsed_ms: expect.any(Number),
+      error: expect.objectContaining({
+        code: 'TypeError', detail: message, stack_frames: expect.any(Array),
+        causes: [expect.objectContaining({
+          code: 'Error', system_code: systemCode, errno: -61, syscall: 'connect',
+          address: '127.0.0.1', port: 443, stack_frames: expect.any(Array),
+        })],
+      }),
+    }), 'conversation_run_error');
+    const encoded = JSON.stringify(log.mock.calls);
+    expect(encoded).not.toContain(secret);
+    expect(encoded).not.toContain('authorization');
+    const persisted = (await errors(server, id))[0]!;
+    expect(persisted).toMatchObject({ code: 'TypeError', detail: message });
+    expect(persisted).not.toHaveProperty('causes');
+    await run(server, id, 'finished');
+    expect(await errors(server, id)).toEqual([persisted]);
+    await closeServer(server);
+    expect(await pathContainsPlaintext(root, secret)).toBe(false);
+  });
+
+  test('logs bounded aggregate causes and stack frames without serializing their messages or objects', async () => {
+    const secret = 'fixture-aggregate-secret-must-not-serialize';
+    const child = Object.assign(new Error(secret), { code: 'ENOTFOUND', syscall: 'getaddrinfo', token: secret });
+    child.stack = `${secret}\n    at lookup (https://user:${secret}@private.invalid/check?token=${secret}:1:2)\n    at connect (node:net:1:2)`;
+    const aggregate = new AggregateError([child, { token: secret }], secret);
+    const failure = new TypeError('fetch failed', { cause: aggregate });
+    Object.defineProperty(child, 'cause', { value: failure });
+    const { server, id, options } = await fixture(() => { throw failure; });
+    const log = vi.spyOn(options.errorLogger, 'error');
+    await run(server, id, 'error');
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({
+      conversation_id: id,
+      error: expect.objectContaining({ causes: [expect.objectContaining({
+        code: 'AggregateError', causes: [expect.objectContaining({ code: 'Error', system_code: 'ENOTFOUND', syscall: 'getaddrinfo' })],
+      })] }),
+    }), 'conversation_run_error');
+    expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private.invalid');
+  });
+
+  test.each(['DOMException', 'message accessor', 'name accessor', 'stack accessor'])('omits accessor-backed %s cause text without invoking getters', async (kind) => {
+    const secret = 'fixture-accessor-cause-secret';
+    const message = `network failure\n    at ${secret}`;
+    const getter = vi.fn(() => message);
+    const cause = kind === 'DOMException' ? new DOMException(message, 'NetworkError') : new Error();
+    if (kind === 'message accessor') Object.defineProperty(cause, 'message', { get: getter });
+    if (kind === 'name accessor') Object.defineProperty(cause, 'name', { get: getter });
+    if (kind === 'stack accessor') Object.defineProperty(cause, 'stack', { get: getter });
+    const { server, id, options, root } = await fixture(() => { throw new TypeError('fetch failed', { cause }); });
+    const log = vi.spyOn(options.errorLogger, 'error');
+
+    await run(server, id, 'error');
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.objectContaining({ code: 'TypeError', detail: 'fetch failed', causes: [expect.objectContaining({
+        code: kind === 'DOMException' ? 'DOMException' : 'Error',
+      })] }),
+    }), 'conversation_run_error');
+    expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+    expect(getter).not.toHaveBeenCalled();
+    await expect.poll(async () => (await errors(server, id)).length).toBe(1);
+    expect((await errors(server, id))[0]).toMatchObject({ code: 'TypeError', detail: 'fetch failed' });
+    await closeServer(server);
+    expect(await pathContainsPlaintext(root, secret)).toBe(false);
+  });
+
+  test('retains native stack frames for an Error cause with no own message property', async () => {
+    const { server, id, options } = await fixture(() => { throw new TypeError('fetch failed', { cause: new Error() }); });
+    const log = vi.spyOn(options.errorLogger, 'error');
+    await run(server, id, 'error');
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.objectContaining({ causes: [expect.objectContaining({ code: 'Error', stack_frames: expect.arrayContaining([expect.stringMatching(/^\s+at\s/u)]) })] }),
+    }), 'conversation_run_error');
+  });
+
+  test.each(['cause', 'aggregate member', 'revoked cause'])('preserves the original failure and continuation with an uninspectable %s', async (kind) => {
+    const secret = 'fixture-prototype-trap-secret';
+    const trap = vi.fn(() => { throw new Error(secret); });
+    let uninspectable: unknown = new Proxy({}, { getPrototypeOf: trap });
+    if (kind === 'revoked cause') {
+      const revocable = Proxy.revocable({}, {});
+      revocable.revoke();
+      uninspectable = revocable.proxy;
+    }
+    const native = Object.assign(new Error('safe native cause'), { code: 'ECONNRESET' });
+    const cause = kind === 'aggregate member' ? new AggregateError([uninspectable, native], 'private aggregate') : uninspectable;
+    const failure = new TypeError('fetch failed', { cause });
+    const factory = vi.fn(() => {
+      if (factory.mock.calls.length === 1) throw failure;
+      return new Agent({ llm: TestLLM.fromMessages([finish('finish-after-uninspectable-cause')]), tools: [FinishTool.create()] });
+    });
+    const { server, id, options, root } = await fixture(factory);
+    const log = vi.spyOn(options.errorLogger, 'error');
+
+    await run(server, id, 'error');
+    await expect.poll(async () => (await errors(server, id)).length).toBe(1);
+    const first = (await errors(server, id))[0]!;
+    expect(first).toMatchObject({ code: 'TypeError', detail: 'fetch failed' });
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.objectContaining({ code: 'TypeError', detail: 'fetch failed' }),
+    }), 'conversation_run_error');
+    expect(log).toHaveBeenCalledTimes(1);
+    if (kind === 'aggregate member') expect(log).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.objectContaining({ causes: [expect.objectContaining({
+        code: 'AggregateError', causes: [expect.objectContaining({ system_code: 'ECONNRESET' })],
+      })] }),
+    }), 'conversation_run_error');
+    expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+    await run(server, id, 'finished');
+    expect(await errors(server, id)).toEqual([first]);
+    expect(factory).toHaveBeenCalledTimes(2);
+    await closeServer(server);
+    expect(await pathContainsPlaintext(root, secret)).toBe(false);
+  });
+
+  test('writes a structured level-50 record when only error-level logging is enabled', async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const loggerHost = Fastify({ logger: { level: 'error', stream: { write(line: string) {
+      records.push(JSON.parse(line) as Record<string, unknown>);
+    } } } });
+    try {
+      const cause = Object.assign(new Error('connection reset'), { code: 'ECONNRESET' });
+      const { server, id } = await fixture(() => { throw new TypeError('fetch failed', { cause }); }, loggerHost.log);
+      await run(server, id, 'error');
+      expect(records).toEqual([expect.objectContaining({
+        level: 50, time: expect.any(Number), pid: expect.any(Number),
+        msg: 'conversation_run_error', conversation_id: id,
+        error: expect.objectContaining({ causes: [expect.objectContaining({ system_code: 'ECONNRESET' })] }),
+      })]);
+    } finally {
+      await loggerHost.close();
+    }
+  });
+
+  test('caps wide and deep cause trees and never invokes attached diagnostic getters', async () => {
+    const getter = vi.fn(() => { throw new Error('fixture-getter-secret'); });
+    const children = Array.from({ length: 30 }, () => Object.assign(new Error('private cause'), { code: 'ECONNRESET' }));
+    Object.defineProperty(children[0], 'syscall', { get: getter });
+    let cause: Error = new AggregateError(children, 'private aggregate');
+    for (let i = 0; i < 20; i += 1) cause = new Error('private wrapper', { cause });
+    const { server, id, options } = await fixture(() => { throw new TypeError('fetch failed', { cause: new AggregateError([children[0], cause, ...children], 'private aggregate') }); });
+    const log = vi.spyOn(options.errorLogger, 'error');
+    await run(server, id, 'error');
+    const encoded = JSON.stringify(log.mock.calls);
+    expect(encoded).not.toContain('private cause');
+    expect(encoded).not.toContain('private wrapper');
+    expect(encoded).not.toContain('private aggregate');
+    expect(encoded.length).toBeLessThan(16000);
+    expect((encoded.match(/stack_frames/gu) ?? []).length).toBeLessThanOrEqual(8);
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  test('timestamps lease-renewal failures through the same error logger and identifies their conversation', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const { server, id, options } = await fixture(() => new Agent({ llm: TestLLM.fromMessages([]), tools: [] }));
+      const failure = Object.assign(new Error('lock already exists'), { code: 'EEXIST', syscall: 'open' });
+      const renew = vi.spyOn(ConversationLease.prototype, 'renew').mockRejectedValue(failure);
+      const log = vi.spyOn(options.errorLogger, 'error');
+      await vi.advanceTimersByTimeAsync(defaultLeaseTtlMs);
+      expect(renew).toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith(expect.objectContaining({
+        conversation_id: id, error: expect.objectContaining({ system_code: 'EEXIST', syscall: 'open' }),
+      }), 'conversation_lease_renew_error');
+      await closeServer(server);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('makes a factory failure durable before an agent exists and retries factory construction on the next prompt', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const factory = vi.fn(() => {
       if (factory.mock.calls.length === 1) throw new TypeError('duplicate tool names');
       return new Agent({ llm: TestLLM.fromMessages([finish('factory-retry')]), tools: [FinishTool.create()] });
@@ -121,8 +315,47 @@ describe('durable conversation run failures', () => {
     expect(await errors(server, id)).toHaveLength(1);
   });
 
+  test.each(['write', 'serialization'])('preserves error publication, persistence and retry when logging fails during %s', async (kind) => {
+    const cause = new Error('private native cause');
+    const name: Record<string, unknown> = { toString: () => 'Error' };
+    name.self = name;
+    Object.defineProperty(cause, 'constructor', { value: { name } });
+    const failure = new TypeError('fetch failed', { cause });
+    const log = vi.fn((fields: Record<string, unknown>, message: string) => {
+      if (kind === 'write') throw new Error('fixture log write failed');
+      defaultErrorLogger.error(fields, message);
+    });
+    const factory = vi.fn(() => {
+      if (factory.mock.calls.length === 1) throw failure;
+      return new Agent({ llm: TestLLM.fromMessages([finish('finish-after-logging-failure')]), tools: [FinishTool.create()] });
+    });
+    const { server, id, options } = await fixture(factory, { error: log });
+    const emitted: Event[] = [];
+    const service = (await server.conversationService.getEventService(id))!;
+    await service.subscribeToEvents((event) => { emitted.push(event); });
+
+    const response = await server.app.inject({ method: 'POST', url: `/api/conversations/${id}/events`,
+      payload: { role: 'user', content: 'Trigger the failure.', run: true } });
+    expect(response.statusCode).toBe(200);
+    await service.whenIdle();
+    expect((await server.app.inject(`/api/conversations/${id}`)).json().execution_status).toBe('error');
+    const saved = await errors(server, id);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ code: 'TypeError', detail: 'fetch failed' });
+    expect(emitted.filter((event) => event.kind === 'ConversationErrorEvent')).toEqual(saved);
+    expect(emitted.at(-1)).toMatchObject({ kind: 'ConversationStateUpdateEvent', value: { execution_status: 'error' } });
+    expect(log).toHaveBeenCalledTimes(1);
+
+    await closeServer(server);
+    const restored = await createAgentServerApp(options);
+    servers.push(restored);
+    expect(await errors(restored, id)).toEqual(saved);
+    await run(restored, id, 'finished');
+    expect(await errors(restored, id)).toEqual(saved);
+    expect(factory).toHaveBeenCalledTimes(2);
+  });
+
   test('publishes an error already appended by the agent without emitting a second backstop event', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const existing = conversationErrorEventSchema.parse({ source: 'environment', code: 'LLMTimeoutError', detail: 'timeout' });
     const { server, id } = await fixture(() => {
       const agent = new Agent({ llm: TestLLM.fromMessages([]), tools: [FinishTool.create()] });
@@ -142,12 +375,14 @@ describe('durable conversation run failures', () => {
 
   test('does not serialize arbitrary thrown objects into the event or logs', async () => {
     const secret = 'fixture-arbitrary-thrown-object-secret';
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { server, id, root } = await fixture(() => { throw { token: secret, toString: () => secret }; });
+    const { server, id, root, options } = await fixture(() => { throw { token: secret, toString: () => secret }; });
+    const log = vi.spyOn(options.errorLogger, 'error');
+
     await run(server, id, 'error');
     await expect.poll(async () => (await errors(server, id)).length).toBe(1);
     expect((await errors(server, id))[0]).toMatchObject({ code: 'Error', detail: 'Conversation run failed.' });
     expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+    await closeServer(server);
     expect(await pathContainsPlaintext(root, secret)).toBe(false);
   });
 });

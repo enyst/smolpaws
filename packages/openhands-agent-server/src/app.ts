@@ -11,6 +11,7 @@ import { ConversationLeaseHeldError, ConversationLeaseInvalidError, Conversation
 import { type AgentServerConfig, getDefaultConfig } from './config.js';
 import { registerConversationRoutes } from './conversationRouter.js';
 import { ConversationService, type ConversationServiceOptions } from './conversationService.js';
+import { defaultErrorLogger } from './errorDiagnostics.js';
 import { registerEventRoutes } from './eventRouter.js';
 import { registerFileRoutes } from './fileRouter.js';
 import { registerGitRoutes } from './gitRouter.js';
@@ -50,7 +51,8 @@ export interface AgentServerApp {
 
 export async function createAgentServerApp(options: AgentServerAppOptions = {}): Promise<AgentServerApp> {
   if (options.conversationService !== undefined && (
-    options.agentFactory !== undefined
+    options.errorLogger !== undefined
+    || options.agentFactory !== undefined
     || options.getDefaultAgentSettings !== undefined
     || options.persistenceDir !== undefined
     || options.ownerInstanceId !== undefined
@@ -97,7 +99,9 @@ export async function createAgentServerApp(options: AgentServerAppOptions = {}):
     llmClientFactory,
     ...(options.resolveCondenserProfileSelection === undefined ? {} : { resolveCondenserProfileSelection: options.resolveCondenserProfileSelection }),
   });
+  const app = Fastify({ logger: options.logger ?? false, bodyLimit: 25 * 1024 * 1024 });
   const serviceOptions: ConversationServiceOptions = {
+    errorLogger: options.errorLogger ?? (options.logger === true ? app.log : defaultErrorLogger),
     persistenceDir: config.conversationsPath,
     secretStore,
     agentFactory,
@@ -122,7 +126,6 @@ export async function createAgentServerApp(options: AgentServerAppOptions = {}):
   const retentionTask = retentionSeconds === null || retentionController === null
     ? null
     : bashEventService.runRetentionCleanupLoop(retentionSeconds, undefined, retentionController.signal);
-  const app = Fastify({ logger: options.logger ?? false, bodyLimit: 25 * 1024 * 1024 });
 
   await app.register(multipart);
   await app.register(websocket);
