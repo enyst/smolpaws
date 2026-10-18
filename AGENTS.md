@@ -152,3 +152,5 @@ Service management:
 launchctl load ~/Library/LaunchAgents/com.smolpaws.plist
 launchctl unload ~/Library/LaunchAgents/com.smolpaws.plist
 ```
+
+For local agent-server log retention, use `npm run logs:maintain -- --dry-run` to preview, then `npm run logs:launchagent:install` to schedule it on macOS. Reinstall after changing the helper; `npm run logs:launchagent:remove` stops maintenance. See [docs/bridges.md](docs/bridges.md#local-server-log-retention) for status, checkpoints, and limits.
