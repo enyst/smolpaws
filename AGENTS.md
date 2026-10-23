@@ -51,6 +51,7 @@ SmolPaws is an OpenHands agent in TypeScript, with inspiration from NanoClaw, Op
 | `/fieldtheory` | Search or analyze a user's locally synced Field Theory X/Twitter bookmarks through the `ft` CLI; read-only by default |
 
 Reference skills for GitHub/Cloudflare/Fastify/Daytona work also live under `.agents/skills/`.
+For the weekly SDK revendor and server PR handoff, follow `packages/openhands-agent-server/docs/REVENDOR_AUTOMATION.md`.
 
 ### Architecture conventions (used by the design skills)
 
