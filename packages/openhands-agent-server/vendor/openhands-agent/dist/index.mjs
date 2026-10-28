@@ -474,10 +474,41 @@ var INITIAL_CWD = process.cwd();
 function getUserPersistenceDir(defaultDir) {
   const envDir = process.env.OH_PERSISTENCE_DIR?.trim();
   if (envDir !== void 0 && envDir !== "") {
-    const expanded = envDir.startsWith("~/") ? path2.join(homedir(), envDir.slice(2)) : envDir;
+    let expanded = envDir;
+    if (expanded.startsWith("~/")) {
+      expanded = path2.join(homedir(), expanded.slice(2));
+    } else if (expanded.startsWith("~")) {
+      const slash = expanded.indexOf("/");
+      const user = slash === -1 ? expanded.slice(1) : expanded.slice(1, slash);
+      const rest = slash === -1 ? "" : expanded.slice(slash);
+      const home = user === "" ? homedir() : namedUserHome(user);
+      expanded = home + rest;
+    }
     return path2.isAbsolute(expanded) ? expanded : path2.resolve(INITIAL_CWD, expanded);
   }
   return defaultDir ?? path2.join(homedir(), ".openhands");
+}
+function namedUserHome(user) {
+  if (process.platform === "win32") return path2.join(path2.dirname(homedir()), user);
+  const command = process.platform === "darwin" ? "/usr/bin/id" : "getent";
+  const args = process.platform === "darwin" ? ["-P", "--", user] : ["passwd", "--", user];
+  const result = spawnSync(command, args, { encoding: "utf8", timeout: 5e3, maxBuffer: 64 * 1024 });
+  let record4 = result.status === 0 ? result.stdout.trim() : "";
+  let homeField = process.platform === "darwin" ? 8 : 5;
+  if (result.error && "code" in result.error && result.error.code === "ENOENT") {
+    try {
+      record4 = readFileSync("/etc/passwd", "utf8").split("\n").find((line) => line.split(":")[0] === user) ?? "";
+      homeField = 5;
+    } catch {
+      record4 = "";
+    }
+  }
+  const fields2 = record4.split(":");
+  const home = fields2[homeField];
+  if (fields2[0] !== user || !home || !path2.isAbsolute(home)) {
+    throw new Error("Could not determine home directory");
+  }
+  return home;
 }
 var AsyncCallbackWrapper = class {
   callback;
@@ -741,9 +772,10 @@ function redactUrlParams(url) {
 }
 var keyValueSecretPattern = /\b([A-Za-z0-9_.-]*(?:api[_-]?key|authorization|cookie|credential|password|secret|session|token|key)[A-Za-z0-9_.-]*)\s*=\s*("[^"]*"|'[^']*'|[^\s]+)/giu;
 var anthropicKeyPattern = /sk-ant-api\d{2}-[A-Za-z0-9_-]{20,}/gu;
+var githubTokenPattern = /\bgh[uso]_[A-Za-z0-9]{20,}/gu;
 var quotedDictSecretPattern = /(?<head>(?<kq>\\?["'])[\p{L}\p{N}_-]*(?:key|secret|token|password|authorization)[\p{L}\p{N}_-]*\k<kq>\s*:\s*)(?<q>\\?["']).*?\k<q>/gisu;
 function redactTextSecrets(text) {
-  return redactUrlCredentialsInText(text).replace(anthropicKeyPattern, "<redacted>").replace(keyValueSecretPattern, (_match, key) => `${key}=<redacted>`).replace(quotedDictSecretPattern, "$<head>$<q><redacted>$<q>");
+  return redactUrlCredentialsInText(text).replace(anthropicKeyPattern, "<redacted>").replace(githubTokenPattern, "<redacted>").replace(keyValueSecretPattern, (_match, key) => `${key}=<redacted>`).replace(quotedDictSecretPattern, "$<head>$<q><redacted>$<q>");
 }
 function utcNow() {
   return /* @__PURE__ */ new Date();
@@ -17262,7 +17294,7 @@ async function runGitProbe(args, cwd) {
 async function getChangesInRepo(repoDir, ref) {
   const repo = await validateGitRepository(repoDir);
   const base = await getValidRef(repo, ref, "display");
-  const output = await runGitCommand(["git", "--no-pager", "diff", "--name-status", base], { cwd: repo });
+  const output = await runGitCommand(["git", "--no-pager", "diff", "--name-status", "--relative", base], { cwd: repo });
   const changes = parseNameStatus(output.split(/\r?\n/u).filter((entry2) => entry2.trim().length > 0));
   const untracked = await runGitCommand(["git", "--no-pager", "ls-files", "--others", "--exclude-standard"], { cwd: repo }).catch(() => "");
   for (const path4 of untracked.split(/\r?\n/u).filter((entry2) => entry2.trim().length > 0)) {
